@@ -13,9 +13,9 @@ via Row Level Security. The frontend only hides links; the backend is the real g
 
 ## 1. Set up the database
 
-In a new Supabase project, open the SQL editor and run `piece_rate_payroll_setup.sql`
-(provided separately) once. It creates all tables, security policies, and seeds the
-7 stations.
+In a new Supabase project, open the SQL editor and run [`supabase/setup.sql`](supabase/setup.sql)
+once. It creates the core tables, security policies, the auto-profile trigger, and
+seeds the 7 stations.
 
 ## 2. Run locally
 
