@@ -8,5 +8,24 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // If the app bundle never runs (e.g. GitHub Pages is set to "Deploy from
+      // a branch" and serves this raw source file, where the .tsx module 404s),
+      // #root stays empty. Explain the misconfiguration instead of a blank page.
+      setTimeout(function () {
+        var root = document.getElementById('root')
+        if (root && root.childNodes.length === 0) {
+          root.innerHTML =
+            '<div style="max-width:40rem;margin:4rem auto;padding:0 1rem;font-family:system-ui,sans-serif;line-height:1.6">' +
+            '<h1>Site is misconfigured</h1>' +
+            '<p>The un-built source code was deployed, so the app cannot start.</p>' +
+            '<p>Fix: in the GitHub repo go to <strong>Settings &rarr; Pages</strong> and change ' +
+            '<strong>Build and deployment &rarr; Source</strong> from &ldquo;Deploy from a branch&rdquo; to ' +
+            '<strong>&ldquo;GitHub Actions&rdquo;</strong>, then run the &ldquo;Deploy to GitHub Pages&rdquo; workflow ' +
+            'from the Actions tab.</p>' +
+            '</div>'
+        }
+      }, 3000)
+    </script>
   </body>
 </html>
