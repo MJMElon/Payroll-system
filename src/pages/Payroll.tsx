@@ -1,13 +1,410 @@
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import {
+  supabase,
+  todayISO,
+  type Job,
+  type PayrollAdjustment,
+  type PayrollLine,
+  type PayrollRun,
+  type Worker,
+} from '../lib/supabase'
+
 export default function Payroll() {
+  const [runs, setRuns] = useState<PayrollRun[]>([])
+  const [openRun, setOpenRun] = useState<PayrollRun | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  async function loadRuns() {
+    const { data, error } = await supabase
+      .from('payroll_runs')
+      .select('id, period_start, period_end, status, created_at, finalized_at')
+      .order('created_at', { ascending: false })
+    if (error) setError(error.message)
+    else setRuns(data ?? [])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    loadRuns()
+  }, [])
+
+  if (loading) return <p className="muted">Loading…</p>
+
+  if (openRun) {
+    return (
+      <RunDetail
+        run={openRun}
+        onBack={() => {
+          setOpenRun(null)
+          loadRuns()
+        }}
+      />
+    )
+  }
+
   return (
     <div className="stack">
-      <h1>Payroll</h1>
-      <div className="card">
+      <div>
+        <h1>Payroll</h1>
         <p className="muted">
-          Placeholder. This is where you create pay periods, run the calculators, review
-          flagged lines, and record adjustments against <code>payroll_lines</code> and{' '}
-          <code>payroll_adjustments</code>.
+          A run totals each worker's production in the period and prices it with the
+          rate in force at the period end.
         </p>
+      </div>
+
+      {error && <div className="error">{error}</div>}
+
+      <NewRunForm onCreated={(run) => { setOpenRun(run); loadRuns() }} />
+
+      <div className="card">
+        <h3>Runs</h3>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th className="right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.length === 0 && (
+              <tr><td colSpan={4} className="muted">No payroll runs yet.</td></tr>
+            )}
+            {runs.map((r) => (
+              <tr key={r.id}>
+                <td>{r.period_start} → {r.period_end}</td>
+                <td><span className={`badge ${r.status === 'finalized' ? 'ok' : 'off'}`}>{r.status}</span></td>
+                <td className="muted">{r.created_at.slice(0, 10)}</td>
+                <td className="right">
+                  <button className="linkbtn" onClick={() => setOpenRun(r)}>Open</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
+  const [start, setStart] = useState('')
+  const [end, setEnd] = useState(todayISO())
+  const [error, setError] = useState<string | null>(null)
+  const [working, setWorking] = useState(false)
+
+  async function createRun(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setWorking(true)
+    try {
+      // 1. Production in the period.
+      const { data: entries, error: entErr } = await supabase
+        .from('production_entries')
+        .select('worker_id, job_id, quantity')
+        .gte('work_date', start)
+        .lte('work_date', end)
+      if (entErr) throw new Error(entErr.message)
+      if (!entries || entries.length === 0) {
+        throw new Error('No production entries in that period — nothing to pay.')
+      }
+
+      // 2. Rate per job: newest rate effective on or before the period end.
+      const jobIds = [...new Set(entries.map((e) => e.job_id))]
+      const { data: rates, error: rateErr } = await supabase
+        .from('piece_rates')
+        .select('job_id, rate, effective_from')
+        .in('job_id', jobIds)
+        .lte('effective_from', end)
+        .order('effective_from', { ascending: false })
+      if (rateErr) throw new Error(rateErr.message)
+      const rateByJob = new Map<string, number>()
+      for (const r of rates ?? []) {
+        if (!rateByJob.has(r.job_id)) rateByJob.set(r.job_id, Number(r.rate))
+      }
+
+      // 3. Sum quantities per worker + job.
+      const sums = new Map<string, { worker_id: string; job_id: string; quantity: number }>()
+      for (const en of entries) {
+        const key = `${en.worker_id}|${en.job_id}`
+        const cur = sums.get(key) ?? { worker_id: en.worker_id, job_id: en.job_id, quantity: 0 }
+        cur.quantity += Number(en.quantity)
+        sums.set(key, cur)
+      }
+
+      // 4. Create the run, then its lines (rate snapshotted; 0 if job has no rate).
+      const { data: run, error: runErr } = await supabase
+        .from('payroll_runs')
+        .insert({ period_start: start, period_end: end })
+        .select()
+        .single()
+      if (runErr) throw new Error(runErr.message)
+
+      const lines = [...sums.values()].map((s) => {
+        const rate = rateByJob.get(s.job_id) ?? 0
+        return {
+          run_id: run.id,
+          worker_id: s.worker_id,
+          job_id: s.job_id,
+          quantity: s.quantity,
+          rate,
+          amount: Math.round(s.quantity * rate * 100) / 100,
+        }
+      })
+      const { error: lineErr } = await supabase.from('payroll_lines').insert(lines)
+      if (lineErr) throw new Error(lineErr.message)
+
+      onCreated(run as PayrollRun)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  return (
+    <form className="card row-form" onSubmit={createRun}>
+      <label className="field inline">
+        <span>Period start</span>
+        <input type="date" value={start} onChange={(e) => setStart(e.target.value)} required />
+      </label>
+      <label className="field inline">
+        <span>Period end</span>
+        <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} required />
+      </label>
+      <button className="btn" type="submit" disabled={working}>
+        {working ? 'Computing…' : 'Create run'}
+      </button>
+      {error && <div className="error">{error}</div>}
+    </form>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
+  const [status, setStatus] = useState(run.status)
+  const [lines, setLines] = useState<PayrollLine[]>([])
+  const [adjustments, setAdjustments] = useState<PayrollAdjustment[]>([])
+  const [workers, setWorkers] = useState<Worker[]>([])
+  const [jobs, setJobs] = useState<Job[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const [adjWorker, setAdjWorker] = useState('')
+  const [adjAmount, setAdjAmount] = useState('')
+  const [adjReason, setAdjReason] = useState('')
+
+  const editable = status === 'draft'
+
+  async function load() {
+    const [l, a, w, j] = await Promise.all([
+      supabase.from('payroll_lines')
+        .select('id, run_id, worker_id, job_id, quantity, rate, amount')
+        .eq('run_id', run.id),
+      supabase.from('payroll_adjustments')
+        .select('id, run_id, worker_id, amount, reason')
+        .eq('run_id', run.id),
+      supabase.from('workers').select('id, full_name, station_id, active'),
+      supabase.from('jobs').select('id, station_id, name, unit, active'),
+    ])
+    const err = l.error || a.error || w.error || j.error
+    if (err) setError(err.message)
+    setLines(l.data ?? [])
+    setAdjustments(a.data ?? [])
+    setWorkers(w.data ?? [])
+    setJobs(j.data ?? [])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.id])
+
+  const workerName = (id: string) => workers.find((w) => w.id === id)?.full_name ?? '?'
+  const jobLabel = (id: string) => {
+    const j = jobs.find((x) => x.id === id)
+    return j ? `${j.name} (${j.unit})` : '?'
+  }
+
+  // Group lines by worker for a per-worker payslip-style view.
+  const byWorker = useMemo(() => {
+    const m = new Map<string, { lines: PayrollLine[]; adjustments: PayrollAdjustment[] }>()
+    for (const l of lines) {
+      if (!m.has(l.worker_id)) m.set(l.worker_id, { lines: [], adjustments: [] })
+      m.get(l.worker_id)!.lines.push(l)
+    }
+    for (const a of adjustments) {
+      if (!m.has(a.worker_id)) m.set(a.worker_id, { lines: [], adjustments: [] })
+      m.get(a.worker_id)!.adjustments.push(a)
+    }
+    return [...m.entries()].sort((x, y) => workerName(x[0]).localeCompare(workerName(y[0])))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, adjustments, workers])
+
+  const grandTotal =
+    lines.reduce((s, l) => s + Number(l.amount), 0) +
+    adjustments.reduce((s, a) => s + Number(a.amount), 0)
+
+  const missingRates = lines.filter((l) => Number(l.rate) === 0)
+
+  async function addAdjustment(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    const amount = Number(adjAmount)
+    if (Number.isNaN(amount) || amount === 0) return setError('Adjustment amount must be a non-zero number.')
+    const { error } = await supabase.from('payroll_adjustments').insert({
+      run_id: run.id,
+      worker_id: adjWorker,
+      amount,
+      reason: adjReason.trim(),
+    })
+    if (error) return setError(error.message)
+    setAdjAmount('')
+    setAdjReason('')
+    load()
+  }
+
+  async function removeAdjustment(a: PayrollAdjustment) {
+    const { error } = await supabase.from('payroll_adjustments').delete().eq('id', a.id)
+    if (error) setError(error.message)
+    else load()
+  }
+
+  async function finalize() {
+    if (!window.confirm('Finalize this run? It can no longer be edited afterwards.')) return
+    const { error } = await supabase
+      .from('payroll_runs')
+      .update({ status: 'finalized', finalized_at: new Date().toISOString() })
+      .eq('id', run.id)
+    if (error) setError(error.message)
+    else setStatus('finalized')
+  }
+
+  async function removeRun() {
+    if (!window.confirm('Delete this draft run and all its lines?')) return
+    const { error } = await supabase.from('payroll_runs').delete().eq('id', run.id)
+    if (error) setError(error.message)
+    else onBack()
+  }
+
+  if (loading) return <p className="muted">Loading…</p>
+
+  return (
+    <div className="stack">
+      <div className="row-form spread">
+        <div>
+          <h1>Payroll run</h1>
+          <p className="muted">
+            {run.period_start} → {run.period_end} ·{' '}
+            <span className={`badge ${status === 'finalized' ? 'ok' : 'off'}`}>{status}</span>
+          </p>
+        </div>
+        <div className="row-form">
+          <button className="btn ghost" onClick={onBack}>← All runs</button>
+          {editable && <button className="btn" onClick={finalize}>Finalize</button>}
+          {editable && <button className="btn ghost danger" onClick={removeRun}>Delete draft</button>}
+        </div>
+      </div>
+
+      {error && <div className="error">{error}</div>}
+
+      {missingRates.length > 0 && (
+        <div className="error">
+          {missingRates.length} line(s) have no piece rate (amount 0). Set rates under
+          Settings → Jobs &amp; Rates, delete this draft, and create the run again.
+        </div>
+      )}
+
+      {byWorker.map(([workerId, group]) => {
+        const lineTotal = group.lines.reduce((s, l) => s + Number(l.amount), 0)
+        const adjTotal = group.adjustments.reduce((s, a) => s + Number(a.amount), 0)
+        return (
+          <div className="card" key={workerId}>
+            <h3>{workerName(workerId)}</h3>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th className="right">Quantity</th>
+                  <th className="right">Rate</th>
+                  <th className="right">Amount</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {group.lines.map((l) => (
+                  <tr key={l.id}>
+                    <td>{jobLabel(l.job_id)}</td>
+                    <td className="right">{Number(l.quantity)}</td>
+                    <td className="right">{Number(l.rate).toFixed(4)}</td>
+                    <td className="right">{Number(l.amount).toFixed(2)}</td>
+                    <td />
+                  </tr>
+                ))}
+                {group.adjustments.map((a) => (
+                  <tr key={a.id}>
+                    <td className="muted">Adjustment — {a.reason}</td>
+                    <td className="right" colSpan={2} />
+                    <td className="right">{Number(a.amount).toFixed(2)}</td>
+                    <td className="right">
+                      {editable && (
+                        <button className="linkbtn danger" onClick={() => removeAdjustment(a)}>Remove</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="total-row">
+                  <td colSpan={3}>Total</td>
+                  <td className="right">{(lineTotal + adjTotal).toFixed(2)}</td>
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )
+      })}
+
+      {editable && (
+        <form className="card row-form" onSubmit={addAdjustment}>
+          <label className="field inline">
+            <span>Adjustment — worker</span>
+            <select value={adjWorker} onChange={(e) => setAdjWorker(e.target.value)} required>
+              <option value="">Pick…</option>
+              {workers
+                .slice()
+                .sort((a, b) => a.full_name.localeCompare(b.full_name))
+                .map((w) => (
+                  <option key={w.id} value={w.id}>{w.full_name}</option>
+                ))}
+            </select>
+          </label>
+          <label className="field inline">
+            <span>Amount (+/−)</span>
+            <input
+              inputMode="decimal"
+              value={adjAmount}
+              onChange={(e) => setAdjAmount(e.target.value)}
+              placeholder="0.00"
+              required
+            />
+          </label>
+          <label className="field inline grow">
+            <span>Reason</span>
+            <input value={adjReason} onChange={(e) => setAdjReason(e.target.value)} required />
+          </label>
+          <button className="btn" type="submit">Add adjustment</button>
+        </form>
+      )}
+
+      <div className="card row-form spread">
+        <h3>Grand total</h3>
+        <h3>{grandTotal.toFixed(2)}</h3>
       </div>
     </div>
   )

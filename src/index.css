@@ -98,6 +98,63 @@ input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bor
   .account { margin-left: auto; }
 }
 
+/* Selects share the input look */
+select {
+  padding: 0.6rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 0.95rem; background: var(--surface); color: var(--text);
+}
+select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+/* Tabs */
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); }
+.tab {
+  appearance: none; background: none; border: none; cursor: pointer;
+  padding: 0.5rem 0.8rem; font-size: 0.9rem; color: var(--muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+
+/* Data tables */
+.table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.table th, .table td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); }
+.table th { color: var(--muted); font-weight: 500; font-size: 0.8rem; }
+.table tr:last-child td { border-bottom: none; }
+.table .right, th.right, td.right { text-align: right; }
+.total-row td { font-weight: 600; border-top: 2px solid var(--border); }
+
+/* Inline row forms and toolbars */
+.row-form { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: flex-end; }
+.row-form.spread { justify-content: space-between; align-items: center; }
+.field.inline { min-width: 150px; }
+.field.inline.grow { flex: 1; min-width: 200px; }
+
+/* Small link-style action buttons in tables */
+.linkbtn {
+  appearance: none; background: none; border: none; cursor: pointer; padding: 0;
+  color: var(--accent); font-size: 0.85rem;
+}
+.linkbtn:hover { text-decoration: underline; }
+.linkbtn.danger { color: var(--danger); }
+.btn.danger { border-color: var(--danger); color: var(--danger); }
+
+/* Status badges */
+.badge {
+  display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 500;
+}
+.badge.ok { background: #e5f2ea; color: var(--accent); }
+.badge.off { background: #eeedea; color: var(--muted); }
+
+/* Dashboard stats */
+.stat { font-size: 2rem; font-weight: 600; margin: 0.2rem 0; }
+.stat.small-stat { font-size: 1.1rem; }
+.checkbox { display: inline-flex; align-items: center; gap: 0.3rem; margin-bottom: 0.6rem; }
+.checkbox input { padding: 0; }
+
+/* Inline rate editor in the jobs table */
+.rate-set { display: inline-flex; gap: 0.4rem; align-items: center; }
+.rate-input { width: 90px; padding: 0.35rem 0.5rem; font-size: 0.85rem; }
+
 /* ------------------------------------------------------------------ */
 /* Login screen — matches the MJM portal design (dark circuit board,  */
 /* glowing green lines, bracketed card).                              */

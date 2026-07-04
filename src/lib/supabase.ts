@@ -30,3 +30,77 @@ export interface Profile {
   station_id: string | null
   worker_id: string | null
 }
+
+// Rows of the work tables (see supabase/setup.sql).
+export interface Station {
+  id: string
+  name: string
+  sort_order: number
+}
+
+export interface Worker {
+  id: string
+  full_name: string
+  station_id: string | null
+  active: boolean
+}
+
+export interface Job {
+  id: string
+  station_id: string
+  name: string
+  unit: string
+  active: boolean
+}
+
+export interface PieceRate {
+  id: string
+  job_id: string
+  rate: number
+  effective_from: string
+}
+
+export interface ProductionEntry {
+  id: string
+  work_date: string
+  station_id: string
+  job_id: string
+  worker_id: string
+  quantity: number
+  notes: string | null
+  created_by: string | null
+  created_at: string
+}
+
+export interface PayrollRun {
+  id: string
+  period_start: string
+  period_end: string
+  status: 'draft' | 'finalized'
+  created_at: string
+  finalized_at: string | null
+}
+
+export interface PayrollLine {
+  id: string
+  run_id: string
+  worker_id: string
+  job_id: string
+  quantity: number
+  rate: number
+  amount: number
+}
+
+export interface PayrollAdjustment {
+  id: string
+  run_id: string
+  worker_id: string
+  amount: number
+  reason: string
+}
+
+/** Today as a YYYY-MM-DD string in local time (what date inputs expect). */
+export function todayISO(): string {
+  const d = new Date()
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}

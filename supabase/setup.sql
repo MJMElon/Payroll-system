@@ -112,6 +112,144 @@ create policy "admin manager manage workers" on public.workers
   for all using (public.my_role() in ('admin', 'manager'));
 
 -- ---------------------------------------------------------------------------
+-- Piece-rate work: jobs, rates, production entries
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.jobs (
+  id uuid primary key default gen_random_uuid(),
+  station_id uuid not null references public.stations (id),
+  name text not null,
+  unit text not null default 'unit',
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  unique (station_id, name)
+);
+
+-- Rate history per job. The rate in force on a date is the newest row with
+-- effective_from <= that date.
+create table if not exists public.piece_rates (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs (id) on delete cascade,
+  rate numeric(12,4) not null check (rate >= 0),
+  effective_from date not null default current_date,
+  created_at timestamptz not null default now(),
+  unique (job_id, effective_from)
+);
+
+create table if not exists public.production_entries (
+  id uuid primary key default gen_random_uuid(),
+  work_date date not null default current_date,
+  station_id uuid not null references public.stations (id),
+  job_id uuid not null references public.jobs (id),
+  worker_id uuid not null references public.workers (id),
+  quantity numeric(12,3) not null check (quantity > 0),
+  notes text,
+  created_by uuid references auth.users (id) default auth.uid(),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists production_entries_work_date_idx
+  on public.production_entries (work_date);
+
+-- ---------------------------------------------------------------------------
+-- Payroll runs
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.payroll_runs (
+  id uuid primary key default gen_random_uuid(),
+  period_start date not null,
+  period_end date not null check (period_end >= period_start),
+  status text not null default 'draft' check (status in ('draft', 'finalized')),
+  created_by uuid references auth.users (id) default auth.uid(),
+  created_at timestamptz not null default now(),
+  finalized_at timestamptz
+);
+
+-- One line per worker + job in the period; rate is snapshotted at run time.
+create table if not exists public.payroll_lines (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null references public.payroll_runs (id) on delete cascade,
+  worker_id uuid not null references public.workers (id),
+  job_id uuid not null references public.jobs (id),
+  quantity numeric(12,3) not null,
+  rate numeric(12,4) not null,
+  amount numeric(14,2) not null
+);
+
+create table if not exists public.payroll_adjustments (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null references public.payroll_runs (id) on delete cascade,
+  worker_id uuid not null references public.workers (id),
+  amount numeric(14,2) not null,
+  reason text not null,
+  created_at timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- RLS for the work tables
+-- ---------------------------------------------------------------------------
+
+alter table public.jobs enable row level security;
+alter table public.piece_rates enable row level security;
+alter table public.production_entries enable row level security;
+alter table public.payroll_runs enable row level security;
+alter table public.payroll_lines enable row level security;
+alter table public.payroll_adjustments enable row level security;
+
+-- jobs / piece_rates: any signed-in user reads; admins/managers manage.
+drop policy if exists "authenticated read jobs" on public.jobs;
+create policy "authenticated read jobs" on public.jobs
+  for select using (auth.uid() is not null);
+
+drop policy if exists "admin manager manage jobs" on public.jobs;
+create policy "admin manager manage jobs" on public.jobs
+  for all using (public.my_role() in ('admin', 'manager'));
+
+drop policy if exists "authenticated read piece_rates" on public.piece_rates;
+create policy "authenticated read piece_rates" on public.piece_rates
+  for select using (auth.uid() is not null);
+
+drop policy if exists "admin manager manage piece_rates" on public.piece_rates;
+create policy "admin manager manage piece_rates" on public.piece_rates
+  for all using (public.my_role() in ('admin', 'manager'));
+
+-- production entries: everyone signed-in reads; admins/managers write freely;
+-- operators may only record for their own station and delete their own rows.
+drop policy if exists "authenticated read production" on public.production_entries;
+create policy "authenticated read production" on public.production_entries
+  for select using (auth.uid() is not null);
+
+drop policy if exists "insert production" on public.production_entries;
+create policy "insert production" on public.production_entries
+  for insert with check (
+    public.my_role() in ('admin', 'manager')
+    or (
+      public.my_role() = 'operator'
+      and station_id = (select station_id from public.access_profiles where id = auth.uid())
+    )
+  );
+
+drop policy if exists "delete production" on public.production_entries;
+create policy "delete production" on public.production_entries
+  for delete using (
+    public.my_role() in ('admin', 'manager')
+    or (public.my_role() = 'operator' and created_by = auth.uid())
+  );
+
+-- payroll: admins/managers only.
+drop policy if exists "admin manager payroll_runs" on public.payroll_runs;
+create policy "admin manager payroll_runs" on public.payroll_runs
+  for all using (public.my_role() in ('admin', 'manager'));
+
+drop policy if exists "admin manager payroll_lines" on public.payroll_lines;
+create policy "admin manager payroll_lines" on public.payroll_lines
+  for all using (public.my_role() in ('admin', 'manager'));
+
+drop policy if exists "admin manager payroll_adjustments" on public.payroll_adjustments;
+create policy "admin manager payroll_adjustments" on public.payroll_adjustments
+  for all using (public.my_role() in ('admin', 'manager'));
+
+-- ---------------------------------------------------------------------------
 -- Seed the 7 mill stations
 -- ---------------------------------------------------------------------------
 
