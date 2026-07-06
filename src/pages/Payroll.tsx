@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import {
   supabase,
   todayISO,
@@ -46,6 +47,7 @@ export default function Payroll() {
   return (
     <div className="stack">
       <div>
+        <Link to="/" className="small muted">← Back to main page</Link>
         <h1>Payroll</h1>
         <p className="muted">
           A run totals each worker's production in the period and prices it with the
@@ -209,7 +211,7 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
       supabase.from('payroll_adjustments')
         .select('id, run_id, worker_id, amount, reason')
         .eq('run_id', run.id),
-      supabase.from('workers').select('id, full_name, station_id, active'),
+      supabase.from('workers').select('id, full_name, station_id, grade_id, active'),
       supabase.from('jobs').select('id, station_id, grade_id, name, unit, active'),
     ])
     const err = l.error || a.error || w.error || j.error

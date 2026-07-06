@@ -72,7 +72,7 @@ export default function PieceRate() {
   return (
     <div className="stack">
       <div>
-        <Link to="/" className="small muted">← Overall status</Link>
+        <Link to="/" className="small muted">← Back to main page</Link>
         <h1>Piece Rate</h1>
       </div>
 

@@ -11,7 +11,8 @@ export default function Layout() {
       <header className="topbar">
         <Link to="/" className="brand">
           <span className="brand-logo">MJM</span>
-          <span className="brand-title">Piece Rate &amp; Payroll</span>
+          <span className="brand-sep">/</span>
+          <span className="brand-title">Piece Rate &amp; Payroll System</span>
         </Link>
         <div className="account">
           <span className="muted small">

@@ -139,6 +139,9 @@ create table if not exists public.jobs (
 -- per grade. (Idempotent for databases created from earlier versions.)
 alter table public.jobs add column if not exists grade_id uuid references public.grades (id);
 alter table public.jobs drop constraint if exists jobs_station_id_name_key;
+
+-- Grade tag assigned to a worker/user (their station tag is workers.station_id).
+alter table public.workers add column if not exists grade_id uuid references public.grades (id);
 create unique index if not exists jobs_station_grade_name_idx
   on public.jobs (station_id, grade_id, name);
 

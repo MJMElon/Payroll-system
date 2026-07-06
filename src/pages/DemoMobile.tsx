@@ -19,7 +19,7 @@ export default function DemoMobile() {
   return (
     <div className="stack">
       <div>
-        <Link to="/" className="small muted">← Overall status</Link>
+        <Link to="/" className="small muted">← Back to main page</Link>
         <h1>Demo Mobile View</h1>
         <p className="muted">
           Design sandbox for the mobile app (will move to its own repo). Pick a role to

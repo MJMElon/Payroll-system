@@ -51,7 +51,7 @@ export default function StationDetail() {
           .order('name'),
         supabase
           .from('workers')
-          .select('id, full_name, station_id, active')
+          .select('id, full_name, station_id, grade_id, active')
           .eq('active', true)
           .order('full_name'),
         supabase.from('grades').select('id, name, sort_order').order('sort_order'),
@@ -120,7 +120,7 @@ export default function StationDetail() {
   return (
     <div className="stack">
       <div>
-        <Link to="/" className="small muted">← Overall status</Link>
+        <Link to="/" className="small muted">← Back to main page</Link>
         <h1>{station?.name ?? 'Station'}</h1>
         <p className="muted">Production records for this station.</p>
       </div>

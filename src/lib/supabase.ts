@@ -42,6 +42,7 @@ export interface Worker {
   id: string
   full_name: string
   station_id: string | null
+  grade_id: string | null
   active: boolean
 }
 
