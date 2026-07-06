@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase, todayISO, type PayrollRun, type Station } from '../lib/supabase'
+import { supabase, type Station } from '../lib/supabase'
 
 const DAY_START_HOUR = 7 // The mill day runs 07:00 → 07:00.
 
@@ -14,96 +14,28 @@ function currentDayStart(): Date {
   return d
 }
 
-interface Stats {
-  activeWorkers: number
-  stations: number
-  todayEntries: number
-  todayQuantity: number
-  lastRun: PayrollRun | null
-}
-
 export default function Dashboard() {
-  const { profile, session } = useAuth()
-  const [stats, setStats] = useState<Stats | null>(null)
+  const { profile } = useAuth()
   const canSeePayroll = profile?.role === 'admin' || profile?.role === 'manager'
-
-  useEffect(() => {
-    async function load() {
-      const today = todayISO()
-      const [workers, stations, entries, runs] = await Promise.all([
-        supabase.from('workers').select('id', { count: 'exact', head: true }).eq('active', true),
-        supabase.from('stations').select('id', { count: 'exact', head: true }),
-        supabase.from('production_entries').select('quantity').eq('work_date', today),
-        canSeePayroll
-          ? supabase
-              .from('payroll_runs')
-              .select('id, period_start, period_end, status, created_at, finalized_at')
-              .order('created_at', { ascending: false })
-              .limit(1)
-          : Promise.resolve({ data: [] as PayrollRun[] }),
-      ])
-      setStats({
-        activeWorkers: workers.count ?? 0,
-        stations: stations.count ?? 0,
-        todayEntries: entries.data?.length ?? 0,
-        todayQuantity: (entries.data ?? []).reduce((s, e) => s + Number(e.quantity), 0),
-        lastRun: (runs.data && runs.data[0]) || null,
-      })
-    }
-    load()
-  }, [canSeePayroll])
 
   return (
     <div className="stack">
-      <div>
-        <h1>Dashboard</h1>
-        <p className="muted">
-          Signed in as {session?.user.email}
-          {profile?.role ? ` — role: ${profile.role}` : ''}.
-        </p>
-      </div>
+      <h1>Overall Status:</h1>
 
       <StationBoard />
 
-      <div className="grid">
-        <div className="card">
-          <h3>Today's production</h3>
-          <p className="stat">{stats ? stats.todayEntries : '…'}</p>
-          <p className="muted small">
-            entries · total quantity {stats ? stats.todayQuantity : '…'}
-          </p>
-          <Link to="/production" className="small">Open production →</Link>
-        </div>
-
-        <div className="card">
-          <h3>Workforce</h3>
-          <p className="stat">{stats ? stats.activeWorkers : '…'}</p>
-          <p className="muted small">active workers across {stats ? stats.stations : '…'} stations</p>
-          {canSeePayroll && <Link to="/settings" className="small">Manage in settings →</Link>}
-        </div>
-
-        {canSeePayroll && (
-          <div className="card">
-            <h3>Last payroll run</h3>
-            {stats?.lastRun ? (
-              <>
-                <p className="stat small-stat">
-                  {stats.lastRun.period_start} → {stats.lastRun.period_end}
-                </p>
-                <p className="muted small">
-                  status:{' '}
-                  <span className={`badge ${stats.lastRun.status === 'finalized' ? 'ok' : 'off'}`}>
-                    {stats.lastRun.status}
-                  </span>
-                </p>
-              </>
-            ) : (
-              <p className="muted small">No runs yet.</p>
-            )}
-            <Link to="/payroll" className="small">Open payroll →</Link>
+      {canSeePayroll && (
+        <Link to="/payroll" className="module-block">
+          <div>
+            <h2>Payroll</h2>
+            <p className="muted">
+              Run payroll for a period, review each worker's lines and adjustments,
+              and finalize.
+            </p>
           </div>
-        )}
-      </div>
+          <span className="module-arrow">→</span>
+        </Link>
+      )}
     </div>
   )
 }
@@ -111,10 +43,12 @@ export default function Dashboard() {
 /* ------------------------------------------------------------------ */
 /* 24-hour station status board. One row per station, one column per  */
 /* hour of the mill day (07:00 → 07:00). Each cell is the quantity    */
-/* recorded for that station during that hour.                        */
+/* recorded for that station during that hour. Click a station to     */
+/* open its detail records.                                           */
 /* ------------------------------------------------------------------ */
 
 function StationBoard() {
+  const navigate = useNavigate()
   const [stations, setStations] = useState<Station[]>([])
   const [sums, setSums] = useState<Map<string, number[]>>(new Map())
   const [error, setError] = useState<string | null>(null)
@@ -186,8 +120,17 @@ function StationBoard() {
               {stations.map((s) => {
                 const row = sums.get(s.id)
                 return (
-                  <tr key={s.id}>
-                    <td className="board-station">{s.name}</td>
+                  <tr
+                    key={s.id}
+                    className="board-row"
+                    onClick={() => navigate(`/station/${s.id}`)}
+                    title={`Open ${s.name} records`}
+                  >
+                    <td className="board-station">
+                      <Link to={`/station/${s.id}`} onClick={(e) => e.stopPropagation()}>
+                        {s.name}
+                      </Link>
+                    </td>
                     {hours.map((_, i) => {
                       const v = row?.[i] ?? 0
                       const cls = [
@@ -210,7 +153,8 @@ function StationBoard() {
       )}
       <p className="muted small">
         Each box is one hour; the number is the quantity recorded for that station in
-        that hour. The green column is the current hour.
+        that hour. The green column is the current hour. Click a station to open its
+        records.
       </p>
     </div>
   )

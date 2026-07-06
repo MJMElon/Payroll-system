@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   supabase,
@@ -9,18 +10,24 @@ import {
   type Worker,
 } from '../lib/supabase'
 
-export default function Production() {
+// Production records for one station, reached by clicking it on the
+// Overall Status board.
+export default function StationDetail() {
+  const { stationId } = useParams<{ stationId: string }>()
   const { profile } = useAuth()
-  // Operators are pinned to their own station; admins/managers pick freely.
-  const isOperator = profile?.role === 'operator'
 
-  const [stations, setStations] = useState<Station[]>([])
+  // Operators may only record for their own station (also enforced by RLS).
+  const canRecord =
+    profile?.role === 'admin' ||
+    profile?.role === 'manager' ||
+    (profile?.role === 'operator' && profile.station_id === stationId)
+
+  const [station, setStation] = useState<Station | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
   const [workers, setWorkers] = useState<Worker[]>([])
   const [entries, setEntries] = useState<ProductionEntry[]>([])
 
   const [workDate, setWorkDate] = useState(todayISO())
-  const [stationId, setStationId] = useState('')
   const [jobId, setJobId] = useState('')
   const [workerId, setWorkerId] = useState('')
   const [quantity, setQuantity] = useState('')
@@ -33,30 +40,29 @@ export default function Production() {
   useEffect(() => {
     async function loadMaster() {
       const [s, j, w] = await Promise.all([
-        supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-        supabase.from('jobs').select('id, station_id, name, unit, active').eq('active', true).order('name'),
-        supabase.from('workers').select('id, full_name, station_id, active').eq('active', true).order('full_name'),
+        supabase.from('stations').select('id, name, sort_order').eq('id', stationId).single(),
+        supabase
+          .from('jobs')
+          .select('id, station_id, name, unit, active')
+          .eq('station_id', stationId)
+          .eq('active', true)
+          .order('name'),
+        supabase
+          .from('workers')
+          .select('id, full_name, station_id, active')
+          .eq('active', true)
+          .order('full_name'),
       ])
-      const err = s.error || j.error || w.error
-      if (err) setError(err.message)
-      setStations(s.data ?? [])
+      if (s.error) setError(s.error.message)
+      else setStation(s.data)
       setJobs(j.data ?? [])
       setWorkers(w.data ?? [])
       setLoading(false)
     }
     loadMaster()
-  }, [])
-
-  // Default the station once master data (and profile) are in.
-  useEffect(() => {
-    if (!stationId) {
-      if (isOperator && profile?.station_id) setStationId(profile.station_id)
-      else if (stations.length) setStationId(stations[0].id)
-    }
-  }, [stations, profile, isOperator, stationId])
+  }, [stationId])
 
   async function loadEntries() {
-    if (!stationId) return
     const { data, error } = await supabase
       .from('production_entries')
       .select('id, work_date, station_id, job_id, worker_id, quantity, notes, created_by, created_at')
@@ -72,7 +78,6 @@ export default function Production() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workDate, stationId])
 
-  const stationJobs = useMemo(() => jobs.filter((j) => j.station_id === stationId), [jobs, stationId])
   const jobById = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs])
   const workerById = useMemo(() => new Map(workers.map((w) => [w.id, w])), [workers])
 
@@ -111,8 +116,9 @@ export default function Production() {
   return (
     <div className="stack">
       <div>
-        <h1>Production</h1>
-        <p className="muted">Record piece-rate work per station and day.</p>
+        <Link to="/" className="small muted">← Overall status</Link>
+        <h1>{station?.name ?? 'Station'}</h1>
+        <p className="muted">Production records for this station.</p>
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -122,59 +128,49 @@ export default function Production() {
           <span>Date</span>
           <input type="date" value={workDate} onChange={(e) => setWorkDate(e.target.value)} />
         </label>
-        <label className="field inline">
-          <span>Station</span>
-          <select
-            value={stationId}
-            onChange={(e) => setStationId(e.target.value)}
-            disabled={isOperator}
-          >
-            {stations.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        </label>
       </div>
 
-      <form className="card row-form" onSubmit={addEntry}>
-        <label className="field inline">
-          <span>Job</span>
-          <select value={jobId} onChange={(e) => setJobId(e.target.value)} required>
-            <option value="">Pick…</option>
-            {stationJobs.map((j) => (
-              <option key={j.id} value={j.id}>{j.name} ({j.unit})</option>
-            ))}
-          </select>
-        </label>
-        <label className="field inline">
-          <span>Worker</span>
-          <select value={workerId} onChange={(e) => setWorkerId(e.target.value)} required>
-            <option value="">Pick…</option>
-            {workers.map((w) => (
-              <option key={w.id} value={w.id}>{w.full_name}</option>
-            ))}
-          </select>
-        </label>
-        <label className="field inline">
-          <span>Quantity</span>
-          <input
-            inputMode="decimal"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            placeholder="0.0"
-            required
-          />
-        </label>
-        <label className="field inline grow">
-          <span>Notes (optional)</span>
-          <input value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </label>
-        <button className="btn" type="submit" disabled={saving}>
-          {saving ? 'Saving…' : 'Add entry'}
-        </button>
-      </form>
+      {canRecord && (
+        <form className="card row-form" onSubmit={addEntry}>
+          <label className="field inline">
+            <span>Job</span>
+            <select value={jobId} onChange={(e) => setJobId(e.target.value)} required>
+              <option value="">Pick…</option>
+              {jobs.map((j) => (
+                <option key={j.id} value={j.id}>{j.name} ({j.unit})</option>
+              ))}
+            </select>
+          </label>
+          <label className="field inline">
+            <span>Worker</span>
+            <select value={workerId} onChange={(e) => setWorkerId(e.target.value)} required>
+              <option value="">Pick…</option>
+              {workers.map((w) => (
+                <option key={w.id} value={w.id}>{w.full_name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field inline">
+            <span>Quantity</span>
+            <input
+              inputMode="decimal"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              placeholder="0.0"
+              required
+            />
+          </label>
+          <label className="field inline grow">
+            <span>Notes (optional)</span>
+            <input value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </label>
+          <button className="btn" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Add entry'}
+          </button>
+        </form>
+      )}
 
-      {stationJobs.length === 0 && (
+      {canRecord && jobs.length === 0 && (
         <p className="muted small">
           This station has no jobs yet — add them under Settings → Jobs &amp; Rates.
         </p>
@@ -185,6 +181,7 @@ export default function Production() {
         <table className="table">
           <thead>
             <tr>
+              <th>Time</th>
               <th>Worker</th>
               <th>Job</th>
               <th className="right">Quantity</th>
@@ -194,25 +191,30 @@ export default function Production() {
           </thead>
           <tbody>
             {entries.length === 0 && (
-              <tr><td colSpan={5} className="muted">No entries for this station and date.</td></tr>
+              <tr><td colSpan={6} className="muted">No entries for this date.</td></tr>
             )}
             {entries.map((en) => {
               const job = jobById.get(en.job_id)
               return (
                 <tr key={en.id}>
+                  <td className="muted">
+                    {new Date(en.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </td>
                   <td>{workerById.get(en.worker_id)?.full_name ?? '?'}</td>
                   <td>{job ? `${job.name} (${job.unit})` : '?'}</td>
                   <td className="right">{Number(en.quantity)}</td>
                   <td className="muted">{en.notes}</td>
                   <td className="right">
-                    <button className="linkbtn danger" onClick={() => removeEntry(en)}>Delete</button>
+                    {canRecord && (
+                      <button className="linkbtn danger" onClick={() => removeEntry(en)}>Delete</button>
+                    )}
                   </td>
                 </tr>
               )
             })}
             {entries.length > 0 && (
               <tr className="total-row">
-                <td colSpan={2}>Total</td>
+                <td colSpan={3}>Total</td>
                 <td className="right">{totalQty}</td>
                 <td colSpan={2} />
               </tr>

@@ -28,7 +28,7 @@ a { color: inherit; }
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
-.brand { display: flex; align-items: center; gap: 0.6rem; }
+.brand { display: flex; align-items: center; gap: 0.6rem; text-decoration: none; }
 .brand-logo {
   background: var(--accent); color: var(--accent-ink);
   font-weight: 800; letter-spacing: 0.12em; font-size: 0.95rem;
@@ -43,7 +43,7 @@ a { color: inherit; }
 }
 .navlink:hover { background: var(--bg); color: var(--text); }
 .navlink.active { background: var(--bg); color: var(--text); font-weight: 500; }
-.account { display: flex; align-items: center; gap: 0.75rem; }
+.account { display: flex; align-items: center; gap: 0.75rem; margin-left: auto; }
 
 .content { width: 100%; max-width: var(--maxw); margin: 0 auto; padding: 1.5rem 1.25rem; }
 
@@ -178,6 +178,30 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
 .board th.now, .board td.now { background: #cdeadb; }
 .board td.filled.now { background: #b9e2cc; }
 .board th.future, .board td.future { background: #fbfbfa; color: #c8c7c1; }
+.board .board-row { cursor: pointer; }
+.board .board-row:hover .board-station { background: var(--bg); }
+.board .board-station a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.board .board-station a:hover { text-decoration: underline; }
+
+/* Settings gear next to Sign out */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+}
+.icon-btn:hover { background: var(--bg); color: var(--text); }
+
+/* Module entry blocks on the main page */
+.module-block {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1.25rem 1.5rem;
+  text-decoration: none; color: var(--text);
+}
+.module-block:hover { border-color: var(--accent); }
+.module-block h2 { margin: 0 0 0.25rem; font-size: 1.15rem; }
+.module-block p { margin: 0; }
+.module-arrow { font-size: 1.6rem; color: var(--accent); }
 
 /* ------------------------------------------------------------------ */
 /* Login screen — matches the MJM portal design (dark circuit board,  */

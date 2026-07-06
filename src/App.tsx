@@ -3,7 +3,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
-import Production from './pages/Production'
+import StationDetail from './pages/StationDetail'
 import Payroll from './pages/Payroll'
 import Settings from './pages/Settings'
 import Unauthorized from './pages/Unauthorized'
@@ -17,12 +17,10 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/station/:stationId" element={<StationDetail />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
 
           {/* Role-restricted areas */}
-          <Route element={<ProtectedRoute allowedRoles={['admin', 'manager', 'operator']} />}>
-            <Route path="/production" element={<Production />} />
-          </Route>
           <Route element={<ProtectedRoute allowedRoles={['admin', 'manager']} />}>
             <Route path="/payroll" element={<Payroll />} />
             <Route path="/settings" element={<Settings />} />
