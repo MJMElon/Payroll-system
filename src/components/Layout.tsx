@@ -24,7 +24,10 @@ export default function Layout() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">Piece Rate &amp; Payroll</div>
+        <div className="brand">
+          <span className="brand-logo">MJM</span>
+          <span className="brand-title">Piece Rate &amp; Payroll</span>
+        </div>
         <nav className="nav">
           {NAV.filter((i) => role && i.roles.includes(role)).map((i) => (
             <NavLink key={i.to} to={i.to} end={i.to === '/'} className="navlink">

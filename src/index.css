@@ -28,7 +28,14 @@ a { color: inherit; }
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
-.brand { font-weight: 600; letter-spacing: -0.01em; }
+.brand { display: flex; align-items: center; gap: 0.6rem; }
+.brand-logo {
+  background: var(--accent); color: var(--accent-ink);
+  font-weight: 800; letter-spacing: 0.12em; font-size: 0.95rem;
+  padding: 0.25rem 0.55rem; border-radius: 8px;
+  font-family: 'Montserrat', system-ui, sans-serif;
+}
+.brand-title { font-weight: 600; letter-spacing: -0.01em; }
 .nav { display: flex; gap: 0.25rem; flex: 1; }
 .navlink {
   text-decoration: none; color: var(--muted);
@@ -154,6 +161,23 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
 /* Inline rate editor in the jobs table */
 .rate-set { display: inline-flex; gap: 0.4rem; align-items: center; }
 .rate-input { width: 90px; padding: 0.35rem 0.5rem; font-size: 0.85rem; }
+
+/* Station status hour board */
+.board-scroll { overflow-x: auto; margin: 0.6rem 0 0.4rem; }
+.board { border-collapse: collapse; font-size: 0.78rem; width: 100%; }
+.board th, .board td {
+  border: 1px solid var(--border); text-align: center;
+  min-width: 32px; height: 30px; padding: 0 2px;
+}
+.board th { color: var(--muted); font-weight: 500; background: var(--bg); }
+.board .board-station {
+  text-align: left; padding: 0 0.6rem; white-space: nowrap;
+  font-weight: 500; background: var(--surface); min-width: 120px;
+}
+.board td.filled { background: #dff0e6; color: var(--accent); font-weight: 600; }
+.board th.now, .board td.now { background: #cdeadb; }
+.board td.filled.now { background: #b9e2cc; }
+.board th.future, .board td.future { background: #fbfbfa; color: #c8c7c1; }
 
 /* ------------------------------------------------------------------ */
 /* Login screen — matches the MJM portal design (dark circuit board,  */
