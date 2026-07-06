@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
 // PIECE RATE MODULE — fully self-contained in this one file.
 //
-// A piece-rate contract is the mix-and-match of STATION × GRADE (tag) × WORK
+// A piece-rate contract is the mix-and-match of STATION × TAG (grade) × WORK
 // DESCRIPTION, each with its own unit ("/cage tipped", "/job done", …) and
-// rate. Grades are managed inside the create window. Kept in one file so the
-// module can be lifted out to its own repo later; only dependencies are the
-// shared Supabase client/types and react-router's Link.
+// rate. The landing view is the contract list; buttons above it switch to
+// station management. Tags are created/managed in Settings (they'll drive
+// user access later) — here you only pick one when creating a piece rate.
 // Tables used: stations, grades, jobs, piece_rates (see supabase/setup.sql).
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
@@ -21,14 +21,14 @@ import {
 
 const UNIT_SUGGESTIONS = ['/cage tipped', '/job done', '/tonne', '/bunch', '/trip', '/hour']
 
+type View = 'rates' | 'stations'
+
 export default function PieceRate() {
+  const [view, setView] = useState<View>('rates')
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<Rate[]>([])
-  const [stationFilter, setStationFilter] = useState('')
-  const [gradeFilter, setGradeFilter] = useState('')
-  const [showInactive, setShowInactive] = useState(false)
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -56,9 +56,6 @@ export default function PieceRate() {
     load()
   }, [])
 
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
-
   // Rates come sorted newest-first; the first one effective today or earlier
   // is the current rate for a contract.
   const currentRate = useMemo(() => {
@@ -70,111 +67,50 @@ export default function PieceRate() {
     return m
   }, [rates])
 
-  async function setActive(job: Job, active: boolean) {
-    const { error } = await supabase.from('jobs').update({ active }).eq('id', job.id)
-    if (error) setError(error.message)
-    else load()
-  }
-
   if (loading) return <p className="muted">Loading…</p>
-
-  const list = jobs
-    .filter((j) => (showInactive ? true : j.active))
-    .filter((j) => (stationFilter ? j.station_id === stationFilter : true))
-    .filter((j) => (gradeFilter ? j.grade_id === gradeFilter : true))
-    .sort((a, b) => stationName(a.station_id).localeCompare(stationName(b.station_id)) || a.name.localeCompare(b.name))
 
   return (
     <div className="stack">
-      <div className="row-form spread">
-        <div>
-          <Link to="/" className="small muted">← Overall status</Link>
-          <h1>Piece Rate</h1>
-          <p className="muted">
-            All piece-rate contracts: station × tag × work, each with its own unit and rate.
-          </p>
-        </div>
-        <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
+      <div>
+        <Link to="/" className="small muted">← Overall status</Link>
+        <h1>Piece Rate</h1>
       </div>
 
       {error && <div className="error">{error}</div>}
 
-      <div className="card stack">
+      <div className="row-form spread">
         <div className="row-form">
-          <label className="field inline">
-            <span>Station</span>
-            <select value={stationFilter} onChange={(e) => setStationFilter(e.target.value)}>
-              <option value="">All stations</option>
-              {stations.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field inline">
-            <span>Tag</span>
-            <select value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
-              <option value="">All tags</option>
-              {grades.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="small muted checkbox" style={{ alignSelf: 'flex-end' }}>
-            <input
-              type="checkbox"
-              checked={showInactive}
-              onChange={(e) => setShowInactive(e.target.checked)}
-            />{' '}
-            Show inactive
-          </label>
+          <button
+            className={view === 'rates' ? 'btn' : 'btn ghost'}
+            onClick={() => setView('rates')}
+          >
+            Piece rates
+          </button>
+          <button
+            className={view === 'stations' ? 'btn' : 'btn ghost'}
+            onClick={() => setView('stations')}
+          >
+            Stations
+          </button>
         </div>
-
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Station</th>
-              <th>Work description</th>
-              <th>Tag</th>
-              <th>Unit</th>
-              <th className="right">Rate</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.length === 0 && (
-              <tr>
-                <td colSpan={6} className="muted">
-                  No piece rates yet — click “Create new piece rate” to add the first one.
-                </td>
-              </tr>
-            )}
-            {list.map((j) => {
-              const rate = currentRate.get(j.id)
-              const tag = gradeName(j.grade_id)
-              return (
-                <tr key={j.id} className={j.active ? '' : 'muted'}>
-                  <td>{stationName(j.station_id)}</td>
-                  <td>{j.name}{!j.active && ' (inactive)'}</td>
-                  <td>{tag ? <span className="badge ok">{tag}</span> : <span className="muted">—</span>}</td>
-                  <td className="muted">{j.unit}</td>
-                  <td className="right">
-                    {rate ? <strong>{Number(rate.rate)}</strong> : <span className="badge off">no rate</span>}
-                  </td>
-                  <td className="right">
-                    <button className="linkbtn" onClick={() => setModal(j)}>Edit</button>{' '}
-                    {j.active ? (
-                      <button className="linkbtn danger" onClick={() => setActive(j, false)}>Deactivate</button>
-                    ) : (
-                      <button className="linkbtn" onClick={() => setActive(j, true)}>Reactivate</button>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-        <p className="muted small">{list.length} contract(s) shown.</p>
+        {view === 'rates' && (
+          <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
+        )}
       </div>
+
+      {view === 'rates' ? (
+        <RatesList
+          stations={stations}
+          grades={grades}
+          jobs={jobs}
+          currentRate={currentRate}
+          onEdit={(j) => setModal(j)}
+          onChanged={load}
+          onError={setError}
+        />
+      ) : (
+        <StationsList stations={stations} onChanged={load} onError={setError} />
+      )}
 
       {modal !== 'closed' && (
         <ContractModal
@@ -187,9 +123,218 @@ export default function PieceRate() {
             setModal('closed')
             load()
           }}
-          onGradesChanged={load}
         />
       )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Contract list (landing view)                                       */
+/* ------------------------------------------------------------------ */
+
+function RatesList({
+  stations,
+  grades,
+  jobs,
+  currentRate,
+  onEdit,
+  onChanged,
+  onError,
+}: {
+  stations: Station[]
+  grades: Grade[]
+  jobs: Job[]
+  currentRate: Map<string, Rate>
+  onEdit: (j: Job) => void
+  onChanged: () => void
+  onError: (m: string | null) => void
+}) {
+  const [stationFilter, setStationFilter] = useState('')
+  const [gradeFilter, setGradeFilter] = useState('')
+  const [showInactive, setShowInactive] = useState(false)
+
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
+
+  async function setActive(job: Job, active: boolean) {
+    const { error } = await supabase.from('jobs').update({ active }).eq('id', job.id)
+    if (error) onError(error.message)
+    else onChanged()
+  }
+
+  const list = jobs
+    .filter((j) => (showInactive ? true : j.active))
+    .filter((j) => (stationFilter ? j.station_id === stationFilter : true))
+    .filter((j) => (gradeFilter ? j.grade_id === gradeFilter : true))
+    .sort(
+      (a, b) =>
+        stationName(a.station_id).localeCompare(stationName(b.station_id)) ||
+        a.name.localeCompare(b.name),
+    )
+
+  return (
+    <div className="card stack">
+      <div className="row-form">
+        <label className="field inline">
+          <span>Station</span>
+          <select value={stationFilter} onChange={(e) => setStationFilter(e.target.value)}>
+            <option value="">All stations</option>
+            {stations.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field inline">
+          <span>Tag</span>
+          <select value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
+            <option value="">All tags</option>
+            {grades.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="small muted checkbox" style={{ alignSelf: 'flex-end' }}>
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)}
+          />{' '}
+          Show inactive
+        </label>
+      </div>
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Station</th>
+            <th>Work description</th>
+            <th>Tag</th>
+            <th>Unit</th>
+            <th className="right">Rate</th>
+            <th className="right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.length === 0 && (
+            <tr>
+              <td colSpan={6} className="muted">
+                No piece rates yet — click “Create new piece rate” to add the first one.
+              </td>
+            </tr>
+          )}
+          {list.map((j) => {
+            const rate = currentRate.get(j.id)
+            const tag = gradeName(j.grade_id)
+            return (
+              <tr key={j.id} className={j.active ? '' : 'muted'}>
+                <td>{stationName(j.station_id)}</td>
+                <td>{j.name}{!j.active && ' (inactive)'}</td>
+                <td>{tag ? <span className="badge ok">{tag}</span> : <span className="muted">—</span>}</td>
+                <td className="muted">{j.unit}</td>
+                <td className="right">
+                  {rate ? <strong>{Number(rate.rate)}</strong> : <span className="badge off">no rate</span>}
+                </td>
+                <td className="right">
+                  <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
+                  {j.active ? (
+                    <button className="linkbtn danger" onClick={() => setActive(j, false)}>Deactivate</button>
+                  ) : (
+                    <button className="linkbtn" onClick={() => setActive(j, true)}>Reactivate</button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <p className="muted small">{list.length} contract(s) shown.</p>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Stations view                                                      */
+/* ------------------------------------------------------------------ */
+
+function StationsList({
+  stations,
+  onChanged,
+  onError,
+}: {
+  stations: Station[]
+  onChanged: () => void
+  onError: (m: string | null) => void
+}) {
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+
+  async function addStation(e: FormEvent) {
+    e.preventDefault()
+    onError(null)
+    const sort = Math.max(0, ...stations.map((s) => s.sort_order)) + 1
+    const { error } = await supabase
+      .from('stations')
+      .insert({ name: name.trim(), sort_order: sort })
+    if (error) return onError(error.message)
+    setName('')
+    setAdding(false)
+    onChanged()
+  }
+
+  async function rename(s: Station) {
+    const next = window.prompt('Station name', s.name)
+    if (!next || next.trim() === s.name) return
+    const { error } = await supabase.from('stations').update({ name: next.trim() }).eq('id', s.id)
+    if (error) onError(error.message)
+    else onChanged()
+  }
+
+  async function remove(s: Station) {
+    if (!window.confirm(`Delete station "${s.name}"? This fails if it has piece rates or records.`)) return
+    const { error } = await supabase.from('stations').delete().eq('id', s.id)
+    if (error) onError(error.message)
+    else onChanged()
+  }
+
+  return (
+    <div className="card stack">
+      <div>
+        {adding ? (
+          <form className="row-form" onSubmit={addStation}>
+            <label className="field inline grow">
+              <span>New station name</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
+            </label>
+            <button className="btn" type="submit">Add station</button>
+            <button className="btn ghost" type="button" onClick={() => setAdding(false)}>Cancel</button>
+          </form>
+        ) : (
+          <button className="btn" onClick={() => setAdding(true)}>+ Add new station</button>
+        )}
+      </div>
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Station</th>
+            <th className="right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stations.map((s) => (
+            <tr key={s.id}>
+              <td className="muted">{s.sort_order}</td>
+              <td>{s.name}</td>
+              <td className="right">
+                <button className="linkbtn" onClick={() => rename(s)}>Rename</button>{' '}
+                <button className="linkbtn danger" onClick={() => remove(s)}>Delete</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -205,7 +350,6 @@ function ContractModal({
   currentRate,
   onClose,
   onSaved,
-  onGradesChanged,
 }: {
   stations: Station[]
   grades: Grade[]
@@ -213,50 +357,14 @@ function ContractModal({
   currentRate: Rate | null
   onClose: () => void
   onSaved: () => void
-  onGradesChanged: () => void
 }) {
   const [stationId, setStationId] = useState(job?.station_id ?? '')
   const [gradeId, setGradeId] = useState(job?.grade_id ?? '')
   const [description, setDescription] = useState(job?.name ?? '')
   const [unit, setUnit] = useState(job?.unit ?? '')
   const [rate, setRate] = useState(currentRate ? String(Number(currentRate.rate)) : '')
-  const [manageTags, setManageTags] = useState(false)
-  const [newGrade, setNewGrade] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-
-  async function addGrade() {
-    const name = newGrade.trim()
-    if (!name) return
-    const sort = Math.max(0, ...grades.map((g) => g.sort_order)) + 1
-    const { data, error } = await supabase
-      .from('grades')
-      .insert({ name, sort_order: sort })
-      .select()
-      .single()
-    if (error) return setError(error.message)
-    setNewGrade('')
-    setGradeId(data.id)
-    onGradesChanged()
-  }
-
-  async function renameGrade(g: Grade) {
-    const next = window.prompt('Tag name', g.name)
-    if (!next || next.trim() === g.name) return
-    const { error } = await supabase.from('grades').update({ name: next.trim() }).eq('id', g.id)
-    if (error) setError(error.message)
-    else onGradesChanged()
-  }
-
-  async function deleteGrade(g: Grade) {
-    if (!window.confirm(`Delete tag "${g.name}"? This fails if any piece rate uses it.`)) return
-    const { error } = await supabase.from('grades').delete().eq('id', g.id)
-    if (error) setError(error.message)
-    else {
-      if (gradeId === g.id) setGradeId('')
-      onGradesChanged()
-    }
-  }
 
   async function save(e: FormEvent) {
     e.preventDefault()
@@ -268,28 +376,17 @@ function ContractModal({
     setSaving(true)
     try {
       let jobId = job?.id
+      const fields = {
+        station_id: stationId,
+        grade_id: gradeId || null,
+        name: description.trim(),
+        unit: unit.trim() || 'unit',
+      }
       if (job) {
-        const { error } = await supabase
-          .from('jobs')
-          .update({
-            station_id: stationId,
-            grade_id: gradeId || null,
-            name: description.trim(),
-            unit: unit.trim() || 'unit',
-          })
-          .eq('id', job.id)
+        const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
         if (error) throw new Error(error.message)
       } else {
-        const { data, error } = await supabase
-          .from('jobs')
-          .insert({
-            station_id: stationId,
-            grade_id: gradeId || null,
-            name: description.trim(),
-            unit: unit.trim() || 'unit',
-          })
-          .select()
-          .single()
+        const { data, error } = await supabase.from('jobs').insert(fields).select().single()
         if (error) throw new Error(error.message)
         jobId = data.id
       }
@@ -333,50 +430,15 @@ function ContractModal({
         </label>
 
         <label className="field">
-          <span>Grade (tag — who this rate belongs to)</span>
-          <div className="row-form">
-            <select
-              value={gradeId}
-              onChange={(e) => setGradeId(e.target.value)}
-              style={{ flex: 1 }}
-            >
-              <option value="">No tag</option>
-              {grades.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => setManageTags((v) => !v)}
-            >
-              {manageTags ? 'Done' : 'Manage tags'}
-            </button>
-          </div>
-        </label>
-
-        {manageTags && (
-          <div className="tag-manager">
+          <span>Tag (who this rate belongs to)</span>
+          <select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
+            <option value="">No tag</option>
             {grades.map((g) => (
-              <div className="mob-row" key={g.id}>
-                <span>{g.name}</span>
-                <span>
-                  <button type="button" className="linkbtn" onClick={() => renameGrade(g)}>Rename</button>{' '}
-                  <button type="button" className="linkbtn danger" onClick={() => deleteGrade(g)}>Delete</button>
-                </span>
-              </div>
+              <option key={g.id} value={g.id}>{g.name}</option>
             ))}
-            <div className="row-form">
-              <input
-                placeholder="New tag name"
-                value={newGrade}
-                onChange={(e) => setNewGrade(e.target.value)}
-                style={{ flex: 1 }}
-              />
-              <button type="button" className="btn ghost" onClick={addGrade}>Add tag</button>
-            </div>
-          </div>
-        )}
+          </select>
+          <span className="small">Tags are managed in Settings → Tags.</span>
+        </label>
 
         <label className="field">
           <span>Work description</span>

@@ -187,7 +187,7 @@ function StationBoard() {
       )}
       <p className="muted small">
         Each box is one hour; the number is the quantity recorded for that station in
-        that hour. The green column is the current hour. Click a station to open its
+        that hour. The highlighted column is the current hour. Click a station to open its
         records.
       </p>
     </div>

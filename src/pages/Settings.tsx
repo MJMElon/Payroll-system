@@ -1,121 +1,34 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase, type Station, type Worker } from '../lib/supabase'
+import { supabase, type Grade, type Station, type Worker } from '../lib/supabase'
 
-type Tab = 'stations' | 'workers'
+type Tab = 'workers' | 'tags'
 
 export default function Settings() {
-  const [tab, setTab] = useState<Tab>('stations')
+  const [tab, setTab] = useState<Tab>('workers')
 
   return (
     <div className="stack">
       <div>
+        <Link to="/" className="small muted">← Overall status</Link>
         <h1>Settings</h1>
         <p className="muted">
-          Master data: stations and workers. Jobs and rates live in the{' '}
+          Workers and tags. Stations and rates live in the{' '}
           <Link to="/piece-rate">Piece Rate module</Link>.
         </p>
       </div>
 
       <div className="tabs">
-        <button className={`tab ${tab === 'stations' ? 'active' : ''}`} onClick={() => setTab('stations')}>
-          Stations
-        </button>
         <button className={`tab ${tab === 'workers' ? 'active' : ''}`} onClick={() => setTab('workers')}>
           Workers
         </button>
+        <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
+          Tags
+        </button>
       </div>
 
-      {tab === 'stations' && <StationsTab />}
       {tab === 'workers' && <WorkersTab />}
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-
-function StationsTab() {
-  const [stations, setStations] = useState<Station[]>([])
-  const [name, setName] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  async function load() {
-    const { data, error } = await supabase
-      .from('stations')
-      .select('id, name, sort_order')
-      .order('sort_order')
-    if (error) setError(error.message)
-    else setStations(data ?? [])
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    load()
-  }, [])
-
-  async function addStation(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    const sort = Math.max(0, ...stations.map((s) => s.sort_order)) + 1
-    const { error } = await supabase.from('stations').insert({ name: name.trim(), sort_order: sort })
-    if (error) return setError(error.message)
-    setName('')
-    load()
-  }
-
-  async function rename(s: Station) {
-    const next = window.prompt('Station name', s.name)
-    if (!next || next.trim() === s.name) return
-    const { error } = await supabase.from('stations').update({ name: next.trim() }).eq('id', s.id)
-    if (error) setError(error.message)
-    else load()
-  }
-
-  async function remove(s: Station) {
-    if (!window.confirm(`Delete station "${s.name}"? This fails if it has jobs, workers or records.`)) return
-    const { error } = await supabase.from('stations').delete().eq('id', s.id)
-    if (error) setError(error.message)
-    else load()
-  }
-
-  if (loading) return <p className="muted">Loading…</p>
-
-  return (
-    <div className="stack">
-      {error && <div className="error">{error}</div>}
-
-      <div className="card">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Station</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stations.map((s) => (
-              <tr key={s.id}>
-                <td className="muted">{s.sort_order}</td>
-                <td>{s.name}</td>
-                <td className="right">
-                  <button className="linkbtn" onClick={() => rename(s)}>Rename</button>{' '}
-                  <button className="linkbtn danger" onClick={() => remove(s)}>Delete</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <form className="card row-form" onSubmit={addStation}>
-        <label className="field inline">
-          <span>New station name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} required />
-        </label>
-        <button className="btn" type="submit">Add station</button>
-      </form>
+      {tab === 'tags' && <TagsTab />}
     </div>
   )
 }
@@ -245,6 +158,102 @@ function WorkersTab() {
           </select>
         </label>
         <button className="btn" type="submit">Add worker</button>
+      </form>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Tags (grades). Piece rates are tagged with these; later, user      */
+/* access will be appointed per tag here too.                         */
+/* ------------------------------------------------------------------ */
+
+function TagsTab() {
+  const [grades, setGrades] = useState<Grade[]>([])
+  const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  async function load() {
+    const { data, error } = await supabase
+      .from('grades')
+      .select('id, name, sort_order')
+      .order('sort_order')
+    if (error) setError(error.message)
+    else setGrades(data ?? [])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  async function addTag(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    const sort = Math.max(0, ...grades.map((g) => g.sort_order)) + 1
+    const { error } = await supabase.from('grades').insert({ name: name.trim(), sort_order: sort })
+    if (error) return setError(error.message)
+    setName('')
+    load()
+  }
+
+  async function rename(g: Grade) {
+    const next = window.prompt('Tag name', g.name)
+    if (!next || next.trim() === g.name) return
+    const { error } = await supabase.from('grades').update({ name: next.trim() }).eq('id', g.id)
+    if (error) setError(error.message)
+    else load()
+  }
+
+  async function remove(g: Grade) {
+    if (!window.confirm(`Delete tag "${g.name}"? This fails if any piece rate uses it.`)) return
+    const { error } = await supabase.from('grades').delete().eq('id', g.id)
+    if (error) setError(error.message)
+    else load()
+  }
+
+  if (loading) return <p className="muted">Loading…</p>
+
+  return (
+    <div className="stack">
+      {error && <div className="error">{error}</div>}
+
+      <div className="card">
+        <p className="muted small">
+          Tags mark who a piece rate belongs to (Operator, Station Head, …). User access
+          will be appointed per tag here later.
+        </p>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Tag</th>
+              <th className="right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {grades.length === 0 && (
+              <tr><td colSpan={2} className="muted">No tags yet — add the first one below.</td></tr>
+            )}
+            {grades.map((g) => (
+              <tr key={g.id}>
+                <td><span className="badge ok">{g.name}</span></td>
+                <td className="right">
+                  <button className="linkbtn" onClick={() => rename(g)}>Rename</button>{' '}
+                  <button className="linkbtn danger" onClick={() => remove(g)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <form className="card row-form" onSubmit={addTag}>
+        <label className="field inline">
+          <span>New tag name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} required />
+        </label>
+        <button className="btn" type="submit">Add tag</button>
       </form>
     </div>
   )
