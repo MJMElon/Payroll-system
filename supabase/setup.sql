@@ -112,8 +112,17 @@ create policy "admin manager manage workers" on public.workers
   for all using (public.my_role() in ('admin', 'manager'));
 
 -- ---------------------------------------------------------------------------
--- Piece-rate work: jobs, rates, production entries
+-- Piece-rate work: grades (tags), jobs, rates, production entries
 -- ---------------------------------------------------------------------------
+
+-- Grades are the "tags" a piece rate belongs to (Operator, Station Head, …),
+-- so the same work at the same station can be priced per grade.
+create table if not exists public.grades (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now()
+);
 
 create table if not exists public.jobs (
   id uuid primary key default gen_random_uuid(),
@@ -124,6 +133,14 @@ create table if not exists public.jobs (
   created_at timestamptz not null default now(),
   unique (station_id, name)
 );
+
+-- A piece-rate contract is the station × grade × work combination: add the
+-- grade link and relax the old uniqueness so the same description can exist
+-- per grade. (Idempotent for databases created from earlier versions.)
+alter table public.jobs add column if not exists grade_id uuid references public.grades (id);
+alter table public.jobs drop constraint if exists jobs_station_id_name_key;
+create unique index if not exists jobs_station_grade_name_idx
+  on public.jobs (station_id, grade_id, name);
 
 -- Rate history per job. The rate in force on a date is the newest row with
 -- effective_from <= that date.
@@ -196,6 +213,16 @@ alter table public.payroll_runs enable row level security;
 alter table public.payroll_lines enable row level security;
 alter table public.payroll_adjustments enable row level security;
 
+alter table public.grades enable row level security;
+
+drop policy if exists "authenticated read grades" on public.grades;
+create policy "authenticated read grades" on public.grades
+  for select using (auth.uid() is not null);
+
+drop policy if exists "admin manager manage grades" on public.grades;
+create policy "admin manager manage grades" on public.grades
+  for all using (public.my_role() in ('admin', 'manager'));
+
 -- jobs / piece_rates: any signed-in user reads; admins/managers manage.
 drop policy if exists "authenticated read jobs" on public.jobs;
 create policy "authenticated read jobs" on public.jobs
@@ -261,4 +288,13 @@ insert into public.stations (name, sort_order) values
   ('Clarification', 5),
   ('Kernel Recovery', 6),
   ('Boiler', 7)
+on conflict (name) do nothing;
+
+-- Starter grades (tags) — extend or rename in the Piece Rate module.
+insert into public.grades (name, sort_order) values
+  ('Operator', 1),
+  ('Assistant Station Head', 2),
+  ('Station Head', 3),
+  ('Engineer', 4),
+  ('General Worker', 5)
 on conflict (name) do nothing;

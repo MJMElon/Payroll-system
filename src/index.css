@@ -237,6 +237,34 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
   box-shadow: 0 6px 16px rgba(16, 185, 129, 0.35);
 }
 
+/* Floating windows (modals) */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(8, 24, 17, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 6vh 1rem 2rem;
+  overflow-y: auto;
+}
+.modal {
+  width: 100%; max-width: 460px;
+  background: var(--surface); border-radius: 20px; padding: 1.5rem;
+  box-shadow: 0 30px 80px rgba(5, 30, 18, 0.35);
+  display: flex; flex-direction: column; gap: 0.9rem;
+}
+.modal h2 { margin: 0; font-size: 1.15rem; }
+.modal-close {
+  appearance: none; border: none; cursor: pointer;
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--bg); color: var(--muted); font-size: 1.1rem; line-height: 1;
+}
+.modal-close:hover { background: var(--border); color: var(--text); }
+.tag-manager {
+  background: var(--bg); border-radius: 12px; padding: 0.8rem 0.9rem;
+  display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.85rem;
+}
+
 /* Demo mobile view — phone frame and mock screens */
 .phone-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
 .phone {

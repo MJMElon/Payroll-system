@@ -45,9 +45,16 @@ export interface Worker {
   active: boolean
 }
 
+export interface Grade {
+  id: string
+  name: string
+  sort_order: number
+}
+
 export interface Job {
   id: string
   station_id: string
+  grade_id: string | null
   name: string
   unit: string
   active: boolean

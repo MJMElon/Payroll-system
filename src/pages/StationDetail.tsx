@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import {
   supabase,
   todayISO,
+  type Grade,
   type Job,
   type ProductionEntry,
   type Station,
@@ -24,6 +25,7 @@ export default function StationDetail() {
 
   const [station, setStation] = useState<Station | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
+  const [grades, setGrades] = useState<Grade[]>([])
   const [workers, setWorkers] = useState<Worker[]>([])
   const [entries, setEntries] = useState<ProductionEntry[]>([])
 
@@ -39,11 +41,11 @@ export default function StationDetail() {
 
   useEffect(() => {
     async function loadMaster() {
-      const [s, j, w] = await Promise.all([
+      const [s, j, w, g] = await Promise.all([
         supabase.from('stations').select('id, name, sort_order').eq('id', stationId).single(),
         supabase
           .from('jobs')
-          .select('id, station_id, name, unit, active')
+          .select('id, station_id, grade_id, name, unit, active')
           .eq('station_id', stationId)
           .eq('active', true)
           .order('name'),
@@ -52,11 +54,13 @@ export default function StationDetail() {
           .select('id, full_name, station_id, active')
           .eq('active', true)
           .order('full_name'),
+        supabase.from('grades').select('id, name, sort_order').order('sort_order'),
       ])
       if (s.error) setError(s.error.message)
       else setStation(s.data)
       setJobs(j.data ?? [])
       setWorkers(w.data ?? [])
+      setGrades(g.data ?? [])
       setLoading(false)
     }
     loadMaster()
@@ -136,9 +140,14 @@ export default function StationDetail() {
             <span>Job</span>
             <select value={jobId} onChange={(e) => setJobId(e.target.value)} required>
               <option value="">Pick…</option>
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>{j.name} ({j.unit})</option>
-              ))}
+              {jobs.map((j) => {
+                const tag = grades.find((g) => g.id === j.grade_id)?.name
+                return (
+                  <option key={j.id} value={j.id}>
+                    {j.name}{tag ? ` · ${tag}` : ''} ({j.unit})
+                  </option>
+                )
+              })}
             </select>
           </label>
           <label className="field inline">

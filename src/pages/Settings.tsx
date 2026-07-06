@@ -1,14 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import {
-  supabase,
-  type Job,
-  type PieceRate,
-  type Station,
-  type Worker,
-  todayISO,
-} from '../lib/supabase'
+import { Link } from 'react-router-dom'
+import { supabase, type Station, type Worker } from '../lib/supabase'
 
-type Tab = 'stations' | 'workers' | 'jobs'
+type Tab = 'stations' | 'workers'
 
 export default function Settings() {
   const [tab, setTab] = useState<Tab>('stations')
@@ -17,7 +11,10 @@ export default function Settings() {
     <div className="stack">
       <div>
         <h1>Settings</h1>
-        <p className="muted">Master data: stations, workers, jobs and piece rates.</p>
+        <p className="muted">
+          Master data: stations and workers. Jobs and rates live in the{' '}
+          <Link to="/piece-rate">Piece Rate module</Link>.
+        </p>
       </div>
 
       <div className="tabs">
@@ -27,14 +24,10 @@ export default function Settings() {
         <button className={`tab ${tab === 'workers' ? 'active' : ''}`} onClick={() => setTab('workers')}>
           Workers
         </button>
-        <button className={`tab ${tab === 'jobs' ? 'active' : ''}`} onClick={() => setTab('jobs')}>
-          Jobs &amp; Rates
-        </button>
       </div>
 
       {tab === 'stations' && <StationsTab />}
       {tab === 'workers' && <WorkersTab />}
-      {tab === 'jobs' && <JobsTab />}
     </div>
   )
 }
@@ -252,174 +245,6 @@ function WorkersTab() {
           </select>
         </label>
         <button className="btn" type="submit">Add worker</button>
-      </form>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-
-function JobsTab() {
-  const [stations, setStations] = useState<Station[]>([])
-  const [jobs, setJobs] = useState<Job[]>([])
-  const [rates, setRates] = useState<PieceRate[]>([])
-  const [stationId, setStationId] = useState('')
-  const [jobName, setJobName] = useState('')
-  const [jobUnit, setJobUnit] = useState('')
-  const [rateInputs, setRateInputs] = useState<Record<string, string>>({})
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  async function load() {
-    const [s, j, r] = await Promise.all([
-      supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-      supabase.from('jobs').select('id, station_id, name, unit, active').order('name'),
-      supabase
-        .from('piece_rates')
-        .select('id, job_id, rate, effective_from')
-        .order('effective_from', { ascending: false }),
-    ])
-    const err = s.error || j.error || r.error
-    if (err) setError(err.message)
-    setStations(s.data ?? [])
-    setJobs(j.data ?? [])
-    setRates(r.data ?? [])
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    load()
-  }, [])
-
-  // Newest rate whose effective_from is today or earlier (rates are sorted desc).
-  const currentRate = (jobId: string) =>
-    rates.find((r) => r.job_id === jobId && r.effective_from <= todayISO())
-
-  async function addJob(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    if (!stationId) return setError('Pick a station for the new job.')
-    const { error } = await supabase
-      .from('jobs')
-      .insert({ station_id: stationId, name: jobName.trim(), unit: jobUnit.trim() || 'unit' })
-    if (error) return setError(error.message)
-    setJobName('')
-    setJobUnit('')
-    load()
-  }
-
-  async function setRate(job: Job) {
-    setError(null)
-    const raw = (rateInputs[job.id] ?? '').trim()
-    const value = Number(raw)
-    if (!raw || Number.isNaN(value) || value < 0) return setError('Enter a valid non-negative rate.')
-    // Upsert on (job_id, effective_from): setting twice on the same day updates.
-    const { error } = await supabase
-      .from('piece_rates')
-      .upsert({ job_id: job.id, rate: value, effective_from: todayISO() }, { onConflict: 'job_id,effective_from' })
-    if (error) return setError(error.message)
-    setRateInputs((m) => ({ ...m, [job.id]: '' }))
-    load()
-  }
-
-  async function setJobActive(job: Job, active: boolean) {
-    const { error } = await supabase.from('jobs').update({ active }).eq('id', job.id)
-    if (error) setError(error.message)
-    else load()
-  }
-
-  if (loading) return <p className="muted">Loading…</p>
-
-  const visibleJobs = stationId ? jobs.filter((j) => j.station_id === stationId) : jobs
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-
-  return (
-    <div className="stack">
-      {error && <div className="error">{error}</div>}
-
-      <div className="card stack">
-        <div className="row-form">
-          <label className="field inline">
-            <span>Filter by station</span>
-            <select value={stationId} onChange={(e) => setStationId(e.target.value)}>
-              <option value="">All stations</option>
-              {stations.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Job</th>
-              <th>Station</th>
-              <th>Unit</th>
-              <th className="right">Current rate</th>
-              <th className="right">New rate (from today)</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleJobs.length === 0 && (
-              <tr><td colSpan={6} className="muted">No jobs yet — add the first one below.</td></tr>
-            )}
-            {visibleJobs.map((j) => {
-              const rate = currentRate(j.id)
-              return (
-                <tr key={j.id} className={j.active ? '' : 'muted'}>
-                  <td>{j.name}{!j.active && ' (inactive)'}</td>
-                  <td>{stationName(j.station_id)}</td>
-                  <td>{j.unit}</td>
-                  <td className="right">
-                    {rate ? rate.rate : <span className="badge off">no rate</span>}
-                  </td>
-                  <td className="right">
-                    <span className="rate-set">
-                      <input
-                        className="rate-input"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={rateInputs[j.id] ?? ''}
-                        onChange={(e) => setRateInputs((m) => ({ ...m, [j.id]: e.target.value }))}
-                      />
-                      <button className="linkbtn" onClick={() => setRate(j)} type="button">Set</button>
-                    </span>
-                  </td>
-                  <td className="right">
-                    {j.active ? (
-                      <button className="linkbtn danger" onClick={() => setJobActive(j, false)}>Deactivate</button>
-                    ) : (
-                      <button className="linkbtn" onClick={() => setJobActive(j, true)}>Reactivate</button>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <form className="card row-form" onSubmit={addJob}>
-        <label className="field inline">
-          <span>Station</span>
-          <select value={stationId} onChange={(e) => setStationId(e.target.value)} required>
-            <option value="">Pick…</option>
-            {stations.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        </label>
-        <label className="field inline">
-          <span>Job name</span>
-          <input value={jobName} onChange={(e) => setJobName(e.target.value)} required />
-        </label>
-        <label className="field inline">
-          <span>Unit (e.g. tonne, bunch)</span>
-          <input value={jobUnit} onChange={(e) => setJobUnit(e.target.value)} placeholder="unit" />
-        </label>
-        <button className="btn" type="submit">Add job</button>
       </form>
     </div>
   )
