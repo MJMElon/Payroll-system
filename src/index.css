@@ -191,6 +191,31 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
 .field.inline { min-width: 150px; }
 .field.inline.grow { flex: 1; min-width: 200px; }
 
+/* Back-to-main links get breathing room above the page title */
+a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
+
+/* Column headers that double as dropdown filters */
+.th-filter {
+  appearance: none; -webkit-appearance: none;
+  border: none; background: transparent; padding: 0; margin: 0;
+  color: var(--muted); font-weight: 600; font-size: 0.72rem;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  cursor: pointer; max-width: 160px;
+}
+.th-filter:hover { color: var(--text); }
+.th-filter.active { color: var(--accent-strong); text-decoration: underline; }
+.th-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Info notice */
+.notice {
+  color: var(--accent-strong); background: var(--accent-soft);
+  border: 1px solid #cfd6df;
+  padding: 0.5rem 0.6rem; border-radius: 8px; font-size: 0.85rem;
+}
+
+/* Approval section stands out slightly */
+.approval-card { border-left: 4px solid var(--accent-strong); }
+
 /* Small link-style action buttons in tables */
 .linkbtn {
   appearance: none; background: none; border: none; cursor: pointer; padding: 0;

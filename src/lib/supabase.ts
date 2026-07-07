@@ -59,6 +59,7 @@ export interface Job {
   name: string
   unit: string
   active: boolean
+  approval_status: 'pending' | 'approved' | 'rejected'
 }
 
 export interface PieceRate {

@@ -45,9 +45,10 @@ export default function StationDetail() {
         supabase.from('stations').select('id, name, sort_order').eq('id', stationId).single(),
         supabase
           .from('jobs')
-          .select('id, station_id, grade_id, name, unit, active')
+          .select('id, station_id, grade_id, name, unit, active, approval_status')
           .eq('station_id', stationId)
           .eq('active', true)
+          .eq('approval_status', 'approved')
           .order('name'),
         supabase
           .from('workers')

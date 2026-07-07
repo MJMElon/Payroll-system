@@ -142,6 +142,11 @@ alter table public.jobs drop constraint if exists jobs_station_id_name_key;
 
 -- Grade tag assigned to a worker/user (their station tag is workers.station_id).
 alter table public.workers add column if not exists grade_id uuid references public.grades (id);
+
+-- New piece rates wait for approval by a user tagged 'Piece rate approval'.
+-- Existing rows default to approved.
+alter table public.jobs add column if not exists approval_status text not null default 'approved'
+  check (approval_status in ('pending', 'approved', 'rejected'));
 create unique index if not exists jobs_station_grade_name_idx
   on public.jobs (station_id, grade_id, name);
 
@@ -299,5 +304,6 @@ insert into public.grades (name, sort_order) values
   ('Assistant Station Head', 2),
   ('Station Head', 3),
   ('Engineer', 4),
-  ('General Worker', 5)
+  ('General Worker', 5),
+  ('Piece rate approval', 99)
 on conflict (name) do nothing;

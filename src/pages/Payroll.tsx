@@ -212,7 +212,7 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
         .select('id, run_id, worker_id, amount, reason')
         .eq('run_id', run.id),
       supabase.from('workers').select('id, full_name, station_id, grade_id, active'),
-      supabase.from('jobs').select('id, station_id, grade_id, name, unit, active'),
+      supabase.from('jobs').select('id, station_id, grade_id, name, unit, active, approval_status'),
     ])
     const err = l.error || a.error || w.error || j.error
     if (err) setError(err.message)

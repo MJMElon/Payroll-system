@@ -2,14 +2,15 @@
 // PIECE RATE MODULE — fully self-contained in this one file.
 //
 // A piece-rate contract is the mix-and-match of STATION × TAG (grade) × WORK
-// DESCRIPTION, each with its own unit ("/cage tipped", "/job done", …) and
-// rate. The landing view is the contract list; buttons above it switch to
-// station management. Tags are created/managed in Settings (they'll drive
-// user access later) — here you only pick one when creating a piece rate.
+// DESCRIPTION, each with its own unit and rate. New contracts wait in the
+// "New piece rate approval" section until a user tagged 'Piece rate approval'
+// (or an admin) approves them. The list's Station and Tag column headers are
+// themselves dropdown filters. Tags are managed in Settings.
 // Tables used: stations, grades, jobs, piece_rates (see supabase/setup.sql).
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 import {
   supabase,
   todayISO,
@@ -20,16 +21,20 @@ import {
 } from '../lib/supabase'
 
 const UNIT_SUGGESTIONS = ['/cage tipped', '/job done', '/tonne', '/bunch', '/trip', '/hour']
+const APPROVER_TAG = 'Piece rate approval'
 
 type View = 'rates' | 'stations'
 
 export default function PieceRate() {
+  const { profile } = useAuth()
   const [view, setView] = useState<View>('rates')
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<Rate[]>([])
+  const [canApprove, setCanApprove] = useState(false)
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
+  const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -37,7 +42,10 @@ export default function PieceRate() {
     const [s, g, j, r] = await Promise.all([
       supabase.from('stations').select('id, name, sort_order').order('sort_order'),
       supabase.from('grades').select('id, name, sort_order').order('sort_order'),
-      supabase.from('jobs').select('id, station_id, grade_id, name, unit, active').order('name'),
+      supabase
+        .from('jobs')
+        .select('id, station_id, grade_id, name, unit, active, approval_status')
+        .order('name'),
       supabase
         .from('piece_rates')
         .select('id, job_id, rate, effective_from')
@@ -56,8 +64,28 @@ export default function PieceRate() {
     load()
   }, [])
 
-  // Rates come sorted newest-first; the first one effective today or earlier
-  // is the current rate for a contract.
+  // Approval rights: admins always; otherwise the signed-in user's linked
+  // worker must carry the APPROVER_TAG grade tag.
+  useEffect(() => {
+    async function check() {
+      if (profile?.role === 'admin') return setCanApprove(true)
+      if (!profile?.worker_id) return setCanApprove(false)
+      const { data: w } = await supabase
+        .from('workers')
+        .select('grade_id')
+        .eq('id', profile.worker_id)
+        .single()
+      if (!w?.grade_id) return setCanApprove(false)
+      const { data: g } = await supabase
+        .from('grades')
+        .select('name')
+        .eq('id', w.grade_id)
+        .single()
+      setCanApprove(g?.name === APPROVER_TAG)
+    }
+    check()
+  }, [profile])
+
   const currentRate = useMemo(() => {
     const m = new Map<string, Rate>()
     const today = todayISO()
@@ -69,14 +97,17 @@ export default function PieceRate() {
 
   if (loading) return <p className="muted">Loading…</p>
 
+  const pending = jobs.filter((j) => j.approval_status === 'pending')
+
   return (
     <div className="stack">
       <div>
-        <Link to="/" className="small muted">← Back to main page</Link>
+        <Link to="/" className="small muted backlink">← Back to main page</Link>
         <h1>Piece Rate</h1>
       </div>
 
       {error && <div className="error">{error}</div>}
+      {notice && <div className="notice">{notice}</div>}
 
       <div className="row-form spread">
         <div className="row-form">
@@ -98,11 +129,22 @@ export default function PieceRate() {
         )}
       </div>
 
+      {view === 'rates' && canApprove && (
+        <ApprovalSection
+          pending={pending}
+          stations={stations}
+          grades={grades}
+          currentRate={currentRate}
+          onChanged={load}
+          onError={setError}
+        />
+      )}
+
       {view === 'rates' ? (
         <RatesList
           stations={stations}
           grades={grades}
-          jobs={jobs}
+          jobs={jobs.filter((j) => j.approval_status === 'approved')}
           currentRate={currentRate}
           onEdit={(j) => setModal(j)}
           onChanged={load}
@@ -118,9 +160,11 @@ export default function PieceRate() {
           grades={grades}
           job={modal === 'create' ? null : modal}
           currentRate={modal === 'create' ? null : currentRate.get(modal.id) ?? null}
+          autoApprove={canApprove}
           onClose={() => setModal('closed')}
-          onSaved={() => {
+          onSaved={(submitted) => {
             setModal('closed')
+            setNotice(submitted ? 'Piece rate submitted — waiting for approval.' : null)
             load()
           }}
         />
@@ -130,7 +174,78 @@ export default function PieceRate() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Contract list (landing view)                                       */
+/* New piece rate approval — only for users tagged 'Piece rate        */
+/* approval' (or admins).                                             */
+/* ------------------------------------------------------------------ */
+
+function ApprovalSection({
+  pending,
+  stations,
+  grades,
+  currentRate,
+  onChanged,
+  onError,
+}: {
+  pending: Job[]
+  stations: Station[]
+  grades: Grade[]
+  currentRate: Map<string, Rate>
+  onChanged: () => void
+  onError: (m: string | null) => void
+}) {
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
+
+  async function decide(job: Job, approval_status: 'approved' | 'rejected') {
+    const { error } = await supabase.from('jobs').update({ approval_status }).eq('id', job.id)
+    if (error) onError(error.message)
+    else onChanged()
+  }
+
+  return (
+    <div className="card stack approval-card">
+      <h3>New piece rate approval</h3>
+      {pending.length === 0 ? (
+        <p className="muted small">Nothing waiting for approval.</p>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Station</th>
+              <th>Work description</th>
+              <th>Tag</th>
+              <th>Unit</th>
+              <th className="right">Proposed rate</th>
+              <th className="right">Decision</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pending.map((j) => {
+              const rate = currentRate.get(j.id)
+              const tag = gradeName(j.grade_id)
+              return (
+                <tr key={j.id}>
+                  <td>{stationName(j.station_id)}</td>
+                  <td>{j.name}</td>
+                  <td>{tag ? <span className="badge ok">{tag}</span> : <span className="muted">—</span>}</td>
+                  <td className="muted">{j.unit}</td>
+                  <td className="right"><strong>{rate ? Number(rate.rate) : '—'}</strong></td>
+                  <td className="right">
+                    <button className="linkbtn" onClick={() => decide(j, 'approved')}>Approve</button>{' '}
+                    <button className="linkbtn danger" onClick={() => decide(j, 'rejected')}>Reject</button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Contract list — Station and Tag column headers are the filters.    */
 /* ------------------------------------------------------------------ */
 
 function RatesList({
@@ -175,41 +290,36 @@ function RatesList({
 
   return (
     <div className="card stack">
-      <div className="row-form">
-        <label className="field inline">
-          <span>Station</span>
-          <select value={stationFilter} onChange={(e) => setStationFilter(e.target.value)}>
-            <option value="">All stations</option>
-            {stations.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        </label>
-        <label className="field inline">
-          <span>Tag</span>
-          <select value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
-            <option value="">All tags</option>
-            {grades.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-        </label>
-        <label className="small muted checkbox" style={{ alignSelf: 'flex-end' }}>
-          <input
-            type="checkbox"
-            checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-          />{' '}
-          Show inactive
-        </label>
-      </div>
-
       <table className="table">
         <thead>
           <tr>
-            <th>Station</th>
+            <th>
+              <select
+                className={`th-filter ${stationFilter ? 'active' : ''}`}
+                value={stationFilter}
+                onChange={(e) => setStationFilter(e.target.value)}
+                title="Filter by station"
+              >
+                <option value="">Station ▾</option>
+                {stations.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </th>
             <th>Work description</th>
-            <th>Tag</th>
+            <th>
+              <select
+                className={`th-filter ${gradeFilter ? 'active' : ''}`}
+                value={gradeFilter}
+                onChange={(e) => setGradeFilter(e.target.value)}
+                title="Filter by tag"
+              >
+                <option value="">Tag ▾</option>
+                {grades.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </th>
             <th>Unit</th>
             <th className="right">Rate</th>
             <th className="right">Actions</th>
@@ -219,7 +329,7 @@ function RatesList({
           {list.length === 0 && (
             <tr>
               <td colSpan={6} className="muted">
-                No piece rates yet — click “Create new piece rate” to add the first one.
+                No piece rates here — click “Create new piece rate” to add one.
               </td>
             </tr>
           )}
@@ -248,7 +358,17 @@ function RatesList({
           })}
         </tbody>
       </table>
-      <p className="muted small">{list.length} contract(s) shown.</p>
+      <div className="row-form spread">
+        <p className="muted small">{list.length} contract(s) shown.</p>
+        <label className="small muted checkbox">
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)}
+          />{' '}
+          Show inactive
+        </label>
+      </div>
     </div>
   )
 }
@@ -348,6 +468,7 @@ function ContractModal({
   grades,
   job,
   currentRate,
+  autoApprove,
   onClose,
   onSaved,
 }: {
@@ -355,8 +476,9 @@ function ContractModal({
   grades: Grade[]
   job: Job | null
   currentRate: Rate | null
+  autoApprove: boolean
   onClose: () => void
-  onSaved: () => void
+  onSaved: (submittedForApproval: boolean) => void
 }) {
   const [stationId, setStationId] = useState(job?.station_id ?? '')
   const [gradeId, setGradeId] = useState(job?.grade_id ?? '')
@@ -376,6 +498,7 @@ function ContractModal({
     setSaving(true)
     try {
       let jobId = job?.id
+      let submitted = false
       const fields = {
         station_id: stationId,
         grade_id: gradeId || null,
@@ -386,11 +509,17 @@ function ContractModal({
         const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
         if (error) throw new Error(error.message)
       } else {
-        const { data, error } = await supabase.from('jobs').insert(fields).select().single()
+        // New contracts by approvers go live immediately; others wait.
+        const approval_status = autoApprove ? 'approved' : 'pending'
+        submitted = !autoApprove
+        const { data, error } = await supabase
+          .from('jobs')
+          .insert({ ...fields, approval_status })
+          .select()
+          .single()
         if (error) throw new Error(error.message)
         jobId = data.id
       }
-      // Record the rate (today) unless editing and the rate is unchanged.
       const unchanged = job && currentRate && Number(currentRate.rate) === rateValue
       if (jobId && !unchanged) {
         const { error } = await supabase
@@ -401,7 +530,7 @@ function ContractModal({
           )
         if (error) throw new Error(error.message)
       }
-      onSaved()
+      onSaved(submitted)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -418,6 +547,11 @@ function ContractModal({
         </div>
 
         {error && <div className="error">{error}</div>}
+        {!job && !autoApprove && (
+          <p className="muted small">
+            New piece rates are submitted for approval before they appear in the list.
+          </p>
+        )}
 
         <label className="field">
           <span>Station</span>
@@ -480,7 +614,7 @@ function ContractModal({
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : job ? 'Save changes' : 'Create piece rate'}
+            {saving ? 'Saving…' : job ? 'Save changes' : autoApprove ? 'Create piece rate' : 'Submit for approval'}
           </button>
         </div>
       </form>
