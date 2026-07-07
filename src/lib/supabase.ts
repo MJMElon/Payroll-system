@@ -57,6 +57,7 @@ export interface Grade {
   sort_order: number
   color: string
   ability: string | null
+  modules: string[]
 }
 
 export interface Job {

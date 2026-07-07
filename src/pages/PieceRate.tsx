@@ -25,11 +25,8 @@ import {
 
 const UNIT_SUGGESTIONS = ['/cage tipped', '/job done', '/tonne', '/bunch', '/trip', '/hour']
 
-type View = 'rates' | 'stations'
-
 export default function PieceRate() {
   const { profile } = useAuth()
-  const [view, setView] = useState<View>('rates')
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
@@ -37,10 +34,6 @@ export default function PieceRate() {
   const [myTier, setMyTier] = useState<number | null>(null)
   const canManage = profile?.role === 'admin' || profile?.role === 'manager'
   const isAdmin = profile?.role === 'admin'
-  const isApprover = isAdmin || Boolean(profile?.can_approve_rates)
-  // Preset in Settings: 'verify' does step 1, 'approve' does the final step.
-  const canVerify = isAdmin || (Boolean(profile?.can_approve_rates) && (profile?.approval_role ?? 'verify') === 'verify')
-  const canFinal = isAdmin || (Boolean(profile?.can_approve_rates) && profile?.approval_role === 'approve')
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
   const [showApprovals, setShowApprovals] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -72,6 +65,12 @@ export default function PieceRate() {
   useEffect(() => {
     load()
   }, [])
+
+  // Approval rights follow the tag tiers: tier 2 (Manager) verifies, tier 1
+  // (Management) gives final approval. Admins can do both.
+  const canVerify = isAdmin || myTier === 2
+  const canFinal = isAdmin || myTier === 1
+  const isApprover = isAdmin || myTier === 1 || myTier === 2
 
   // Tier comes from the signed-in account's grade tag.
   useEffect(() => {
@@ -122,54 +121,30 @@ export default function PieceRate() {
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
-      <div className="row-form spread">
-        <div className="row-form">
-          {canManage && (
-            <>
-              <button
-                className={view === 'rates' ? 'btn' : 'btn ghost'}
-                onClick={() => setView('rates')}
-              >
-                Piece rates
-              </button>
-              <button
-                className={view === 'stations' ? 'btn' : 'btn ghost'}
-                onClick={() => setView('stations')}
-              >
-                Stations
-              </button>
-            </>
-          )}
-        </div>
-        <div className="row-form">
-          {view === 'rates' && isApprover && (
-            <button className="btn ghost badge-holder" onClick={() => setShowApprovals(true)}>
-              Approvals
-              {openApprovals.length > 0 && (
-                <span className="count-badge">{openApprovals.length}</span>
-              )}
-            </button>
-          )}
-          {view === 'rates' && canManage && (
-            <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
-          )}
-        </div>
+      <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+        {isApprover && (
+          <button className="btn ghost badge-holder" onClick={() => setShowApprovals(true)}>
+            Approvals
+            {openApprovals.length > 0 && (
+              <span className="count-badge">{openApprovals.length}</span>
+            )}
+          </button>
+        )}
+        {canManage && (
+          <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
+        )}
       </div>
 
-      {view === 'rates' ? (
-        <RatesList
-          stations={stations}
-          grades={grades}
-          jobs={jobs.filter((j) => j.approval_status === 'approved' && visibleTo(j))}
-          currentRate={currentRate}
-          canManage={canManage}
-          onEdit={(j) => setModal(j)}
-          onChanged={load}
-          onError={setError}
-        />
-      ) : (
-        <StationsList stations={stations} onChanged={load} onError={setError} />
-      )}
+      <RatesList
+        stations={stations}
+        grades={grades}
+        jobs={jobs.filter((j) => j.approval_status === 'approved' && visibleTo(j))}
+        currentRate={currentRate}
+        canManage={canManage}
+        onEdit={(j) => setModal(j)}
+        onChanged={load}
+        onError={setError}
+      />
 
       {showApprovals && (
         <ApprovalModal
@@ -436,92 +411,6 @@ function RatesList({
           Show inactive
         </label>
       </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Stations view                                                      */
-/* ------------------------------------------------------------------ */
-
-function StationsList({
-  stations,
-  onChanged,
-  onError,
-}: {
-  stations: Station[]
-  onChanged: () => void
-  onError: (m: string | null) => void
-}) {
-  const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
-
-  async function addStation(e: FormEvent) {
-    e.preventDefault()
-    onError(null)
-    const sort = Math.max(0, ...stations.map((s) => s.sort_order)) + 1
-    const { error } = await supabase
-      .from('stations')
-      .insert({ name: name.trim(), sort_order: sort })
-    if (error) return onError(error.message)
-    setName('')
-    setAdding(false)
-    onChanged()
-  }
-
-  async function rename(s: Station) {
-    const next = window.prompt('Station name', s.name)
-    if (!next || next.trim() === s.name) return
-    const { error } = await supabase.from('stations').update({ name: next.trim() }).eq('id', s.id)
-    if (error) onError(error.message)
-    else onChanged()
-  }
-
-  async function remove(s: Station) {
-    if (!window.confirm(`Delete station "${s.name}"? This fails if it has piece rates or records.`)) return
-    const { error } = await supabase.from('stations').delete().eq('id', s.id)
-    if (error) onError(error.message)
-    else onChanged()
-  }
-
-  return (
-    <div className="card stack">
-      <div>
-        {adding ? (
-          <form className="row-form" onSubmit={addStation}>
-            <label className="field inline grow">
-              <span>New station name</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-            </label>
-            <button className="btn" type="submit">Add station</button>
-            <button className="btn ghost" type="button" onClick={() => setAdding(false)}>Cancel</button>
-          </form>
-        ) : (
-          <button className="btn" onClick={() => setAdding(true)}>+ Add new station</button>
-        )}
-      </div>
-
-      <table className="table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Station</th>
-            <th className="right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {stations.map((s) => (
-            <tr key={s.id}>
-              <td className="muted">{s.sort_order}</td>
-              <td>{s.name}</td>
-              <td className="right">
-                <button className="linkbtn" onClick={() => rename(s)}>Rename</button>{' '}
-                <button className="linkbtn danger" onClick={() => remove(s)}>Delete</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }

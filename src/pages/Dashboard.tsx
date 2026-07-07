@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase, type Station } from '../lib/supabase'
+import { DEFAULT_MODULES } from '../lib/tags'
 
 const DAY_START_HOUR = 7 // The mill day runs 07:00 → 07:00.
 
@@ -29,7 +30,7 @@ const MODULES: ModuleDef[] = [
     to: '/payroll',
     title: 'Payroll',
     desc: 'Runs, adjustments & finalize',
-    show: (m) => m,
+    show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -73,7 +74,26 @@ const ORDER_KEY = 'mjm-module-order'
 
 export default function Dashboard() {
   const { profile } = useAuth()
-  const canSeePayroll = profile?.role === 'admin' || profile?.role === 'manager'
+  const isManage = profile?.role === 'admin' || profile?.role === 'manager'
+
+  // What this user's tag allows them to SEE (set per tag in Settings →
+  // Tags management). Admin/manager roles see everything.
+  const [allowed, setAllowed] = useState<string[] | null>(null)
+  useEffect(() => {
+    async function load() {
+      if (isManage) return setAllowed(null) // null = everything
+      if (!profile?.grade_id) return setAllowed(DEFAULT_MODULES)
+      const { data } = await supabase
+        .from('grades')
+        .select('modules')
+        .eq('id', profile.grade_id)
+        .maybeSingle()
+      setAllowed((data?.modules as string[] | undefined) ?? DEFAULT_MODULES)
+    }
+    load()
+  }, [profile, isManage])
+
+  const canSee = (key: string) => allowed === null || allowed.includes(key)
 
   // Tile order is a personal preference — kept in this browser's storage.
   const [order, setOrder] = useState<string[]>(() => {
@@ -101,13 +121,13 @@ export default function Dashboard() {
 
   const tiles = order
     .map((k) => MODULES.find((m) => m.key === k)!)
-    .filter((m) => m && m.show(canSeePayroll))
+    .filter((m) => m && m.show(isManage || canSee(m.key)) && canSee(m.key))
 
   return (
     <div className="stack">
       <h1>Overall Status:</h1>
 
-      <StationBoard />
+      {canSee('station-status') && <StationBoard />}
 
       <div className="module-grid">
         {tiles.map((m) => (

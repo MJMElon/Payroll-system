@@ -41,9 +41,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // database was mid-migration). Create it, then reload.
     const { data: session } = await supabase.auth.getSession()
     const email = session.session?.user.email ?? null
+    const { data: opGrade } = await supabase
+      .from('grades')
+      .select('id')
+      .eq('name', 'Operator')
+      .maybeSingle()
     const { data: created, error: insErr } = await supabase
       .from('access_profiles')
-      .insert({ id: userId, full_name: email, email })
+      .insert({ id: userId, full_name: email, email, role: 'operator', grade_id: opGrade?.id ?? null })
       .select()
       .single()
     if (insErr) {

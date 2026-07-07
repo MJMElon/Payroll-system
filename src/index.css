@@ -246,7 +246,7 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 .module-tile.dragging { opacity: 0.5; cursor: grabbing; }
 
 /* Side-by-side settings blocks */
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: stretch; }
 @media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }
 
 /* Button with a red notification counter at its top-right corner */
@@ -271,6 +271,21 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 .drag-row { cursor: grab; }
 .drag-row.dragging { opacity: 0.45; cursor: grabbing; }
 .drag-handle { color: var(--muted); width: 24px; user-select: none; }
+
+/* Colour plate in the tag editor */
+.color-plate { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.color-swatch {
+  appearance: none; border: 2px solid transparent; cursor: pointer;
+  width: 28px; height: 28px; border-radius: 9px; padding: 0;
+}
+.color-swatch.selected { border-color: var(--text); box-shadow: 0 0 0 2px #fff inset; }
+
+textarea {
+  padding: 0.6rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 0.95rem; background: var(--surface); color: var(--text);
+  font-family: inherit; resize: vertical;
+}
+textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 
 /* Clickable tag list with colour dots */
 .tag-list { display: flex; flex-direction: column; gap: 0.15rem; }
@@ -310,6 +325,7 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 }
 .badge.ok { background: var(--accent-soft); color: var(--accent-strong); }
 .badge.off { background: #ecedf0; color: var(--muted); }
+.badge.new { background: #fee2e2; color: #b91c1c; }
 
 /* Dashboard stats */
 .stat { font-size: 2rem; font-weight: 600; margin: 0.2rem 0; }

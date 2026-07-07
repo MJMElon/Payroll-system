@@ -9,7 +9,7 @@ import {
   type Station,
   type Worker,
 } from '../lib/supabase'
-import { TAG_COLORS, tagClass } from '../lib/tags'
+import { DEFAULT_MODULES, MODULE_OPTIONS, TAG_COLORS, tagClass } from '../lib/tags'
 
 type Tab = 'access' | 'tags' | 'workers'
 
@@ -59,7 +59,6 @@ function UserAccessTab() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
-  const [approverToAdd, setApproverToAdd] = useState('')
   const [tagInfo, setTagInfo] = useState<Grade | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -97,58 +96,45 @@ function UserAccessTab() {
   }
   if (loading) return <p className="muted">Loading…</p>
 
-  const approvers = profiles.filter((p) => p.can_approve_rates)
-  const nonApprovers = profiles.filter((p) => !p.can_approve_rates)
   const label = (p: Profile) => p.email ?? p.full_name ?? p.id.slice(0, 8)
+  const tierOf = (p: Profile) =>
+    p.grade_id ? grades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
+  // Approval steps follow the tags: tier 1 (Management) approves, tier 2
+  // (Manager) verifies — assigned in the control panel below.
+  const approvalUsers = profiles.filter((p) => tierOf(p) === 1)
+  const verifyUsers = profiles.filter((p) => tierOf(p) === 2)
+  // Untagged (newly signed-up) users first so they get set up quickly, then
+  // everyone else in tag tier order.
+  const sortedProfiles = [...profiles].sort((a, b) => {
+    const ta = tierOf(a) ?? 0
+    const tb = tierOf(b) ?? 0
+    return ta - tb || (a.email ?? '').localeCompare(b.email ?? '')
+  })
 
   return (
     <div className="stack">
       {error && <div className="error">{error}</div>}
 
       <div className="grid-2">
-        {/* 1 — who can approve piece rates, and their step in the flow */}
+        {/* 1 — who verifies and who approves, derived from the tags set in
+            the control panel below */}
         <div className="card stack approval-card">
           <h3>Piece rate approval</h3>
           <p className="muted small">
-            These emails act on new piece rates: <strong>Verify</strong> checks the
-            proposal, <strong>Approval</strong> gives the final decision.
+            Set by tags in the control panel: tier 2 (Manager) verifies, tier 1
+            (Management) gives final approval.
           </p>
-          {approvers.length === 0 && <p className="muted small">No approvers yet.</p>}
-          {approvers.map((p) => (
-            <div className="row-form spread approver-row" key={p.id}>
-              <span className="small">{label(p)}</span>
-              <span className="row-form" style={{ gap: '0.5rem' }}>
-                <select
-                  value={p.approval_role ?? 'verify'}
-                  onChange={(e) => update(p, { approval_role: e.target.value as Profile['approval_role'] })}
-                >
-                  <option value="verify">Verify</option>
-                  <option value="approve">Approval</option>
-                </select>
-                <button className="linkbtn danger" onClick={() => update(p, { can_approve_rates: false })}>
-                  Remove
-                </button>
-              </span>
-            </div>
-          ))}
-          <div className="row-form">
-            <select value={approverToAdd} onChange={(e) => setApproverToAdd(e.target.value)} style={{ flex: 1 }}>
-              <option value="">Pick an email to allow…</option>
-              {nonApprovers.map((p) => (
-                <option key={p.id} value={p.id}>{label(p)}</option>
-              ))}
-            </select>
-            <button
-              className="btn"
-              disabled={!approverToAdd}
-              onClick={() => {
-                const p = profiles.find((x) => x.id === approverToAdd)
-                if (p) update(p, { can_approve_rates: true, approval_role: p.approval_role ?? 'verify' })
-                setApproverToAdd('')
-              }}
-            >
-              Allow
-            </button>
+          <div className="field">
+            <span>Verify by</span>
+            {verifyUsers.length === 0
+              ? <p className="muted small" style={{ margin: 0 }}>No one yet — tag a user as tier 2.</p>
+              : verifyUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
+          </div>
+          <div className="field">
+            <span>Approval by</span>
+            {approvalUsers.length === 0
+              ? <p className="muted small" style={{ margin: 0 }}>No one yet — tag a user as tier 1.</p>
+              : approvalUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
           </div>
         </div>
 
@@ -176,19 +162,28 @@ function UserAccessTab() {
             </div>
             <p className="muted small">Tier {tagInfo.sort_order} (1 is highest) — sees its own tier and every tier below it.</p>
             <div className="field">
-              <span>Can see / do</span>
-              <p style={{ margin: 0 }}>{tagInfo.ability ?? 'Not described yet — set it in the Tags tab.'}</p>
+              <span>Can see</span>
+              <p style={{ margin: 0 }}>
+                {(tagInfo.modules ?? DEFAULT_MODULES)
+                  .map((k) => MODULE_OPTIONS.find((m) => m.key === k)?.label ?? k)
+                  .join(', ')}
+              </p>
+            </div>
+            <div className="field">
+              <span>Can do</span>
+              <p style={{ margin: 0 }}>{tagInfo.ability ?? 'Not described yet — set it in Tags management.'}</p>
             </div>
           </div>
         </div>
       )}
 
-      {/* 3 — every signed-up account */}
+      {/* 3 — every signed-up account, untagged first then by tier */}
       <div className="card stack">
-        <h3>Users</h3>
+        <h3>User access control panel</h3>
         <p className="muted small">
-          Accounts appear here when someone signs up on the login page. Appoint each
-          email's role and tags; the tags decide which piece rates they see.
+          Accounts appear here when someone signs up (default: Operator). Users still
+          without a tag are listed first — appoint their role and tags; the tags decide
+          what they see.
         </p>
         <table className="table">
           <thead>
@@ -200,12 +195,15 @@ function UserAccessTab() {
             </tr>
           </thead>
           <tbody>
-            {profiles.length === 0 && (
+            {sortedProfiles.length === 0 && (
               <tr><td colSpan={4} className="muted">No sign-ups yet.</td></tr>
             )}
-            {profiles.map((p) => (
+            {sortedProfiles.map((p) => (
               <tr key={p.id}>
-                <td>{label(p)}</td>
+                <td>
+                  {label(p)}{' '}
+                  {!p.grade_id && <span className="badge new">new — set tag</span>}
+                </td>
                 <td>
                   <select value={p.role} onChange={(e) => update(p, { role: e.target.value as Role })}>
                     {ROLES.map((r) => (
@@ -249,24 +247,39 @@ function UserAccessTab() {
 /* ------------------------------------------------------------------ */
 
 function TagsTab() {
+  const { profile } = useAuth()
   const [grades, setGrades] = useState<Grade[]>([])
-  const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
-  const [color, setColor] = useState('blue')
-  const [ability, setAbility] = useState('')
+  const [stations, setStations] = useState<Station[]>([])
   const [dragId, setDragId] = useState<string | null>(null)
+  const [editor, setEditor] = useState<'closed' | 'new' | Grade>('closed')
+  const [addingStation, setAddingStation] = useState(false)
+  const [stationName, setStationName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   async function load() {
-    const { data, error } = await supabase
-      .from('grades')
-      .select('*')
-      .order('sort_order')
-    if (error) setError(error.message)
-    else setGrades(((data ?? []) as Grade[]).sort((a, b) => a.sort_order - b.sort_order))
+    const [g, st] = await Promise.all([
+      supabase.from('grades').select('*').order('sort_order'),
+      supabase.from('stations').select('id, name, sort_order').order('sort_order'),
+    ])
+    const err = g.error || st.error
+    if (err) setError(err.message)
+    setGrades(((g.data ?? []) as Grade[]).sort((a, b) => a.sort_order - b.sort_order))
+    setStations(st.data ?? [])
     setLoading(false)
   }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  // Only admins or tier-1 (Management) users may reorder, add, edit or
+  // delete tags — the database enforces the same rule.
+  const myTier = profile?.grade_id
+    ? grades.find((g) => g.id === profile.grade_id)?.sort_order ?? null
+    : null
+  const canEditTags = profile?.role === 'admin' || myTier === 1
+  const canManageStations = profile?.role === 'admin' || profile?.role === 'manager'
 
   // Drop a dragged tag onto another: reorder locally, then renumber every
   // tier 1..n so tier numbers always run top-down with no gaps.
@@ -286,43 +299,37 @@ function TagsTab() {
     load()
   }
 
-  useEffect(() => {
-    load()
-  }, [])
-
-  async function addTag(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    const sort = Math.max(0, ...grades.map((g) => g.sort_order)) + 1
-    const { error } = await supabase
-      .from('grades')
-      .insert({ name: name.trim(), sort_order: sort, color, ability: ability.trim() || null })
-    if (error) return setError(error.message)
-    setName('')
-    setAbility('')
-    setAdding(false)
-    load()
-  }
-
-  async function update(g: Grade, fields: Partial<Grade>) {
-    const { error } = await supabase.from('grades').update(fields).eq('id', g.id)
+  async function removeTag(g: Grade) {
+    if (!window.confirm(`Delete tag "${g.name}"? This fails if it is in use.`)) return
+    const { error } = await supabase.from('grades').delete().eq('id', g.id)
     if (error) setError(error.message)
     else load()
   }
 
-  async function rename(g: Grade) {
-    const next = window.prompt('Tag name', g.name)
-    if (next && next.trim() !== g.name) update(g, { name: next.trim() })
+  async function addStation(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    const sort = Math.max(0, ...stations.map((x) => x.sort_order)) + 1
+    const { error } = await supabase
+      .from('stations')
+      .insert({ name: stationName.trim(), sort_order: sort })
+    if (error) return setError(error.message)
+    setStationName('')
+    setAddingStation(false)
+    load()
   }
 
-  async function editAbility(g: Grade) {
-    const next = window.prompt('What can this tag see / do?', g.ability ?? '')
-    if (next !== null) update(g, { ability: next.trim() || null })
+  async function renameStation(st: Station) {
+    const next = window.prompt('Station name', st.name)
+    if (!next || next.trim() === st.name) return
+    const { error } = await supabase.from('stations').update({ name: next.trim() }).eq('id', st.id)
+    if (error) setError(error.message)
+    else load()
   }
 
-  async function remove(g: Grade) {
-    if (!window.confirm(`Delete tag "${g.name}"? This fails if it is in use.`)) return
-    const { error } = await supabase.from('grades').delete().eq('id', g.id)
+  async function removeStation(st: Station) {
+    if (!window.confirm(`Delete station "${st.name}"? This fails if it is in use.`)) return
+    const { error } = await supabase.from('stations').delete().eq('id', st.id)
     if (error) setError(error.message)
     else load()
   }
@@ -333,90 +340,239 @@ function TagsTab() {
     <div className="stack">
       {error && <div className="error">{error}</div>}
 
+      {/* Section 1 — tier tags */}
       <div className="card stack">
         <div className="row-form spread">
-          <h3>Tags management</h3>
-          <button className="btn" onClick={() => setAdding((v) => !v)}>
-            {adding ? 'Cancel' : '+ Add tag'}
-          </button>
+          <h3>Tier tags</h3>
+          {canEditTags && (
+            <button className="btn" onClick={() => setEditor('new')}>+ Add tag</button>
+          )}
         </div>
 
-        {adding && (
-          <form className="row-form" onSubmit={addTag}>
-            <label className="field inline">
-              <span>Tag name</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-            </label>
-            <label className="field inline">
-              <span>Colour</span>
-              <select value={color} onChange={(e) => setColor(e.target.value)}>
-                {TAG_COLORS.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </label>
+        <table className="table">
+          <thead>
+            <tr>
+              {canEditTags && <th></th>}
+              <th>Tier</th>
+              <th>Tag</th>
+              <th>Can see</th>
+              <th>Can do</th>
+              {canEditTags && <th className="right">Actions</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {grades.length === 0 && (
+              <tr><td colSpan={6} className="muted">No tags yet.</td></tr>
+            )}
+            {grades.map((g) => (
+              <tr
+                key={g.id}
+                className={`${canEditTags ? 'drag-row' : ''} ${dragId === g.id ? 'dragging' : ''}`}
+                draggable={canEditTags}
+                onDragStart={() => canEditTags && setDragId(g.id)}
+                onDragEnd={() => setDragId(null)}
+                onDragOver={(e) => canEditTags && e.preventDefault()}
+                onDrop={(e) => {
+                  if (!canEditTags) return
+                  e.preventDefault()
+                  dropOnTag(g.id)
+                }}
+                title={canEditTags ? 'Drag to change tier' : undefined}
+              >
+                {canEditTags && <td className="drag-handle" aria-hidden="true">⠿</td>}
+                <td className="muted">{g.sort_order}</td>
+                <td><span className={tagClass(g.color)}>{g.name}</span></td>
+                <td className="muted small">
+                  {(g.modules ?? DEFAULT_MODULES)
+                    .map((k) => MODULE_OPTIONS.find((m) => m.key === k)?.label ?? k)
+                    .join(', ')}
+                </td>
+                <td className="muted small">{g.ability ?? '—'}</td>
+                {canEditTags && (
+                  <td className="right">
+                    <button className="linkbtn" onClick={() => setEditor(g)}>Edit</button>{' '}
+                    <button className="linkbtn danger" onClick={() => removeTag(g)}>Delete</button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="muted small">
+          Tier 1 is the highest. {canEditTags
+            ? 'Drag rows up or down to change tiers — each tag sees its own tier and every tier below it.'
+            : 'Only Management (tier 1) or admins can change tags.'}
+        </p>
+      </div>
+
+      {/* Section 2 — station tags */}
+      <div className="card stack">
+        <div className="row-form spread">
+          <h3>Station tags</h3>
+          {canManageStations && (
+            <button className="btn" onClick={() => setAddingStation((v) => !v)}>
+              {addingStation ? 'Cancel' : '+ Add station'}
+            </button>
+          )}
+        </div>
+
+        {addingStation && (
+          <form className="row-form" onSubmit={addStation}>
             <label className="field inline grow">
-              <span>Can see / do</span>
-              <input value={ability} onChange={(e) => setAbility(e.target.value)} />
+              <span>New station name</span>
+              <input value={stationName} onChange={(e) => setStationName(e.target.value)} autoFocus required />
             </label>
-            <button className="btn" type="submit">Save tag</button>
+            <button className="btn" type="submit">Save station</button>
           </form>
         )}
 
         <table className="table">
           <thead>
             <tr>
-              <th></th>
-              <th>Tier</th>
-              <th>Tag</th>
-              <th>Colour</th>
-              <th>Can see / do</th>
-              <th className="right">Actions</th>
+              <th>#</th>
+              <th>Station</th>
+              {canManageStations && <th className="right">Actions</th>}
             </tr>
           </thead>
           <tbody>
-            {grades.length === 0 && (
-              <tr><td colSpan={6} className="muted">No tags yet — click “+ Add tag”.</td></tr>
-            )}
-            {grades.map((g) => (
-              <tr
-                key={g.id}
-                className={`drag-row ${dragId === g.id ? 'dragging' : ''}`}
-                draggable
-                onDragStart={() => setDragId(g.id)}
-                onDragEnd={() => setDragId(null)}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  dropOnTag(g.id)
-                }}
-                title="Drag to change tier"
-              >
-                <td className="drag-handle" aria-hidden="true">⠿</td>
-                <td className="muted">{g.sort_order}</td>
-                <td><span className={tagClass(g.color)}>{g.name}</span></td>
-                <td>
-                  <select value={g.color} onChange={(e) => update(g, { color: e.target.value })}>
-                    {TAG_COLORS.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </td>
-                <td className="muted">{g.ability ?? '—'}</td>
-                <td className="right">
-                  <button className="linkbtn" onClick={() => rename(g)}>Rename</button>{' '}
-                  <button className="linkbtn" onClick={() => editAbility(g)}>Edit ability</button>{' '}
-                  <button className="linkbtn danger" onClick={() => remove(g)}>Delete</button>
-                </td>
+            {stations.map((st) => (
+              <tr key={st.id}>
+                <td className="muted">{st.sort_order}</td>
+                <td>{st.name}</td>
+                {canManageStations && (
+                  <td className="right">
+                    <button className="linkbtn" onClick={() => renameStation(st)}>Rename</button>{' '}
+                    <button className="linkbtn danger" onClick={() => removeStation(st)}>Delete</button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
         <p className="muted small">
-          Tier 1 is the highest. Drag rows up or down to change tiers — each tag sees
-          its own tier and every tier below it.
+          A user with a station tag only sees that station's information.
         </p>
       </div>
+
+      {editor !== 'closed' && (
+        <TagEditModal
+          grade={editor === 'new' ? null : editor}
+          nextTier={Math.max(0, ...grades.map((g) => g.sort_order)) + 1}
+          onClose={() => setEditor('closed')}
+          onSaved={() => {
+            setEditor('closed')
+            load()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Tag edit pop-out: name, colour plate, what it can see, what it can */
+/* do.                                                                */
+/* ------------------------------------------------------------------ */
+
+function TagEditModal({
+  grade,
+  nextTier,
+  onClose,
+  onSaved,
+}: {
+  grade: Grade | null
+  nextTier: number
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [name, setName] = useState(grade?.name ?? '')
+  const [color, setColor] = useState(grade?.color ?? 'blue')
+  const [modules, setModules] = useState<string[]>(grade?.modules ?? [...DEFAULT_MODULES])
+  const [ability, setAbility] = useState(grade?.ability ?? '')
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  function toggleModule(key: string) {
+    setModules((m) => (m.includes(key) ? m.filter((k) => k !== key) : [...m, key]))
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setSaving(true)
+    const fields = { name: name.trim(), color, modules, ability: ability.trim() || null }
+    const { error } = grade
+      ? await supabase.from('grades').update(fields).eq('id', grade.id)
+      : await supabase.from('grades').insert({ ...fields, sort_order: nextTier })
+    setSaving(false)
+    if (error) return setError(error.message)
+    onSaved()
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+        <div className="row-form spread">
+          <h2>{grade ? 'Edit tag' : 'New tag'}</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        <label className="field">
+          <span>Tag name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
+        </label>
+
+        <div className="field">
+          <span>Colour</span>
+          <div className="color-plate">
+            {TAG_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                className={`color-swatch dot-${c} ${color === c ? 'selected' : ''}`}
+                onClick={() => setColor(c)}
+                title={c}
+                aria-label={c}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="field">
+          <span>Can see (modules shown on the web)</span>
+          <div className="stack" style={{ gap: '0.3rem' }}>
+            {MODULE_OPTIONS.map((m) => (
+              <label key={m.key} className="checkbox small" style={{ margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={modules.includes(m.key)}
+                  onChange={() => toggleModule(m.key)}
+                />{' '}
+                {m.label}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <label className="field">
+          <span>Can do</span>
+          <textarea
+            value={ability}
+            onChange={(e) => setAbility(e.target.value)}
+            rows={3}
+            placeholder="e.g. Verifies new piece rates before management approval"
+          />
+        </label>
+
+        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : grade ? 'Save tag' : 'Create tag'}
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

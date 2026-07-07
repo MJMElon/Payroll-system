@@ -47,9 +47,19 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  op_grade uuid;
 begin
-  insert into public.access_profiles (id, full_name, email)
-  values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', new.email), new.email)
+  -- Every new signup starts as an Operator; admins upgrade access later.
+  select id into op_grade from public.grades where name = 'Operator' limit 1;
+  insert into public.access_profiles (id, full_name, email, role, grade_id)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'full_name', new.email),
+    new.email,
+    'operator',
+    op_grade
+  )
   on conflict (id) do nothing;
   return new;
 exception when others then
@@ -169,6 +179,27 @@ update public.access_profiles p set email = u.email
 -- Display colour + ability text per tag, shown as the access legend.
 alter table public.grades add column if not exists color text not null default 'grey';
 alter table public.grades add column if not exists ability text;
+
+-- What each tag can SEE on the web (module keys). New tags default to the
+-- station board + piece rate module only.
+alter table public.grades add column if not exists modules text[] not null
+  default '{station-status,piece-rate}';
+update public.grades set modules = '{station-status,piece-rate,payroll,demo-mobile}'
+  where name in ('Management', 'Manager', 'Engineer');
+
+-- The signed-in user's tag tier (security definer avoids RLS recursion when
+-- used inside the grades policies).
+create or replace function public.my_tag_tier()
+returns int
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select g.sort_order from public.access_profiles p
+  join public.grades g on g.id = p.grade_id
+  where p.id = auth.uid();
+$$;
 update public.workers set grade_id = null
   where grade_id in (select id from public.grades where name = 'Piece rate approval');
 update public.jobs set grade_id = null
@@ -201,6 +232,7 @@ create policy "approvers update jobs" on public.jobs
       select 1 from public.access_profiles p
       where p.id = auth.uid() and p.can_approve_rates
     )
+    or public.my_tag_tier() in (1, 2)
   );
 create unique index if not exists jobs_station_grade_name_idx
   on public.jobs (station_id, grade_id, name);
@@ -282,9 +314,11 @@ drop policy if exists "authenticated read grades" on public.grades;
 create policy "authenticated read grades" on public.grades
   for select using (auth.uid() is not null);
 
+-- Only admins or tier-1 (Management) users manage tags.
 drop policy if exists "admin manager manage grades" on public.grades;
-create policy "admin manager manage grades" on public.grades
-  for all using (public.my_role() in ('admin', 'manager'));
+drop policy if exists "management tier manages grades" on public.grades;
+create policy "management tier manages grades" on public.grades
+  for all using (public.my_role() = 'admin' or public.my_tag_tier() = 1);
 
 -- jobs / piece_rates: any signed-in user reads; admins/managers manage.
 drop policy if exists "authenticated read jobs" on public.jobs;
