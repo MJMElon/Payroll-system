@@ -52,7 +52,7 @@ export default function StationDetail() {
           .order('name'),
         supabase
           .from('workers')
-          .select('id, full_name, station_id, grade_id, active')
+          .select('id, full_name, station_id, grade_id, can_approve_rates, active')
           .eq('active', true)
           .order('full_name'),
         supabase.from('grades').select('id, name, sort_order').order('sort_order'),

@@ -52,7 +52,7 @@ function UserAccessTab() {
 
   async function load() {
     const [w, s, g] = await Promise.all([
-      supabase.from('workers').select('id, full_name, station_id, grade_id, active').order('full_name'),
+      supabase.from('workers').select('id, full_name, station_id, grade_id, can_approve_rates, active').order('full_name'),
       supabase.from('stations').select('id, name, sort_order').order('sort_order'),
       supabase.from('grades').select('id, name, sort_order').order('sort_order'),
     ])
@@ -147,13 +147,14 @@ function UserAccessTab() {
               <th>Name</th>
               <th>Station tag</th>
               <th>Grade tag</th>
+              <th>Piece rate approval</th>
               <th>Status</th>
               <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 && (
-              <tr><td colSpan={5} className="muted">No users yet — click “+ Add user”.</td></tr>
+              <tr><td colSpan={6} className="muted">No users yet — click “+ Add user”.</td></tr>
             )}
             {visible.map((w) => (
               <tr key={w.id}>
@@ -179,6 +180,16 @@ function UserAccessTab() {
                       <option key={g.id} value={g.id}>{g.name}</option>
                     ))}
                   </select>
+                </td>
+                <td>
+                  <label className="checkbox small muted" style={{ margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={w.can_approve_rates}
+                      onChange={(e) => update(w, { can_approve_rates: e.target.checked })}
+                    />{' '}
+                    can approve
+                  </label>
                 </td>
                 <td>
                   <span className={`badge ${w.active ? 'ok' : 'off'}`}>{w.active ? 'active' : 'inactive'}</span>

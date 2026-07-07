@@ -3,9 +3,11 @@
 //
 // A piece-rate contract is the mix-and-match of STATION × TAG (grade) × WORK
 // DESCRIPTION, each with its own unit and rate. New contracts wait in the
-// "New piece rate approval" section until a user tagged 'Piece rate approval'
-// (or an admin) approves them. The list's Station and Tag column headers are
-// themselves dropdown filters. Tags are managed in Settings.
+// "New piece rate approval" section until a user with the per-user approval
+// permission (Settings → User access) or an admin approves them. Everyone can
+// open the listing, but non-managers only see rates for their own grade tier
+// and below (tier = the tag's order in Settings). Station and Tag column
+// headers are themselves dropdown filters.
 // Tables used: stations, grades, jobs, piece_rates (see supabase/setup.sql).
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
@@ -21,7 +23,6 @@ import {
 } from '../lib/supabase'
 
 const UNIT_SUGGESTIONS = ['/cage tipped', '/job done', '/tonne', '/bunch', '/trip', '/hour']
-const APPROVER_TAG = 'Piece rate approval'
 
 type View = 'rates' | 'stations'
 
@@ -33,6 +34,8 @@ export default function PieceRate() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<Rate[]>([])
   const [canApprove, setCanApprove] = useState(false)
+  const [myTier, setMyTier] = useState<number | null>(null)
+  const canManage = profile?.role === 'admin' || profile?.role === 'manager'
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -64,24 +67,28 @@ export default function PieceRate() {
     load()
   }, [])
 
-  // Approval rights: admins always; otherwise the signed-in user's linked
-  // worker must carry the APPROVER_TAG grade tag.
+  // Approval rights: admins always; otherwise the per-user permission set in
+  // Settings → User access. The same lookup finds the user's grade tier for
+  // the visibility rule (see visibleTo below).
   useEffect(() => {
     async function check() {
-      if (profile?.role === 'admin') return setCanApprove(true)
-      if (!profile?.worker_id) return setCanApprove(false)
+      if (profile?.role === 'admin') setCanApprove(true)
+      if (!profile?.worker_id) return
       const { data: w } = await supabase
         .from('workers')
-        .select('grade_id')
+        .select('grade_id, can_approve_rates')
         .eq('id', profile.worker_id)
         .single()
-      if (!w?.grade_id) return setCanApprove(false)
-      const { data: g } = await supabase
-        .from('grades')
-        .select('name')
-        .eq('id', w.grade_id)
-        .single()
-      setCanApprove(g?.name === APPROVER_TAG)
+      if (!w) return
+      if (w.can_approve_rates) setCanApprove(true)
+      if (w.grade_id) {
+        const { data: g } = await supabase
+          .from('grades')
+          .select('sort_order')
+          .eq('id', w.grade_id)
+          .single()
+        if (g) setMyTier(g.sort_order)
+      }
     }
     check()
   }, [profile])
@@ -99,11 +106,22 @@ export default function PieceRate() {
 
   const pending = jobs.filter((j) => j.approval_status === 'pending')
 
+  // Managers/admins see every contract. Others see untagged rates plus tags
+  // at their own tier or below; users with no grade tag see untagged only.
+  const tierOf = (gradeId: string | null) =>
+    gradeId ? grades.find((g) => g.id === gradeId)?.sort_order ?? Infinity : null
+  const visibleTo = (j: Job) => {
+    if (canManage) return true
+    const t = tierOf(j.grade_id)
+    if (t === null) return true
+    return myTier !== null && t <= myTier
+  }
+
   return (
     <div className="stack">
       <div>
         <Link to="/" className="small muted backlink">← Back to main page</Link>
-        <h1>Piece Rate</h1>
+        <h1>Piece Rate Management</h1>
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -111,20 +129,24 @@ export default function PieceRate() {
 
       <div className="row-form spread">
         <div className="row-form">
-          <button
-            className={view === 'rates' ? 'btn' : 'btn ghost'}
-            onClick={() => setView('rates')}
-          >
-            Piece rates
-          </button>
-          <button
-            className={view === 'stations' ? 'btn' : 'btn ghost'}
-            onClick={() => setView('stations')}
-          >
-            Stations
-          </button>
+          {canManage && (
+            <>
+              <button
+                className={view === 'rates' ? 'btn' : 'btn ghost'}
+                onClick={() => setView('rates')}
+              >
+                Piece rates
+              </button>
+              <button
+                className={view === 'stations' ? 'btn' : 'btn ghost'}
+                onClick={() => setView('stations')}
+              >
+                Stations
+              </button>
+            </>
+          )}
         </div>
-        {view === 'rates' && (
+        {view === 'rates' && canManage && (
           <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
         )}
       </div>
@@ -144,8 +166,9 @@ export default function PieceRate() {
         <RatesList
           stations={stations}
           grades={grades}
-          jobs={jobs.filter((j) => j.approval_status === 'approved')}
+          jobs={jobs.filter((j) => j.approval_status === 'approved' && visibleTo(j))}
           currentRate={currentRate}
+          canManage={canManage}
           onEdit={(j) => setModal(j)}
           onChanged={load}
           onError={setError}
@@ -253,6 +276,7 @@ function RatesList({
   grades,
   jobs,
   currentRate,
+  canManage,
   onEdit,
   onChanged,
   onError,
@@ -261,6 +285,7 @@ function RatesList({
   grades: Grade[]
   jobs: Job[]
   currentRate: Map<string, Rate>
+  canManage: boolean
   onEdit: (j: Job) => void
   onChanged: () => void
   onError: (m: string | null) => void
@@ -290,6 +315,7 @@ function RatesList({
 
   return (
     <div className="card stack">
+      <h3>Piece Rate Listing</h3>
       <table className="table">
         <thead>
           <tr>
@@ -322,7 +348,7 @@ function RatesList({
             </th>
             <th>Unit</th>
             <th className="right">Rate</th>
-            <th className="right">Actions</th>
+            {canManage && <th className="right">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -345,14 +371,16 @@ function RatesList({
                 <td className="right">
                   {rate ? <strong>{Number(rate.rate)}</strong> : <span className="badge off">no rate</span>}
                 </td>
-                <td className="right">
-                  <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
-                  {j.active ? (
-                    <button className="linkbtn danger" onClick={() => setActive(j, false)}>Deactivate</button>
-                  ) : (
-                    <button className="linkbtn" onClick={() => setActive(j, true)}>Reactivate</button>
-                  )}
-                </td>
+                {canManage && (
+                  <td className="right">
+                    <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
+                    {j.active ? (
+                      <button className="linkbtn danger" onClick={() => setActive(j, false)}>Deactivate</button>
+                    ) : (
+                      <button className="linkbtn" onClick={() => setActive(j, true)}>Reactivate</button>
+                    )}
+                  </td>
+                )}
               </tr>
             )
           })}

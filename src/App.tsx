@@ -21,12 +21,12 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/station/:stationId" element={<StationDetail />} />
           <Route path="/demo-mobile" element={<DemoMobile />} />
+          <Route path="/piece-rate" element={<PieceRate />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
 
           {/* Role-restricted areas */}
           <Route element={<ProtectedRoute allowedRoles={['admin', 'manager']} />}>
             <Route path="/payroll" element={<Payroll />} />
-            <Route path="/piece-rate" element={<PieceRate />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Route>

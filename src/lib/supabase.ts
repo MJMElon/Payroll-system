@@ -43,6 +43,7 @@ export interface Worker {
   full_name: string
   station_id: string | null
   grade_id: string | null
+  can_approve_rates: boolean
   active: boolean
 }
 
