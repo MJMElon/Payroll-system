@@ -55,7 +55,7 @@ export default function StationDetail() {
           .select('id, full_name, station_id, grade_id, can_approve_rates, active')
           .eq('active', true)
           .order('full_name'),
-        supabase.from('grades').select('id, name, sort_order').order('sort_order'),
+        supabase.from('grades').select('*').order('sort_order'),
       ])
       if (s.error) setError(s.error.message)
       else setStation(s.data)

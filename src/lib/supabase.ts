@@ -26,9 +26,12 @@ export type Role = 'admin' | 'manager' | 'engineer' | 'operator' | 'worker'
 export interface Profile {
   id: string
   full_name: string | null
+  email: string | null
   role: Role
   station_id: string | null
   worker_id: string | null
+  grade_id: string | null
+  can_approve_rates: boolean
 }
 
 // Rows of the work tables (see supabase/setup.sql).
@@ -51,6 +54,8 @@ export interface Grade {
   id: string
   name: string
   sort_order: number
+  color: string
+  ability: string | null
 }
 
 export interface Job {

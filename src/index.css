@@ -215,6 +215,35 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 
 /* Approval section stands out slightly */
 .approval-card { border-left: 4px solid var(--accent-strong); }
+.approver-row { border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+
+/* Coloured tag badges (colours managed in Settings -> Tags) */
+.tagbadge {
+  display: inline-block; padding: 0.12rem 0.55rem; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 600;
+}
+.tag-blue { background: #dbeafe; color: #1d4ed8; }
+.tag-yellow { background: #fef9c3; color: #a16207; }
+.tag-red { background: #fee2e2; color: #b91c1c; }
+.tag-green { background: #dcfce7; color: #15803d; }
+.tag-grey { background: #e5e7eb; color: #4b5563; }
+.tag-silver {
+  background: linear-gradient(135deg, #f1f5f9, #cbd5e1); color: #334155;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+.tag-gold {
+  background: linear-gradient(135deg, #fef3c7, #f5c542); color: #713f12;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.tag-diamond {
+  background: linear-gradient(135deg, #e0f2fe 10%, #ffffff 45%, #bae6fd 90%);
+  color: #0369a1;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 0 8px rgba(125, 211, 252, 0.7);
+}
+
+/* Draggable module tiles */
+.module-tile { cursor: grab; }
+.module-tile.dragging { opacity: 0.5; cursor: grabbing; }
 
 /* Small link-style action buttons in tables */
 .linkbtn {

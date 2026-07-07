@@ -14,9 +14,91 @@ function currentDayStart(): Date {
   return d
 }
 
+interface ModuleDef {
+  key: string
+  to: string
+  title: string
+  desc: string
+  icon: JSX.Element
+  show: (canSeePayroll: boolean) => boolean
+}
+
+const MODULES: ModuleDef[] = [
+  {
+    key: 'payroll',
+    to: '/payroll',
+    title: 'Payroll',
+    desc: 'Runs, adjustments & finalize',
+    show: (m) => m,
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="6" width="20" height="12" rx="2" />
+        <circle cx="12" cy="12" r="3" />
+        <path d="M6 12h.01M18 12h.01" />
+      </svg>
+    ),
+  },
+  {
+    key: 'piece-rate',
+    to: '/piece-rate',
+    title: 'Piece Rate',
+    desc: 'Rates, approvals & history',
+    show: () => true,
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20.59 13.41 12 22l-8.59-8.59A2 2 0 0 1 3 12V4a1 1 0 0 1 1-1h8a2 2 0 0 1 1.41.59l8.18 8.18a2 2 0 0 1 0 2.82z" />
+        <circle cx="7.5" cy="7.5" r="1.5" />
+      </svg>
+    ),
+  },
+  {
+    key: 'demo-mobile',
+    to: '/demo-mobile',
+    title: 'Demo Mobile View',
+    desc: 'Preview the mobile app per role',
+    show: () => true,
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="7" y="2" width="10" height="20" rx="2.5" />
+        <path d="M11 18h2" />
+      </svg>
+    ),
+  },
+]
+
+const ORDER_KEY = 'mjm-module-order'
+
 export default function Dashboard() {
   const { profile } = useAuth()
   const canSeePayroll = profile?.role === 'admin' || profile?.role === 'manager'
+
+  // Tile order is a personal preference — kept in this browser's storage.
+  const [order, setOrder] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(ORDER_KEY) ?? '[]') as string[]
+      const known = MODULES.map((m) => m.key)
+      return [...saved.filter((k) => known.includes(k)), ...known.filter((k) => !saved.includes(k))]
+    } catch {
+      return MODULES.map((m) => m.key)
+    }
+  })
+  const [dragKey, setDragKey] = useState<string | null>(null)
+
+  function dropOn(targetKey: string) {
+    if (!dragKey || dragKey === targetKey) return
+    const next = order.filter((k) => k !== dragKey)
+    next.splice(next.indexOf(targetKey), 0, dragKey)
+    setOrder(next)
+    localStorage.setItem(ORDER_KEY, JSON.stringify(next))
+    setDragKey(null)
+  }
+
+  const tiles = order
+    .map((k) => MODULES.find((m) => m.key === k)!)
+    .filter((m) => m && m.show(canSeePayroll))
 
   return (
     <div className="stack">
@@ -25,51 +107,30 @@ export default function Dashboard() {
       <StationBoard />
 
       <div className="module-grid">
-        {canSeePayroll && (
-          <Link to="/payroll" className="module-tile">
-            <span className="tile-icon" aria-hidden="true">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="6" width="20" height="12" rx="2" />
-                <circle cx="12" cy="12" r="3" />
-                <path d="M6 12h.01M18 12h.01" />
-              </svg>
-            </span>
+        {tiles.map((m) => (
+          <Link
+            key={m.key}
+            to={m.to}
+            className={`module-tile ${dragKey === m.key ? 'dragging' : ''}`}
+            draggable
+            onDragStart={() => setDragKey(m.key)}
+            onDragEnd={() => setDragKey(null)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              dropOn(m.key)
+            }}
+            title="Drag to reorder"
+          >
+            <span className="tile-icon" aria-hidden="true">{m.icon}</span>
             <div>
-              <h2>Payroll</h2>
-              <p className="muted small">Runs, adjustments &amp; finalize</p>
+              <h2>{m.title}</h2>
+              <p className="muted small">{m.desc}</p>
             </div>
           </Link>
-        )}
-        {canSeePayroll && (
-          <Link to="/piece-rate" className="module-tile">
-            <span className="tile-icon" aria-hidden="true">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20.59 13.41 12 22l-8.59-8.59A2 2 0 0 1 3 12V4a1 1 0 0 1 1-1h8a2 2 0 0 1 1.41.59l8.18 8.18a2 2 0 0 1 0 2.82z" />
-                <circle cx="7.5" cy="7.5" r="1.5" />
-              </svg>
-            </span>
-            <div>
-              <h2>Piece Rate</h2>
-              <p className="muted small">Monitor rates, changes &amp; history</p>
-            </div>
-          </Link>
-        )}
-        <Link to="/demo-mobile" className="module-tile">
-          <span className="tile-icon" aria-hidden="true">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="7" y="2" width="10" height="20" rx="2.5" />
-              <path d="M11 18h2" />
-            </svg>
-          </span>
-          <div>
-            <h2>Demo Mobile View</h2>
-            <p className="muted small">Preview the mobile app per role</p>
-          </div>
-        </Link>
+        ))}
       </div>
+      <p className="muted small">Drag the blocks to arrange them in your preferred order.</p>
     </div>
   )
 }

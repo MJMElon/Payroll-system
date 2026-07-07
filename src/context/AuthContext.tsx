@@ -25,9 +25,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Load the access_profiles row (role, station, worker link) for a user id.
   async function loadProfile(userId: string) {
+    // select('*') keeps login working even when the database is one
+    // migration behind the frontend (missing columns come back undefined).
     const { data, error } = await supabase
       .from('access_profiles')
-      .select('id, full_name, role, station_id, worker_id')
+      .select('*')
       .eq('id', userId)
       .single()
     if (error) {

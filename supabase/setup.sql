@@ -26,12 +26,15 @@ create table if not exists public.workers (
 create table if not exists public.access_profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   full_name text,
+  email text,
   role text not null default 'worker'
     check (role in ('admin', 'manager', 'engineer', 'operator', 'worker')),
   station_id uuid references public.stations (id),
   worker_id uuid references public.workers (id),
   created_at timestamptz not null default now()
 );
+
+alter table public.access_profiles add column if not exists email text;
 
 -- ---------------------------------------------------------------------------
 -- Auto-create a profile (role 'worker') whenever an auth user is created,
@@ -45,8 +48,8 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.access_profiles (id, full_name)
-  values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', new.email))
+  insert into public.access_profiles (id, full_name, email)
+  values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', new.email), new.email)
   on conflict (id) do nothing;
   return new;
 end;
@@ -146,6 +149,17 @@ alter table public.workers add column if not exists grade_id uuid references pub
 -- Per-user permission to approve new piece rates (a remark on the user,
 -- not a grade tag). The old 'Piece rate approval' grade tag is retired.
 alter table public.workers add column if not exists can_approve_rates boolean not null default false;
+
+-- Login accounts carry their own tags + approval permission; access is
+-- appointed per signed-up email in Settings -> User access (admin only).
+alter table public.access_profiles add column if not exists grade_id uuid references public.grades (id);
+alter table public.access_profiles add column if not exists can_approve_rates boolean not null default false;
+update public.access_profiles p set email = u.email
+  from auth.users u where u.id = p.id and p.email is null;
+
+-- Display colour + ability text per tag, shown as the access legend.
+alter table public.grades add column if not exists color text not null default 'grey';
+alter table public.grades add column if not exists ability text;
 update public.workers set grade_id = null
   where grade_id in (select id from public.grades where name = 'Piece rate approval');
 update public.jobs set grade_id = null
@@ -307,11 +321,33 @@ insert into public.stations (name, sort_order) values
   ('Boiler', 7)
 on conflict (name) do nothing;
 
--- Starter grades (tags) — extend or rename in the Piece Rate module.
+-- Starter grades (tags) — extend or rename in Settings -> Tags.
 insert into public.grades (name, sort_order) values
+  ('General Worker', 0),
   ('Operator', 1),
   ('Assistant Station Head', 2),
   ('Station Head', 3),
   ('Engineer', 4),
-  ('General Worker', 5)
+  ('Manager', 5),
+  ('Management', 6)
 on conflict (name) do nothing;
+
+-- Default colours/abilities (only fills tags still on the default grey).
+update public.grades set color = 'blue',
+  ability = 'Sees own level piece rates; records production at own station'
+  where name = 'Operator' and color = 'grey';
+update public.grades set color = 'yellow',
+  ability = 'Sees own and operator level piece rates'
+  where name = 'Assistant Station Head' and color = 'grey';
+update public.grades set color = 'red',
+  ability = 'Sees own level and below piece rates'
+  where name = 'Station Head' and color = 'grey';
+update public.grades set color = 'silver',
+  ability = 'Can propose new piece rates; sees own level and below'
+  where name = 'Engineer' and color = 'grey';
+update public.grades set color = 'gold',
+  ability = 'Verifies new piece rates before management approval'
+  where name = 'Manager' and color = 'grey';
+update public.grades set color = 'diamond',
+  ability = 'Final approval of each new piece rate; sees everything'
+  where name = 'Management' and color = 'grey';

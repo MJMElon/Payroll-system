@@ -1,8 +1,19 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase, type Grade, type Station, type Worker } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
+import {
+  supabase,
+  type Grade,
+  type Profile,
+  type Role,
+  type Station,
+  type Worker,
+} from '../lib/supabase'
+import { TAG_COLORS, tagClass } from '../lib/tags'
 
-type Tab = 'access' | 'tags'
+type Tab = 'access' | 'tags' | 'workers'
+
+const ROLES: Role[] = ['admin', 'manager', 'engineer', 'operator', 'worker']
 
 export default function Settings() {
   const [tab, setTab] = useState<Tab>('access')
@@ -10,10 +21,10 @@ export default function Settings() {
   return (
     <div className="stack">
       <div>
-        <Link to="/" className="small muted">← Back to main page</Link>
+        <Link to="/" className="small muted backlink">← Back to main page</Link>
         <h1>Settings</h1>
         <p className="muted">
-          User access and tags. Stations and rates live in the{' '}
+          User access and tags. Stations live in the{' '}
           <Link to="/piece-rate">Piece Rate module</Link>.
         </p>
       </div>
@@ -25,42 +36,44 @@ export default function Settings() {
         <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
           Tags
         </button>
+        <button className={`tab ${tab === 'workers' ? 'active' : ''}`} onClick={() => setTab('workers')}>
+          Workers (payroll)
+        </button>
       </div>
 
       {tab === 'access' && <UserAccessTab />}
       {tab === 'tags' && <TagsTab />}
+      {tab === 'workers' && <WorkersTab />}
     </div>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/* User access: every person, with their station tag and grade tag.   */
-/* (Login-account linking will be added here later.)                  */
+/* User access: every signed-up email, what they can see and do.      */
+/* Admin-only — RLS also enforces this on the backend.                */
 /* ------------------------------------------------------------------ */
 
 function UserAccessTab() {
-  const [workers, setWorkers] = useState<Worker[]>([])
+  const { profile } = useAuth()
+  const isAdmin = profile?.role === 'admin'
+  const [profiles, setProfiles] = useState<Profile[]>([])
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
-  const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
-  const [stationId, setStationId] = useState('')
-  const [gradeId, setGradeId] = useState('')
-  const [showInactive, setShowInactive] = useState(false)
+  const [approverToAdd, setApproverToAdd] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   async function load() {
-    const [w, s, g] = await Promise.all([
-      supabase.from('workers').select('id, full_name, station_id, grade_id, can_approve_rates, active').order('full_name'),
+    const [p, s, g] = await Promise.all([
+      supabase.from('access_profiles').select('*').order('email'),
       supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-      supabase.from('grades').select('id, name, sort_order').order('sort_order'),
+      supabase.from('grades').select('*').order('sort_order', { ascending: false }),
     ])
-    const err = w.error || s.error || g.error
+    const err = p.error || s.error || g.error
     if (err) setError(err.message)
-    setWorkers(w.data ?? [])
+    setProfiles((p.data ?? []) as Profile[])
     setStations(s.data ?? [])
-    setGrades(g.data ?? [])
+    setGrades((g.data ?? []) as Grade[])
     setLoading(false)
   }
 
@@ -68,14 +81,328 @@ function UserAccessTab() {
     load()
   }, [])
 
-  async function addUser(e: FormEvent) {
+  async function update(p: Profile, fields: Partial<Profile>) {
+    const { error } = await supabase.from('access_profiles').update(fields).eq('id', p.id)
+    if (error) setError(error.message)
+    else load()
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="card">
+        <p className="muted">Only admins can manage user access.</p>
+      </div>
+    )
+  }
+  if (loading) return <p className="muted">Loading…</p>
+
+  const approvers = profiles.filter((p) => p.can_approve_rates)
+  const nonApprovers = profiles.filter((p) => !p.can_approve_rates)
+  const label = (p: Profile) => p.email ?? p.full_name ?? p.id.slice(0, 8)
+
+  return (
+    <div className="stack">
+      {error && <div className="error">{error}</div>}
+
+      {/* 1 — who can approve piece rates */}
+      <div className="card stack approval-card">
+        <h3>Piece rate approval</h3>
+        <p className="muted small">
+          Emails listed here can approve or reject new piece rates in the Piece Rate module.
+        </p>
+        {approvers.length === 0 && <p className="muted small">No approvers yet.</p>}
+        {approvers.map((p) => (
+          <div className="row-form spread approver-row" key={p.id}>
+            <span>{label(p)}</span>
+            <button className="linkbtn danger" onClick={() => update(p, { can_approve_rates: false })}>
+              Remove
+            </button>
+          </div>
+        ))}
+        <div className="row-form">
+          <select value={approverToAdd} onChange={(e) => setApproverToAdd(e.target.value)} style={{ flex: 1 }}>
+            <option value="">Pick an email to allow…</option>
+            {nonApprovers.map((p) => (
+              <option key={p.id} value={p.id}>{label(p)}</option>
+            ))}
+          </select>
+          <button
+            className="btn"
+            disabled={!approverToAdd}
+            onClick={() => {
+              const p = profiles.find((x) => x.id === approverToAdd)
+              if (p) update(p, { can_approve_rates: true })
+              setApproverToAdd('')
+            }}
+          >
+            Allow approval
+          </button>
+        </div>
+      </div>
+
+      {/* 2 — what each tag level can see and do */}
+      <div className="card stack">
+        <h3>Tag access levels</h3>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Tag</th>
+              <th>Can see / do</th>
+            </tr>
+          </thead>
+          <tbody>
+            {grades.map((g) => (
+              <tr key={g.id}>
+                <td><span className={tagClass(g.color)}>{g.name}</span></td>
+                <td className="muted">{g.ability ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="muted small">Edit names, colours and abilities in the Tags tab.</p>
+      </div>
+
+      {/* 3 — every signed-up account */}
+      <div className="card stack">
+        <h3>Users</h3>
+        <p className="muted small">
+          Accounts appear here when someone signs up on the login page. Appoint each
+          email's role and tags; the tags decide which piece rates they see.
+        </p>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Station tag</th>
+              <th>Grade tag</th>
+            </tr>
+          </thead>
+          <tbody>
+            {profiles.length === 0 && (
+              <tr><td colSpan={4} className="muted">No sign-ups yet.</td></tr>
+            )}
+            {profiles.map((p) => (
+              <tr key={p.id}>
+                <td>{label(p)}</td>
+                <td>
+                  <select value={p.role} onChange={(e) => update(p, { role: e.target.value as Role })}>
+                    {ROLES.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    value={p.station_id ?? ''}
+                    onChange={(e) => update(p, { station_id: e.target.value || null })}
+                  >
+                    <option value="">—</option>
+                    {stations.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <select
+                    value={p.grade_id ?? ''}
+                    onChange={(e) => update(p, { grade_id: e.target.value || null })}
+                  >
+                    <option value="">—</option>
+                    {grades.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Tags: grade tags with colour + ability (the access legend).        */
+/* ------------------------------------------------------------------ */
+
+function TagsTab() {
+  const [grades, setGrades] = useState<Grade[]>([])
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+  const [color, setColor] = useState('blue')
+  const [ability, setAbility] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  async function load() {
+    const { data, error } = await supabase
+      .from('grades')
+      .select('*')
+      .order('sort_order', { ascending: false })
+    if (error) setError(error.message)
+    else setGrades((data ?? []) as Grade[])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  async function addTag(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    const { error } = await supabase.from('workers').insert({
-      full_name: name.trim(),
-      station_id: stationId || null,
-      grade_id: gradeId || null,
-    })
+    const sort = Math.max(0, ...grades.map((g) => g.sort_order)) + 1
+    const { error } = await supabase
+      .from('grades')
+      .insert({ name: name.trim(), sort_order: sort, color, ability: ability.trim() || null })
+    if (error) return setError(error.message)
+    setName('')
+    setAbility('')
+    setAdding(false)
+    load()
+  }
+
+  async function update(g: Grade, fields: Partial<Grade>) {
+    const { error } = await supabase.from('grades').update(fields).eq('id', g.id)
+    if (error) setError(error.message)
+    else load()
+  }
+
+  async function rename(g: Grade) {
+    const next = window.prompt('Tag name', g.name)
+    if (next && next.trim() !== g.name) update(g, { name: next.trim() })
+  }
+
+  async function editAbility(g: Grade) {
+    const next = window.prompt('What can this tag see / do?', g.ability ?? '')
+    if (next !== null) update(g, { ability: next.trim() || null })
+  }
+
+  async function remove(g: Grade) {
+    if (!window.confirm(`Delete tag "${g.name}"? This fails if it is in use.`)) return
+    const { error } = await supabase.from('grades').delete().eq('id', g.id)
+    if (error) setError(error.message)
+    else load()
+  }
+
+  if (loading) return <p className="muted">Loading…</p>
+
+  return (
+    <div className="stack">
+      {error && <div className="error">{error}</div>}
+
+      <div className="card stack">
+        <div className="row-form spread">
+          <h3>Tags</h3>
+          <button className="btn" onClick={() => setAdding((v) => !v)}>
+            {adding ? 'Cancel' : '+ Add tag'}
+          </button>
+        </div>
+
+        {adding && (
+          <form className="row-form" onSubmit={addTag}>
+            <label className="field inline">
+              <span>Tag name</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
+            </label>
+            <label className="field inline">
+              <span>Colour</span>
+              <select value={color} onChange={(e) => setColor(e.target.value)}>
+                {TAG_COLORS.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field inline grow">
+              <span>Can see / do</span>
+              <input value={ability} onChange={(e) => setAbility(e.target.value)} />
+            </label>
+            <button className="btn" type="submit">Save tag</button>
+          </form>
+        )}
+
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Tag</th>
+              <th>Tier</th>
+              <th>Colour</th>
+              <th>Can see / do</th>
+              <th className="right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {grades.length === 0 && (
+              <tr><td colSpan={5} className="muted">No tags yet — click “+ Add tag”.</td></tr>
+            )}
+            {grades.map((g) => (
+              <tr key={g.id}>
+                <td><span className={tagClass(g.color)}>{g.name}</span></td>
+                <td className="muted">{g.sort_order}</td>
+                <td>
+                  <select value={g.color} onChange={(e) => update(g, { color: e.target.value })}>
+                    {TAG_COLORS.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </td>
+                <td className="muted">{g.ability ?? '—'}</td>
+                <td className="right">
+                  <button className="linkbtn" onClick={() => rename(g)}>Rename</button>{' '}
+                  <button className="linkbtn" onClick={() => editAbility(g)}>Edit ability</button>{' '}
+                  <button className="linkbtn danger" onClick={() => remove(g)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="muted small">
+          Higher tier sees more: a user sees piece rates of their tier and every tier below.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Workers: the payroll name list (who gets paid). Kept separate from */
+/* User access, which is about login accounts.                        */
+/* ------------------------------------------------------------------ */
+
+function WorkersTab() {
+  const [workers, setWorkers] = useState<Worker[]>([])
+  const [stations, setStations] = useState<Station[]>([])
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+  const [stationId, setStationId] = useState('')
+  const [showInactive, setShowInactive] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  async function load() {
+    const [w, s] = await Promise.all([
+      supabase.from('workers').select('id, full_name, station_id, grade_id, can_approve_rates, active').order('full_name'),
+      supabase.from('stations').select('id, name, sort_order').order('sort_order'),
+    ])
+    if (w.error) setError(w.error.message)
+    else setWorkers(w.data ?? [])
+    if (s.error) setError(s.error.message)
+    else setStations(s.data ?? [])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  async function addWorker(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    const { error } = await supabase
+      .from('workers')
+      .insert({ full_name: name.trim(), station_id: stationId || null })
     if (error) return setError(error.message)
     setName('')
     setAdding(false)
@@ -98,20 +425,24 @@ function UserAccessTab() {
 
       <div className="card stack">
         <div className="row-form spread">
-          <h3>Users</h3>
+          <h3>Workers</h3>
           <button className="btn" onClick={() => setAdding((v) => !v)}>
-            {adding ? 'Cancel' : '+ Add user'}
+            {adding ? 'Cancel' : '+ Add worker'}
           </button>
         </div>
+        <p className="muted small">
+          The payroll name list — production entries and payslips are per worker. Not
+          every worker needs a login.
+        </p>
 
         {adding && (
-          <form className="row-form" onSubmit={addUser}>
+          <form className="row-form" onSubmit={addWorker}>
             <label className="field inline grow">
               <span>Full name</span>
               <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
             </label>
             <label className="field inline">
-              <span>Station tag</span>
+              <span>Station</span>
               <select value={stationId} onChange={(e) => setStationId(e.target.value)}>
                 <option value="">—</option>
                 {stations.map((s) => (
@@ -119,16 +450,7 @@ function UserAccessTab() {
                 ))}
               </select>
             </label>
-            <label className="field inline">
-              <span>Grade tag</span>
-              <select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
-                <option value="">—</option>
-                {grades.map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-            </label>
-            <button className="btn" type="submit">Save user</button>
+            <button className="btn" type="submit">Save worker</button>
           </form>
         )}
 
@@ -138,23 +460,21 @@ function UserAccessTab() {
             checked={showInactive}
             onChange={(e) => setShowInactive(e.target.checked)}
           />{' '}
-          Show inactive users
+          Show inactive
         </label>
 
         <table className="table">
           <thead>
             <tr>
               <th>Name</th>
-              <th>Station tag</th>
-              <th>Grade tag</th>
-              <th>Piece rate approval</th>
+              <th>Station</th>
               <th>Status</th>
               <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 && (
-              <tr><td colSpan={6} className="muted">No users yet — click “+ Add user”.</td></tr>
+              <tr><td colSpan={4} className="muted">No workers yet — click “+ Add worker”.</td></tr>
             )}
             {visible.map((w) => (
               <tr key={w.id}>
@@ -171,27 +491,6 @@ function UserAccessTab() {
                   </select>
                 </td>
                 <td>
-                  <select
-                    value={w.grade_id ?? ''}
-                    onChange={(e) => update(w, { grade_id: e.target.value || null })}
-                  >
-                    <option value="">—</option>
-                    {grades.map((g) => (
-                      <option key={g.id} value={g.id}>{g.name}</option>
-                    ))}
-                  </select>
-                </td>
-                <td>
-                  <label className="checkbox small muted" style={{ margin: 0 }}>
-                    <input
-                      type="checkbox"
-                      checked={w.can_approve_rates}
-                      onChange={(e) => update(w, { can_approve_rates: e.target.checked })}
-                    />{' '}
-                    can approve
-                  </label>
-                </td>
-                <td>
                   <span className={`badge ${w.active ? 'ok' : 'off'}`}>{w.active ? 'active' : 'inactive'}</span>
                 </td>
                 <td className="right">
@@ -205,157 +504,6 @@ function UserAccessTab() {
             ))}
           </tbody>
         </table>
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Tags: one comprehensive list with two categories — Station tags    */
-/* (backed by the stations table) and Grade tags (grades table).      */
-/* ------------------------------------------------------------------ */
-
-type TagRow = { id: string; name: string; category: 'station' | 'grade' }
-
-function TagsTab() {
-  const [stations, setStations] = useState<Station[]>([])
-  const [grades, setGrades] = useState<Grade[]>([])
-  const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
-  const [category, setCategory] = useState<'grade' | 'station'>('grade')
-  const [filter, setFilter] = useState<'all' | 'station' | 'grade'>('all')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  async function load() {
-    const [s, g] = await Promise.all([
-      supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-      supabase.from('grades').select('id, name, sort_order').order('sort_order'),
-    ])
-    const err = s.error || g.error
-    if (err) setError(err.message)
-    setStations(s.data ?? [])
-    setGrades(g.data ?? [])
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    load()
-  }, [])
-
-  const table = (cat: 'station' | 'grade') => (cat === 'station' ? 'stations' : 'grades')
-
-  async function addTag(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    const rows = category === 'station' ? stations : grades
-    const sort = Math.max(0, ...rows.map((r) => r.sort_order)) + 1
-    const { error } = await supabase
-      .from(table(category))
-      .insert({ name: name.trim(), sort_order: sort })
-    if (error) return setError(error.message)
-    setName('')
-    setAdding(false)
-    load()
-  }
-
-  async function rename(row: TagRow) {
-    const next = window.prompt('Tag name', row.name)
-    if (!next || next.trim() === row.name) return
-    const { error } = await supabase
-      .from(table(row.category))
-      .update({ name: next.trim() })
-      .eq('id', row.id)
-    if (error) setError(error.message)
-    else load()
-  }
-
-  async function remove(row: TagRow) {
-    if (!window.confirm(`Delete tag "${row.name}"? This fails if it is in use.`)) return
-    const { error } = await supabase.from(table(row.category)).delete().eq('id', row.id)
-    if (error) setError(error.message)
-    else load()
-  }
-
-  if (loading) return <p className="muted">Loading…</p>
-
-  const rows: TagRow[] = [
-    ...stations.map((s) => ({ id: s.id, name: s.name, category: 'station' as const })),
-    ...grades.map((g) => ({ id: g.id, name: g.name, category: 'grade' as const })),
-  ].filter((r) => filter === 'all' || r.category === filter)
-
-  return (
-    <div className="stack">
-      {error && <div className="error">{error}</div>}
-
-      <div className="card stack">
-        <div className="row-form spread">
-          <h3>Tags</h3>
-          <button className="btn" onClick={() => setAdding((v) => !v)}>
-            {adding ? 'Cancel' : '+ Add tag'}
-          </button>
-        </div>
-
-        {adding && (
-          <form className="row-form" onSubmit={addTag}>
-            <label className="field inline">
-              <span>Category</span>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value as 'grade' | 'station')}
-              >
-                <option value="grade">Grade</option>
-                <option value="station">Station</option>
-              </select>
-            </label>
-            <label className="field inline grow">
-              <span>Tag name</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-            </label>
-            <button className="btn" type="submit">Save tag</button>
-          </form>
-        )}
-
-        <div className="row-form">
-          <label className="field inline">
-            <span>Show</span>
-            <select value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
-              <option value="all">All categories</option>
-              <option value="station">Station tags</option>
-              <option value="grade">Grade tags</option>
-            </select>
-          </label>
-        </div>
-
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Tag</th>
-              <th>Category</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr><td colSpan={3} className="muted">No tags yet — click “+ Add tag”.</td></tr>
-            )}
-            {rows.map((r) => (
-              <tr key={`${r.category}-${r.id}`}>
-                <td><span className={`badge ${r.category === 'station' ? 'off' : 'ok'}`}>{r.name}</span></td>
-                <td className="muted">{r.category === 'station' ? 'Station' : 'Grade'}</td>
-                <td className="right">
-                  <button className="linkbtn" onClick={() => rename(r)}>Rename</button>{' '}
-                  <button className="linkbtn danger" onClick={() => remove(r)}>Delete</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="muted small">
-          Station tags are the mill stations (also managed in the Piece Rate module).
-          Grade tags mark levels like Operator or Station Head. User access is appointed
-          with one of each in the User access tab.
-        </p>
       </div>
     </div>
   )

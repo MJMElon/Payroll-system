@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { tagClass } from '../lib/tags'
 import {
   supabase,
   todayISO,
@@ -44,7 +45,7 @@ export default function PieceRate() {
   async function load() {
     const [s, g, j, r] = await Promise.all([
       supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-      supabase.from('grades').select('id, name, sort_order').order('sort_order'),
+      supabase.from('grades').select('*').order('sort_order'),
       supabase
         .from('jobs')
         .select('id, station_id, grade_id, name, unit, active, approval_status')
@@ -67,31 +68,17 @@ export default function PieceRate() {
     load()
   }, [])
 
-  // Approval rights: admins always; otherwise the per-user permission set in
-  // Settings → User access. The same lookup finds the user's grade tier for
-  // the visibility rule (see visibleTo below).
+  // Approval rights + tier come straight from the signed-in account's profile
+  // (appointed in Settings → User access).
   useEffect(() => {
-    async function check() {
-      if (profile?.role === 'admin') setCanApprove(true)
-      if (!profile?.worker_id) return
-      const { data: w } = await supabase
-        .from('workers')
-        .select('grade_id, can_approve_rates')
-        .eq('id', profile.worker_id)
-        .single()
-      if (!w) return
-      if (w.can_approve_rates) setCanApprove(true)
-      if (w.grade_id) {
-        const { data: g } = await supabase
-          .from('grades')
-          .select('sort_order')
-          .eq('id', w.grade_id)
-          .single()
-        if (g) setMyTier(g.sort_order)
-      }
+    setCanApprove(profile?.role === 'admin' || Boolean(profile?.can_approve_rates))
+    if (profile?.grade_id) {
+      const g = grades.find((x) => x.id === profile.grade_id)
+      setMyTier(g ? g.sort_order : null)
+    } else {
+      setMyTier(null)
     }
-    check()
-  }, [profile])
+  }, [profile, grades])
 
   const currentRate = useMemo(() => {
     const m = new Map<string, Rate>()
@@ -250,7 +237,7 @@ function ApprovalSection({
                 <tr key={j.id}>
                   <td>{stationName(j.station_id)}</td>
                   <td>{j.name}</td>
-                  <td>{tag ? <span className="badge ok">{tag}</span> : <span className="muted">—</span>}</td>
+                  <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
                   <td className="muted">{j.unit}</td>
                   <td className="right"><strong>{rate ? Number(rate.rate) : '—'}</strong></td>
                   <td className="right">
@@ -366,7 +353,7 @@ function RatesList({
               <tr key={j.id} className={j.active ? '' : 'muted'}>
                 <td>{stationName(j.station_id)}</td>
                 <td>{j.name}{!j.active && ' (inactive)'}</td>
-                <td>{tag ? <span className="badge ok">{tag}</span> : <span className="muted">—</span>}</td>
+                <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
                 <td className="muted">{j.unit}</td>
                 <td className="right">
                   {rate ? <strong>{Number(rate.rate)}</strong> : <span className="badge off">no rate</span>}
