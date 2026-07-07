@@ -162,6 +162,14 @@ function StationScreen({
     return `${h12}${h24 >= 12 ? 'PM' : 'AM'}`
   }
   const hourZone = `${hourLabel(now.getHours())} – ${hourLabel(now.getHours() + 1)}`
+  // Bonus: hitting the preset minimum in the PREVIOUS hour turns this hour's
+  // stamps into reward stamps. (Stamp design to be refined further.)
+  const minPrev = station.hourly_min_prev ?? 0
+  const prevHourCount = records.filter((r) => {
+    const t = new Date(r.taken_at)
+    return isToday && t.getHours() === now.getHours() - 1
+  }).length
+  const rewardActive = minPrev > 0 && prevHourCount >= minPrev
 
   async function handleFile(file: File | undefined) {
     if (!file) return
@@ -210,19 +218,20 @@ function StationScreen({
         <div className="mob-card mob-highlight">
           {station.hourly_count ? (
             <>
-              <div className="row-form spread" style={{ alignItems: 'center' }}>
-                <div className="mob-title">This hour</div>
-                <div className="mob-zone">{hourZone}</div>
-              </div>
+              <div className="mob-title mob-zone-title">{hourZone}</div>
               <div className="stamp-row">
                 {Array.from({ length: target }, (_, i) => (
-                  <span key={i} className={`stamp ${i < stampsThisHour ? 'filled' : ''}`}>
-                    {i < stampsThisHour ? 'DONE' : ''}
+                  <span
+                    key={i}
+                    className={`stamp ${i < stampsThisHour ? (rewardActive ? 'done reward' : 'done') : ''}`}
+                  >
+                    ✓
                   </span>
                 ))}
               </div>
               <div className="mob-sub">
                 {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
+                {rewardActive && ' · bonus hour ✨'}
               </div>
             </>
           ) : (

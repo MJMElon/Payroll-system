@@ -44,6 +44,7 @@ export interface Station {
   // Mobile-view presets (optional: older queries don't select them).
   hourly_count?: boolean
   hourly_target?: number
+  hourly_min_prev?: number
 }
 
 export interface PhotoRecord {

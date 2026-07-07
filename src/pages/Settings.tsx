@@ -525,12 +525,23 @@ function TagsTab() {
                 <td className="muted">{i + 1}</td>
                 <td>{st.name}</td>
                 <td className="muted small">
-                  {st.hourly_count ? `Hourly count · ${st.hourly_target ?? 6}/hr` : '—'}
+                  {st.hourly_count
+                    ? `Hourly · min ${st.hourly_min_prev ?? 0} prev hr · max ${st.hourly_target ?? 6}/hr`
+                    : '—'}
                 </td>
                 {canManageStations && (
                   <td className="right">
-                    <button className="linkbtn" onClick={() => setStationEditor(st)}>Edit</button>{' '}
-                    <button className="linkbtn danger" onClick={() => removeStation(st)}>Delete</button>
+                    <button
+                      className="icon-btn sm"
+                      title="Edit station"
+                      aria-label={`Edit ${st.name}`}
+                      onClick={() => setStationEditor(st)}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                      </svg>
+                    </button>
                   </td>
                 )}
               </tr>
@@ -549,6 +560,10 @@ function TagsTab() {
           onSaved={() => {
             setStationEditor(null)
             load()
+          }}
+          onDelete={async () => {
+            await removeStation(stationEditor)
+            setStationEditor(null)
           }}
         />
       )}
@@ -577,13 +592,16 @@ function StationEditModal({
   station,
   onClose,
   onSaved,
+  onDelete,
 }: {
   station: Station
   onClose: () => void
   onSaved: () => void
+  onDelete: () => void
 }) {
   const [name, setName] = useState(station.name)
   const [hourly, setHourly] = useState(Boolean(station.hourly_count))
+  const [minPrevInput, setMinPrevInput] = useState(String(station.hourly_min_prev ?? 0))
   const [targetInput, setTargetInput] = useState(String(station.hourly_target ?? 6))
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -592,13 +610,22 @@ function StationEditModal({
     e.preventDefault()
     setError(null)
     const target = Number(targetInput)
+    const minPrev = Number(minPrevInput)
     if (hourly && (!Number.isInteger(target) || target < 1 || target > 60)) {
-      return setError('Target per hour must be a whole number between 1 and 60.')
+      return setError('Max work done this hour must be a whole number between 1 and 60.')
+    }
+    if (hourly && (!Number.isInteger(minPrev) || minPrev < 0 || minPrev > 60)) {
+      return setError('Min work done from previous hour must be a whole number between 0 and 60.')
     }
     setSaving(true)
     const { error } = await supabase
       .from('stations')
-      .update({ name: name.trim(), hourly_count: hourly, hourly_target: hourly ? target : station.hourly_target ?? 6 })
+      .update({
+        name: name.trim(),
+        hourly_count: hourly,
+        hourly_target: hourly ? target : station.hourly_target ?? 6,
+        hourly_min_prev: hourly ? minPrev : station.hourly_min_prev ?? 0,
+      })
       .eq('id', station.id)
     setSaving(false)
     if (error) return setError(error.message)
@@ -629,23 +656,50 @@ function StationEditModal({
         </div>
 
         {hourly && (
-          <label className="field">
-            <span>Target records per hour</span>
-            <input
-              inputMode="numeric"
-              value={targetInput}
-              onChange={(e) => setTargetInput(e.target.value)}
-              placeholder="6"
-              required
-            />
-          </label>
+          <div className="row-form">
+            <label className="field inline grow">
+              <span>1. Min work done from previous hour</span>
+              <input
+                inputMode="numeric"
+                value={minPrevInput}
+                onChange={(e) => setMinPrevInput(e.target.value)}
+                placeholder="0"
+                required
+              />
+            </label>
+            <label className="field inline grow">
+              <span>2. Work done in this hour (max)</span>
+              <input
+                inputMode="numeric"
+                value={targetInput}
+                onChange={(e) => setTargetInput(e.target.value)}
+                placeholder="6"
+                required
+              />
+            </label>
+          </div>
+        )}
+        {hourly && (
+          <p className="muted small" style={{ margin: 0 }}>
+            When the previous hour reaches its minimum, this hour's stamps become
+            bonus reward stamps.
+          </p>
         )}
 
-        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : 'Save station'}
+        <div className="row-form spread">
+          <button
+            type="button"
+            className="btn ghost danger"
+            onClick={onDelete}
+          >
+            Delete station
           </button>
+          <span className="row-form">
+            <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn" type="submit" disabled={saving}>
+              {saving ? 'Saving…' : 'Save station'}
+            </button>
+          </span>
         </div>
       </form>
     </div>

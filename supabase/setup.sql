@@ -178,9 +178,11 @@ alter table public.access_profiles add column if not exists can_approve_rates bo
 alter table public.access_profiles add column if not exists station_ids uuid[];
 
 -- Station work presets for the mobile view: hourly-counted stations expect
--- a target number of photo records every hour (the stamp card).
+-- a target number of photo records every hour (the stamp card), plus a
+-- minimum from the previous hour that unlocks this hour's bonus stamps.
 alter table public.stations add column if not exists hourly_count boolean not null default false;
 alter table public.stations add column if not exists hourly_target int not null default 6;
+alter table public.stations add column if not exists hourly_min_prev int not null default 0;
 
 -- Photo records taken from the mobile view, one row per photo.
 create table if not exists public.photo_records (
