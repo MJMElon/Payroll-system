@@ -542,8 +542,9 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 .login-corner.br { bottom: 16px; right: 16px; border-left: none; border-top: none; }
 
 .login-title {
-  margin: 0;
-  font-size: 3.4rem; font-weight: 800; letter-spacing: 0.14em;
+  margin: 0 0 0.3rem;
+  font-size: 4.6rem; font-weight: 800; letter-spacing: 0.16em;
+  text-indent: 0.16em; /* balances the letter-spacing so MJM sits centred */
   color: #ffffff;
   text-shadow: 0 0 14px rgba(255, 255, 255, 0.55), 0 0 44px rgba(52, 227, 154, 0.45);
 }
@@ -563,7 +564,7 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 }
 
 .login-tagline {
-  margin: 0.2rem 0 1.1rem;
+  margin: 0 0 1.4rem;
   color: #2fd58b; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.42em;
   text-shadow: 0 0 10px rgba(47, 213, 139, 0.5);
 }

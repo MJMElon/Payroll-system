@@ -52,6 +52,10 @@ begin
   values (new.id, coalesce(new.raw_user_meta_data ->> 'full_name', new.email), new.email)
   on conflict (id) do nothing;
   return new;
+exception when others then
+  -- Never block a signup because profile creation failed; the app
+  -- self-heals a missing profile on first login.
+  return new;
 end;
 $$;
 
@@ -95,6 +99,11 @@ create policy "admin reads all profiles" on public.access_profiles
 drop policy if exists "admin updates profiles" on public.access_profiles;
 create policy "admin updates profiles" on public.access_profiles
   for update using (public.my_role() = 'admin');
+
+-- Users may create their own missing profile row (self-heal after signup).
+drop policy if exists "insert own profile" on public.access_profiles;
+create policy "insert own profile" on public.access_profiles
+  for insert with check (id = auth.uid());
 
 -- stations: any signed-in user can read; admins/managers manage.
 drop policy if exists "authenticated read stations" on public.stations;

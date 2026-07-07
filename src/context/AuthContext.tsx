@@ -31,12 +31,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .from('access_profiles')
       .select('*')
       .eq('id', userId)
+      .maybeSingle()
+    if (data) {
+      setProfile(data as Profile)
+      return
+    }
+    if (error) console.error('Failed to load profile:', error.message)
+    // Self-heal: the signup trigger may not have created the row (e.g. the
+    // database was mid-migration). Create it, then reload.
+    const { data: session } = await supabase.auth.getSession()
+    const email = session.session?.user.email ?? null
+    const { data: created, error: insErr } = await supabase
+      .from('access_profiles')
+      .insert({ id: userId, full_name: email, email })
+      .select()
       .single()
-    if (error) {
-      console.error('Failed to load profile:', error.message)
+    if (insErr) {
+      console.error('Failed to create profile:', insErr.message)
       setProfile(null)
     } else {
-      setProfile(data as Profile)
+      setProfile(created as Profile)
     }
   }
 

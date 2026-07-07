@@ -61,10 +61,6 @@ export default function Login() {
         <span className="login-corner br" aria-hidden="true" />
 
         <h1 className="login-title">MJM</h1>
-        <div className="login-badge">
-          <span className="pill">PAYROLL</span>
-          <span className="word">SYSTEM</span>
-        </div>
         <p className="login-tagline">THE FUTURE IS HERE</p>
 
         <input
