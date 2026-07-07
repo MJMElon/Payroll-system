@@ -29,6 +29,7 @@ export interface Profile {
   email: string | null
   role: Role
   station_id: string | null
+  station_ids: string[] | null
   worker_id: string | null
   grade_id: string | null
   can_approve_rates: boolean

@@ -272,6 +272,20 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 .drag-row.dragging { opacity: 0.45; cursor: grabbing; }
 .drag-handle { color: var(--muted); width: 24px; user-select: none; }
 
+/* Compact half-width blocks */
+.card.compact { padding: 1rem 1.1rem; gap: 0.6rem; }
+.card.compact .tag-row { padding: 0.3rem 0.4rem; }
+
+/* Multi-select station picker */
+.multi-select { position: relative; display: inline-block; }
+.multi-toggle { font-size: 0.85rem; padding: 0.45rem 0.7rem; }
+.multi-panel {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+  background: var(--surface); border-radius: 12px; padding: 0.7rem 0.9rem;
+  box-shadow: 0 12px 34px rgba(20, 30, 45, 0.22);
+  display: flex; flex-direction: column; gap: 0.35rem; min-width: 190px;
+}
+
 /* Colour plate in the tag editor */
 .color-plate { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .color-swatch {

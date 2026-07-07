@@ -7,13 +7,18 @@ import {
   type Profile,
   type Role,
   type Station,
-  type Worker,
 } from '../lib/supabase'
 import { DEFAULT_MODULES, MODULE_OPTIONS, TAG_COLORS, tagClass } from '../lib/tags'
 
-type Tab = 'access' | 'tags' | 'workers'
+type Tab = 'access' | 'tags'
 
-const ROLES: Role[] = ['admin', 'manager', 'engineer', 'operator', 'worker']
+// Role (route access) follows the tier tag so the panel only needs tags.
+function roleForTier(tier: number | null, name?: string): Role {
+  if (tier === null) return 'operator'
+  if (tier <= 2) return 'manager'
+  if (tier === 3 || (name ?? '').toLowerCase().includes('engineer')) return 'engineer'
+  return 'operator'
+}
 
 export default function Settings() {
   const [tab, setTab] = useState<Tab>('access')
@@ -36,14 +41,10 @@ export default function Settings() {
         <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
           Tags management
         </button>
-        <button className={`tab ${tab === 'workers' ? 'active' : ''}`} onClick={() => setTab('workers')}>
-          Workers (payroll)
-        </button>
       </div>
 
       {tab === 'access' && <UserAccessTab />}
       {tab === 'tags' && <TagsTab />}
-      {tab === 'workers' && <WorkersTab />}
     </div>
   )
 }
@@ -118,12 +119,8 @@ function UserAccessTab() {
       <div className="grid-2">
         {/* 1 — who verifies and who approves, derived from the tags set in
             the control panel below */}
-        <div className="card stack approval-card">
+        <div className="card stack compact approval-card">
           <h3>Piece rate approval</h3>
-          <p className="muted small">
-            Set by tags in the control panel: tier 2 (Manager) verifies, tier 1
-            (Management) gives final approval.
-          </p>
           <div className="field">
             <span>Verify by</span>
             {verifyUsers.length === 0
@@ -139,9 +136,8 @@ function UserAccessTab() {
         </div>
 
         {/* 2 — the tags; click one to see what it can see and do */}
-        <div className="card stack">
+        <div className="card stack compact">
           <h3>Tags</h3>
-          <p className="muted small">Click a tag to see its access. Manage them in the Tags tab.</p>
           <div className="tag-list">
             {grades.map((g) => (
               <button className="tag-row" key={g.id} onClick={() => setTagInfo(g)}>
@@ -182,21 +178,20 @@ function UserAccessTab() {
         <h3>User access control panel</h3>
         <p className="muted small">
           Accounts appear here when someone signs up (default: Operator). Users still
-          without a tag are listed first — appoint their role and tags; the tags decide
-          what they see.
+          without a tag are listed first — appoint their tags; the tags decide what
+          they see.
         </p>
         <table className="table">
           <thead>
             <tr>
               <th>Email</th>
-              <th>Role</th>
               <th>Station tag</th>
-              <th>Grade tag</th>
+              <th>Tier tag</th>
             </tr>
           </thead>
           <tbody>
             {sortedProfiles.length === 0 && (
-              <tr><td colSpan={4} className="muted">No sign-ups yet.</td></tr>
+              <tr><td colSpan={3} className="muted">No sign-ups yet.</td></tr>
             )}
             {sortedProfiles.map((p) => (
               <tr key={p.id}>
@@ -205,27 +200,27 @@ function UserAccessTab() {
                   {!p.grade_id && <span className="badge new">new — set tag</span>}
                 </td>
                 <td>
-                  <select value={p.role} onChange={(e) => update(p, { role: e.target.value as Role })}>
-                    {ROLES.map((r) => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </select>
-                </td>
-                <td>
-                  <select
-                    value={p.station_id ?? ''}
-                    onChange={(e) => update(p, { station_id: e.target.value || null })}
-                  >
-                    <option value="">—</option>
-                    {stations.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
+                  <StationMultiSelect
+                    stations={stations}
+                    value={p.station_ids ?? (p.station_id ? [p.station_id] : [])}
+                    onChange={(ids) =>
+                      update(p, { station_ids: ids, station_id: ids[0] ?? null })
+                    }
+                  />
                 </td>
                 <td>
                   <select
                     value={p.grade_id ?? ''}
-                    onChange={(e) => update(p, { grade_id: e.target.value || null })}
+                    onChange={(e) => {
+                      const gradeId = e.target.value || null
+                      const g = grades.find((x) => x.id === gradeId)
+                      const fields: Partial<Profile> = { grade_id: gradeId }
+                      // Keep route access in step with the tier (admins stay admin).
+                      if (p.role !== 'admin') {
+                        fields.role = roleForTier(g?.sort_order ?? null, g?.name)
+                      }
+                      update(p, fields)
+                    }}
                   >
                     <option value="">—</option>
                     {grades.map((g) => (
@@ -244,6 +239,62 @@ function UserAccessTab() {
 
 /* ------------------------------------------------------------------ */
 /* Tags: grade tags with colour + ability (the access legend).        */
+/* ------------------------------------------------------------------ */
+/* Pick any number of station tags for a user (none = all stations).  */
+/* ------------------------------------------------------------------ */
+
+function StationMultiSelect({
+  stations,
+  value,
+  onChange,
+}: {
+  stations: Station[]
+  value: string[]
+  onChange: (ids: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const label =
+    value.length === 0
+      ? 'All stations'
+      : value.length === 1
+        ? stations.find((s) => s.id === value[0])?.name ?? '1 station'
+        : `${value.length} stations`
+
+  function toggle(id: string) {
+    onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])
+  }
+
+  return (
+    <div className="multi-select">
+      <button type="button" className="btn ghost multi-toggle" onClick={() => setOpen((v) => !v)}>
+        {label} ▾
+      </button>
+      {open && (
+        <div className="multi-panel" onMouseLeave={() => setOpen(false)}>
+          <label className="checkbox small" style={{ margin: 0 }}>
+            <input
+              type="checkbox"
+              checked={value.length === 0}
+              onChange={() => onChange([])}
+            />{' '}
+            All stations
+          </label>
+          {stations.map((s) => (
+            <label className="checkbox small" key={s.id} style={{ margin: 0 }}>
+              <input
+                type="checkbox"
+                checked={value.includes(s.id)}
+                onChange={() => toggle(s.id)}
+              />{' '}
+              {s.name}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ */
 
 function TagsTab() {
@@ -435,9 +486,9 @@ function TagsTab() {
             </tr>
           </thead>
           <tbody>
-            {stations.map((st) => (
+            {stations.map((st, i) => (
               <tr key={st.id}>
-                <td className="muted">{st.sort_order}</td>
+                <td className="muted">{i + 1}</td>
                 <td>{st.name}</td>
                 {canManageStations && (
                   <td className="right">
@@ -488,7 +539,7 @@ function TagEditModal({
   const [name, setName] = useState(grade?.name ?? '')
   const [color, setColor] = useState(grade?.color ?? 'blue')
   const [modules, setModules] = useState<string[]>(grade?.modules ?? [...DEFAULT_MODULES])
-  const [ability, setAbility] = useState(grade?.ability ?? '')
+  const ability = grade?.ability ?? ''
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -500,7 +551,7 @@ function TagEditModal({
     e.preventDefault()
     setError(null)
     setSaving(true)
-    const fields = { name: name.trim(), color, modules, ability: ability.trim() || null }
+    const fields = { name: name.trim(), color, modules, ability: ability || null }
     const { error } = grade
       ? await supabase.from('grades').update(fields).eq('id', grade.id)
       : await supabase.from('grades').insert({ ...fields, sort_order: nextTier })
@@ -556,15 +607,12 @@ function TagEditModal({
           </div>
         </div>
 
-        <label className="field">
-          <span>Can do</span>
-          <textarea
-            value={ability}
-            onChange={(e) => setAbility(e.target.value)}
-            rows={3}
-            placeholder="e.g. Verifies new piece rates before management approval"
-          />
-        </label>
+        <div className="field">
+          <span>Can do (preset — not editable)</span>
+          <p className="muted small" style={{ margin: 0 }}>
+            {grade?.ability ?? 'Follows the tier: sees own tier and below; tier 2 verifies and tier 1 approves new piece rates.'}
+          </p>
+        </div>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
@@ -573,149 +621,6 @@ function TagEditModal({
           </button>
         </div>
       </form>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Workers: the payroll name list (who gets paid). Kept separate from */
-/* User access, which is about login accounts.                        */
-/* ------------------------------------------------------------------ */
-
-function WorkersTab() {
-  const [workers, setWorkers] = useState<Worker[]>([])
-  const [stations, setStations] = useState<Station[]>([])
-  const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
-  const [stationId, setStationId] = useState('')
-  const [showInactive, setShowInactive] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  async function load() {
-    const [w, s] = await Promise.all([
-      supabase.from('workers').select('id, full_name, station_id, grade_id, can_approve_rates, active').order('full_name'),
-      supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-    ])
-    if (w.error) setError(w.error.message)
-    else setWorkers(w.data ?? [])
-    if (s.error) setError(s.error.message)
-    else setStations(s.data ?? [])
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    load()
-  }, [])
-
-  async function addWorker(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    const { error } = await supabase
-      .from('workers')
-      .insert({ full_name: name.trim(), station_id: stationId || null })
-    if (error) return setError(error.message)
-    setName('')
-    setAdding(false)
-    load()
-  }
-
-  async function update(w: Worker, fields: Partial<Worker>) {
-    const { error } = await supabase.from('workers').update(fields).eq('id', w.id)
-    if (error) setError(error.message)
-    else load()
-  }
-
-  if (loading) return <p className="muted">Loading…</p>
-
-  const visible = workers.filter((w) => showInactive || w.active)
-
-  return (
-    <div className="stack">
-      {error && <div className="error">{error}</div>}
-
-      <div className="card stack">
-        <div className="row-form spread">
-          <h3>Workers</h3>
-          <button className="btn" onClick={() => setAdding((v) => !v)}>
-            {adding ? 'Cancel' : '+ Add worker'}
-          </button>
-        </div>
-        <p className="muted small">
-          The payroll name list — production entries and payslips are per worker. Not
-          every worker needs a login.
-        </p>
-
-        {adding && (
-          <form className="row-form" onSubmit={addWorker}>
-            <label className="field inline grow">
-              <span>Full name</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-            </label>
-            <label className="field inline">
-              <span>Station</span>
-              <select value={stationId} onChange={(e) => setStationId(e.target.value)}>
-                <option value="">—</option>
-                {stations.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </label>
-            <button className="btn" type="submit">Save worker</button>
-          </form>
-        )}
-
-        <label className="small muted checkbox">
-          <input
-            type="checkbox"
-            checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-          />{' '}
-          Show inactive
-        </label>
-
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Station</th>
-              <th>Status</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.length === 0 && (
-              <tr><td colSpan={4} className="muted">No workers yet — click “+ Add worker”.</td></tr>
-            )}
-            {visible.map((w) => (
-              <tr key={w.id}>
-                <td>{w.full_name}</td>
-                <td>
-                  <select
-                    value={w.station_id ?? ''}
-                    onChange={(e) => update(w, { station_id: e.target.value || null })}
-                  >
-                    <option value="">—</option>
-                    {stations.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </td>
-                <td>
-                  <span className={`badge ${w.active ? 'ok' : 'off'}`}>{w.active ? 'active' : 'inactive'}</span>
-                </td>
-                <td className="right">
-                  {w.active ? (
-                    <button className="linkbtn danger" onClick={() => update(w, { active: false })}>Deactivate</button>
-                  ) : (
-                    <button className="linkbtn" onClick={() => update(w, { active: true })}>Reactivate</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   )
 }

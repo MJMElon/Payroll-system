@@ -173,6 +173,11 @@ alter table public.workers add column if not exists can_approve_rates boolean no
 -- appointed per signed-up email in Settings -> User access (admin only).
 alter table public.access_profiles add column if not exists grade_id uuid references public.grades (id);
 alter table public.access_profiles add column if not exists can_approve_rates boolean not null default false;
+
+-- A user can hold several station tags (empty = all stations).
+alter table public.access_profiles add column if not exists station_ids uuid[];
+update public.access_profiles set station_ids = array[station_id]
+  where station_id is not null and station_ids is null;
 update public.access_profiles p set email = u.email
   from auth.users u where u.id = p.id and p.email is null;
 
@@ -349,7 +354,11 @@ create policy "insert production" on public.production_entries
     public.my_role() in ('admin', 'manager')
     or (
       public.my_role() = 'operator'
-      and station_id = (select station_id from public.access_profiles where id = auth.uid())
+      and exists (
+        select 1 from public.access_profiles p
+        where p.id = auth.uid()
+          and production_entries.station_id = any(coalesce(p.station_ids, array[p.station_id]))
+      )
     )
   );
 
