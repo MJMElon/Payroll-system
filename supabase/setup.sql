@@ -344,16 +344,27 @@ insert into public.stations (name, sort_order) values
   ('Boiler', 7)
 on conflict (name) do nothing;
 
--- Starter grades (tags) — extend or rename in Settings -> Tags.
+-- Starter grades (tags) — tier 1 is the HIGHEST; a tier sees every tier
+-- below it. Reorder by dragging in Settings -> Tags management.
 insert into public.grades (name, sort_order) values
-  ('General Worker', 0),
-  ('Operator', 1),
-  ('Assistant Station Head', 2),
-  ('Station Head', 3),
-  ('Engineer', 4),
-  ('Manager', 5),
-  ('Management', 6)
+  ('Management', 1),
+  ('Manager', 2),
+  ('Engineer', 3),
+  ('Station Head', 4),
+  ('Assistant Station Head', 5),
+  ('Operator', 6),
+  ('General Worker', 7)
 on conflict (name) do nothing;
+
+-- Remap the seeded tags to tier-1-is-highest (older databases had the
+-- opposite order).
+update public.grades set sort_order = 1 where name = 'Management';
+update public.grades set sort_order = 2 where name = 'Manager';
+update public.grades set sort_order = 3 where name = 'Engineer';
+update public.grades set sort_order = 4 where name = 'Station Head';
+update public.grades set sort_order = 5 where name = 'Assistant Station Head';
+update public.grades set sort_order = 6 where name = 'Operator';
+update public.grades set sort_order = 7 where name = 'General Worker';
 
 -- Default colours/abilities (only fills tags still on the default grey).
 update public.grades set color = 'blue',

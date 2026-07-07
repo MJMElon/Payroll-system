@@ -34,7 +34,7 @@ export default function Settings() {
           User access
         </button>
         <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
-          Tags
+          Tags management
         </button>
         <button className={`tab ${tab === 'workers' ? 'active' : ''}`} onClick={() => setTab('workers')}>
           Workers (payroll)
@@ -68,13 +68,13 @@ function UserAccessTab() {
     const [p, s, g] = await Promise.all([
       supabase.from('access_profiles').select('*').order('email'),
       supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-      supabase.from('grades').select('*').order('sort_order', { ascending: false }),
+      supabase.from('grades').select('*').order('sort_order'),
     ])
     const err = p.error || s.error || g.error
     if (err) setError(err.message)
     setProfiles((p.data ?? []) as Profile[])
     setStations(s.data ?? [])
-    setGrades((g.data ?? []) as Grade[])
+    setGrades(((g.data ?? []) as Grade[]).sort((a, b) => a.sort_order - b.sort_order))
     setLoading(false)
   }
 
@@ -174,7 +174,7 @@ function UserAccessTab() {
               <h2><span className={tagClass(tagInfo.color)}>{tagInfo.name}</span></h2>
               <button type="button" className="modal-close" onClick={() => setTagInfo(null)} aria-label="Close">×</button>
             </div>
-            <p className="muted small">Tier {tagInfo.sort_order} — sees its own tier and every tier below.</p>
+            <p className="muted small">Tier {tagInfo.sort_order} (1 is highest) — sees its own tier and every tier below it.</p>
             <div className="field">
               <span>Can see / do</span>
               <p style={{ margin: 0 }}>{tagInfo.ability ?? 'Not described yet — set it in the Tags tab.'}</p>
@@ -254,6 +254,7 @@ function TagsTab() {
   const [name, setName] = useState('')
   const [color, setColor] = useState('blue')
   const [ability, setAbility] = useState('')
+  const [dragId, setDragId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -261,10 +262,28 @@ function TagsTab() {
     const { data, error } = await supabase
       .from('grades')
       .select('*')
-      .order('sort_order', { ascending: false })
+      .order('sort_order')
     if (error) setError(error.message)
-    else setGrades((data ?? []) as Grade[])
+    else setGrades(((data ?? []) as Grade[]).sort((a, b) => a.sort_order - b.sort_order))
     setLoading(false)
+  }
+
+  // Drop a dragged tag onto another: reorder locally, then renumber every
+  // tier 1..n so tier numbers always run top-down with no gaps.
+  async function dropOnTag(targetId: string) {
+    if (!dragId || dragId === targetId) return
+    const movingDown = grades.findIndex((g) => g.id === dragId) < grades.findIndex((g) => g.id === targetId)
+    const next = grades.filter((g) => g.id !== dragId)
+    const dragged = grades.find((g) => g.id === dragId)!
+    next.splice(next.findIndex((g) => g.id === targetId) + (movingDown ? 1 : 0), 0, dragged)
+    setDragId(null)
+    setGrades(next.map((g, i) => ({ ...g, sort_order: i + 1 })))
+    const results = await Promise.all(
+      next.map((g, i) => supabase.from('grades').update({ sort_order: i + 1 }).eq('id', g.id)),
+    )
+    const err = results.find((r) => r.error)
+    if (err?.error) setError(err.error.message)
+    load()
   }
 
   useEffect(() => {
@@ -316,7 +335,7 @@ function TagsTab() {
 
       <div className="card stack">
         <div className="row-form spread">
-          <h3>Tags</h3>
+          <h3>Tags management</h3>
           <button className="btn" onClick={() => setAdding((v) => !v)}>
             {adding ? 'Cancel' : '+ Add tag'}
           </button>
@@ -347,8 +366,9 @@ function TagsTab() {
         <table className="table">
           <thead>
             <tr>
-              <th>Tag</th>
+              <th></th>
               <th>Tier</th>
+              <th>Tag</th>
               <th>Colour</th>
               <th>Can see / do</th>
               <th className="right">Actions</th>
@@ -356,12 +376,25 @@ function TagsTab() {
           </thead>
           <tbody>
             {grades.length === 0 && (
-              <tr><td colSpan={5} className="muted">No tags yet — click “+ Add tag”.</td></tr>
+              <tr><td colSpan={6} className="muted">No tags yet — click “+ Add tag”.</td></tr>
             )}
             {grades.map((g) => (
-              <tr key={g.id}>
-                <td><span className={tagClass(g.color)}>{g.name}</span></td>
+              <tr
+                key={g.id}
+                className={`drag-row ${dragId === g.id ? 'dragging' : ''}`}
+                draggable
+                onDragStart={() => setDragId(g.id)}
+                onDragEnd={() => setDragId(null)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  dropOnTag(g.id)
+                }}
+                title="Drag to change tier"
+              >
+                <td className="drag-handle" aria-hidden="true">⠿</td>
                 <td className="muted">{g.sort_order}</td>
+                <td><span className={tagClass(g.color)}>{g.name}</span></td>
                 <td>
                   <select value={g.color} onChange={(e) => update(g, { color: e.target.value })}>
                     {TAG_COLORS.map((c) => (
@@ -380,7 +413,8 @@ function TagsTab() {
           </tbody>
         </table>
         <p className="muted small">
-          Higher tier sees more: a user sees piece rates of their tier and every tier below.
+          Tier 1 is the highest. Drag rows up or down to change tiers — each tag sees
+          its own tier and every tier below it.
         </p>
       </div>
     </div>

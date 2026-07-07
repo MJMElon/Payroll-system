@@ -98,15 +98,18 @@ export default function PieceRate() {
     (j) => j.approval_status === 'pending' || j.approval_status === 'verified',
   )
 
-  // Managers/admins see every contract. Others see untagged rates plus tags
-  // at their own tier or below; users with no grade tag see untagged only.
+  // Managers/admins see every contract. Others are scoped two ways:
+  // 1. Station — a user with a station tag only sees their own station.
+  // 2. Tier — tier 1 is highest; a user sees their tier and every tier
+  //    below it (larger tier numbers). Untagged rates are visible to all.
   const tierOf = (gradeId: string | null) =>
-    gradeId ? grades.find((g) => g.id === gradeId)?.sort_order ?? Infinity : null
+    gradeId ? grades.find((g) => g.id === gradeId)?.sort_order ?? 0 : null
   const visibleTo = (j: Job) => {
     if (canManage) return true
+    if (profile?.station_id && j.station_id !== profile.station_id) return false
     const t = tierOf(j.grade_id)
     if (t === null) return true
-    return myTier !== null && t <= myTier
+    return myTier !== null && t >= myTier
   }
 
   return (

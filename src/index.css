@@ -267,6 +267,11 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 .approval-trail { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem; }
 .btn.ghost.danger { color: var(--danger); border-color: #f1cfcd; }
 
+/* Draggable tier rows in Tags management */
+.drag-row { cursor: grab; }
+.drag-row.dragging { opacity: 0.45; cursor: grabbing; }
+.drag-handle { color: var(--muted); width: 24px; user-select: none; }
+
 /* Clickable tag list with colour dots */
 .tag-list { display: flex; flex-direction: column; gap: 0.15rem; }
 .tag-row {
