@@ -44,7 +44,6 @@ export default function DemoMobile() {
           <div className="phone-screen">
             <div className="mob-status">
               <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              <span>MJM</span>
               <span>▮▮▮</span>
             </div>
 
@@ -79,13 +78,11 @@ function StationPicker({
   return (
     <>
       <div className="mob-header">
-        <div>
-          <div className="mob-role">Select station</div>
-          <div className="mob-sub">Where are you working now?</div>
-        </div>
+        <span className="mob-brand">MJM</span>
         <div className="mob-avatar">A</div>
       </div>
       <div className="mob-body">
+        <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Stations</div>
         {stations.length === 0 && (
           <p className="muted small">No stations yet — create them in Settings.</p>
         )}
@@ -159,6 +156,12 @@ function StationScreen({
     return isToday && t.getHours() === now.getHours()
   }).length
   const minutesLeft = 59 - now.getMinutes()
+  const hourLabel = (h: number) => {
+    const h24 = ((h % 24) + 24) % 24
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12
+    return `${h12}${h24 >= 12 ? 'PM' : 'AM'}`
+  }
+  const hourZone = `${hourLabel(now.getHours())} – ${hourLabel(now.getHours() + 1)}`
 
   async function handleFile(file: File | undefined) {
     if (!file) return
@@ -196,23 +199,25 @@ function StationScreen({
   return (
     <>
       <div className="mob-header">
-        <div>
-          <button className="mob-back" onClick={onBack}>‹ Stations</button>
-          <div className="mob-role">{station.name}</div>
-        </div>
+        <button className="mob-back" onClick={onBack}>‹ Stations</button>
+        <span className="mob-brand">MJM</span>
         <div className="mob-avatar">A</div>
       </div>
 
       <div className="mob-body">
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>{station.name}</div>
         {/* 1 — status stamp card */}
         <div className="mob-card mob-highlight">
           {station.hourly_count ? (
             <>
-              <div className="mob-title">This hour</div>
+              <div className="row-form spread" style={{ alignItems: 'center' }}>
+                <div className="mob-title">This hour</div>
+                <div className="mob-zone">{hourZone}</div>
+              </div>
               <div className="stamp-row">
                 {Array.from({ length: target }, (_, i) => (
                   <span key={i} className={`stamp ${i < stampsThisHour ? 'filled' : ''}`}>
-                    {i < stampsThisHour ? '✓' : ''}
+                    {i < stampsThisHour ? 'DONE' : ''}
                   </span>
                 ))}
               </div>

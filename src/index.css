@@ -513,7 +513,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-station-meta { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
 .mob-back {
   appearance: none; background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: 0.75rem; padding: 0; margin-bottom: 0.15rem;
+  color: var(--muted); font-size: 0.8rem; padding: 0;
+}
+.mob-brand {
+  font-family: 'Montserrat', system-ui, sans-serif;
+  font-weight: 800; letter-spacing: 0.16em; font-size: 1.25rem;
+  background: linear-gradient(110deg, #2c333c 20%, #8b95a1 38%, #dfe4e9 50%, #8b95a1 62%, #2c333c 80%);
+  background-size: 200% auto;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  animation: metal-shine 5s linear infinite;
+}
+.mob-zone {
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.16); border-radius: 999px; padding: 0.15rem 0.6rem;
 }
 .mob-daynav { display: flex; justify-content: space-between; align-items: center; }
 .mob-thumb {
@@ -521,17 +534,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 
 /* Stamp card (hexagon stamps like a loyalty card) */
-.stamp-row { display: flex; gap: 0.45rem; flex-wrap: wrap; padding: 0.2rem 0; }
+.stamp-row { display: flex; gap: 0.5rem; flex-wrap: wrap; padding: 0.3rem 0; }
 .stamp {
-  width: 40px; height: 44px;
+  width: 46px; height: 52px;
   clip-path: polygon(50% 0%, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.13);
   display: flex; align-items: center; justify-content: center;
-  color: transparent; font-weight: 800; font-size: 1rem;
+  color: transparent; font-weight: 800; font-size: 0.56rem; letter-spacing: 0.04em;
+  transform: rotate(0deg);
 }
 .stamp.filled {
-  background: linear-gradient(160deg, #f2f4f6, #aeb6bf);
+  background: linear-gradient(160deg, #ffffff, #aeb6bf 75%);
   color: #1b2027;
+  transform: rotate(-8deg);
+  box-shadow: inset 0 0 0 3px rgba(27, 32, 39, 0.15);
 }
 
 .mob-nav {
