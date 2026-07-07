@@ -34,10 +34,15 @@ export default function PieceRate() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<Rate[]>([])
-  const [canApprove, setCanApprove] = useState(false)
   const [myTier, setMyTier] = useState<number | null>(null)
   const canManage = profile?.role === 'admin' || profile?.role === 'manager'
+  const isAdmin = profile?.role === 'admin'
+  const isApprover = isAdmin || Boolean(profile?.can_approve_rates)
+  // Preset in Settings: 'verify' does step 1, 'approve' does the final step.
+  const canVerify = isAdmin || (Boolean(profile?.can_approve_rates) && (profile?.approval_role ?? 'verify') === 'verify')
+  const canFinal = isAdmin || (Boolean(profile?.can_approve_rates) && profile?.approval_role === 'approve')
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
+  const [showApprovals, setShowApprovals] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -48,7 +53,7 @@ export default function PieceRate() {
       supabase.from('grades').select('*').order('sort_order'),
       supabase
         .from('jobs')
-        .select('id, station_id, grade_id, name, unit, active, approval_status')
+        .select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by')
         .order('name'),
       supabase
         .from('piece_rates')
@@ -68,10 +73,8 @@ export default function PieceRate() {
     load()
   }, [])
 
-  // Approval rights + tier come straight from the signed-in account's profile
-  // (appointed in Settings → User access).
+  // Tier comes from the signed-in account's grade tag.
   useEffect(() => {
-    setCanApprove(profile?.role === 'admin' || Boolean(profile?.can_approve_rates))
     if (profile?.grade_id) {
       const g = grades.find((x) => x.id === profile.grade_id)
       setMyTier(g ? g.sort_order : null)
@@ -91,7 +94,9 @@ export default function PieceRate() {
 
   if (loading) return <p className="muted">Loading…</p>
 
-  const pending = jobs.filter((j) => j.approval_status === 'pending')
+  const openApprovals = jobs.filter(
+    (j) => j.approval_status === 'pending' || j.approval_status === 'verified',
+  )
 
   // Managers/admins see every contract. Others see untagged rates plus tags
   // at their own tier or below; users with no grade tag see untagged only.
@@ -133,21 +138,20 @@ export default function PieceRate() {
             </>
           )}
         </div>
-        {view === 'rates' && canManage && (
-          <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
-        )}
+        <div className="row-form">
+          {view === 'rates' && isApprover && (
+            <button className="btn ghost badge-holder" onClick={() => setShowApprovals(true)}>
+              Approvals
+              {openApprovals.length > 0 && (
+                <span className="count-badge">{openApprovals.length}</span>
+              )}
+            </button>
+          )}
+          {view === 'rates' && canManage && (
+            <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
+          )}
+        </div>
       </div>
-
-      {view === 'rates' && canApprove && (
-        <ApprovalSection
-          pending={pending}
-          stations={stations}
-          grades={grades}
-          currentRate={currentRate}
-          onChanged={load}
-          onError={setError}
-        />
-      )}
 
       {view === 'rates' ? (
         <RatesList
@@ -164,13 +168,28 @@ export default function PieceRate() {
         <StationsList stations={stations} onChanged={load} onError={setError} />
       )}
 
+      {showApprovals && (
+        <ApprovalModal
+          items={openApprovals}
+          stations={stations}
+          grades={grades}
+          currentRate={currentRate}
+          myEmail={profile?.email ?? 'unknown'}
+          canVerify={canVerify}
+          canFinal={canFinal}
+          onClose={() => setShowApprovals(false)}
+          onChanged={load}
+          onError={setError}
+        />
+      )}
+
       {modal !== 'closed' && (
         <ContractModal
           stations={stations}
           grades={grades}
           job={modal === 'create' ? null : modal}
           currentRate={modal === 'create' ? null : currentRate.get(modal.id) ?? null}
-          autoApprove={canApprove}
+          autoApprove={isAdmin}
           onClose={() => setModal('closed')}
           onSaved={(submitted) => {
             setModal('closed')
@@ -184,72 +203,102 @@ export default function PieceRate() {
 }
 
 /* ------------------------------------------------------------------ */
-/* New piece rate approval — only for users tagged 'Piece rate        */
-/* approval' (or admins).                                             */
+/* Approvals pop-out — two-step flow: a 'verify' approver checks the   */
+/* proposal, then an 'approve' approver (management) makes it final.   */
 /* ------------------------------------------------------------------ */
 
-function ApprovalSection({
-  pending,
+function ApprovalModal({
+  items,
   stations,
   grades,
   currentRate,
+  myEmail,
+  canVerify,
+  canFinal,
+  onClose,
   onChanged,
   onError,
 }: {
-  pending: Job[]
+  items: Job[]
   stations: Station[]
   grades: Grade[]
   currentRate: Map<string, Rate>
+  myEmail: string
+  canVerify: boolean
+  canFinal: boolean
+  onClose: () => void
   onChanged: () => void
   onError: (m: string | null) => void
 }) {
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
 
-  async function decide(job: Job, approval_status: 'approved' | 'rejected') {
-    const { error } = await supabase.from('jobs').update({ approval_status }).eq('id', job.id)
+  async function act(job: Job, fields: Partial<Job> & { approval_status: Job['approval_status'] }) {
+    const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
     if (error) onError(error.message)
     else onChanged()
   }
 
+  const verify = (j: Job) =>
+    act(j, { approval_status: 'verified', verified_by: myEmail, verified_at: new Date().toISOString() } as never)
+  const approve = (j: Job) =>
+    act(j, { approval_status: 'approved', approved_by: myEmail, approved_at: new Date().toISOString() } as never)
+  const reject = (j: Job) => act(j, { approval_status: 'rejected' })
+
   return (
-    <div className="card stack approval-card">
-      <h3>New piece rate approval</h3>
-      {pending.length === 0 ? (
-        <p className="muted small">Nothing waiting for approval.</p>
-      ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Station</th>
-              <th>Work description</th>
-              <th>Tag</th>
-              <th>Unit</th>
-              <th className="right">Proposed rate</th>
-              <th className="right">Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pending.map((j) => {
-              const rate = currentRate.get(j.id)
-              const tag = gradeName(j.grade_id)
-              return (
-                <tr key={j.id}>
-                  <td>{stationName(j.station_id)}</td>
-                  <td>{j.name}</td>
-                  <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
-                  <td className="muted">{j.unit}</td>
-                  <td className="right"><strong>{rate ? Number(rate.rate) : '—'}</strong></td>
-                  <td className="right">
-                    <button className="linkbtn" onClick={() => decide(j, 'approved')}>Approve</button>{' '}
-                    <button className="linkbtn danger" onClick={() => decide(j, 'rejected')}>Reject</button>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      )}
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <div className="row-form spread">
+          <h2>New piece rate approval</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <p className="muted small">
+          Flow: proposed → <strong>verified</strong> (checker) → <strong>approved</strong> (management).
+        </p>
+
+        {items.length === 0 ? (
+          <p className="muted">Nothing waiting for approval.</p>
+        ) : (
+          items.map((j) => {
+            const rate = currentRate.get(j.id)
+            const tag = gradeName(j.grade_id)
+            return (
+              <div className="approval-item" key={j.id}>
+                <div className="row-form spread">
+                  <div>
+                    <strong>{j.name}</strong>{' '}
+                    {tag && <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span>}
+                    <div className="muted small">
+                      {stationName(j.station_id)} · {j.unit} · proposed rate{' '}
+                      <strong>{rate ? Number(rate.rate) : '—'}</strong>
+                    </div>
+                    <div className="small approval-trail">
+                      {j.approval_status === 'pending' && <span className="badge off">waiting verification</span>}
+                      {j.verified_by && (
+                        <span className="badge ok">verified by {j.verified_by}</span>
+                      )}
+                      {j.approved_by && (
+                        <span className="badge ok">approved by {j.approved_by}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="row-form">
+                    {j.approval_status === 'pending' && canVerify && (
+                      <button className="btn" onClick={() => verify(j)}>Verify</button>
+                    )}
+                    {j.approval_status === 'verified' && canFinal && (
+                      <button className="btn" onClick={() => approve(j)}>Approve</button>
+                    )}
+                    {(canVerify || canFinal) && (
+                      <button className="btn ghost danger" onClick={() => reject(j)}>Reject</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
     </div>
   )
 }

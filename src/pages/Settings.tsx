@@ -60,6 +60,7 @@ function UserAccessTab() {
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [approverToAdd, setApproverToAdd] = useState('')
+  const [tagInfo, setTagInfo] = useState<Grade | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -104,63 +105,83 @@ function UserAccessTab() {
     <div className="stack">
       {error && <div className="error">{error}</div>}
 
-      {/* 1 — who can approve piece rates */}
-      <div className="card stack approval-card">
-        <h3>Piece rate approval</h3>
-        <p className="muted small">
-          Emails listed here can approve or reject new piece rates in the Piece Rate module.
-        </p>
-        {approvers.length === 0 && <p className="muted small">No approvers yet.</p>}
-        {approvers.map((p) => (
-          <div className="row-form spread approver-row" key={p.id}>
-            <span>{label(p)}</span>
-            <button className="linkbtn danger" onClick={() => update(p, { can_approve_rates: false })}>
-              Remove
+      <div className="grid-2">
+        {/* 1 — who can approve piece rates, and their step in the flow */}
+        <div className="card stack approval-card">
+          <h3>Piece rate approval</h3>
+          <p className="muted small">
+            These emails act on new piece rates: <strong>Verify</strong> checks the
+            proposal, <strong>Approval</strong> gives the final decision.
+          </p>
+          {approvers.length === 0 && <p className="muted small">No approvers yet.</p>}
+          {approvers.map((p) => (
+            <div className="row-form spread approver-row" key={p.id}>
+              <span className="small">{label(p)}</span>
+              <span className="row-form" style={{ gap: '0.5rem' }}>
+                <select
+                  value={p.approval_role ?? 'verify'}
+                  onChange={(e) => update(p, { approval_role: e.target.value as Profile['approval_role'] })}
+                >
+                  <option value="verify">Verify</option>
+                  <option value="approve">Approval</option>
+                </select>
+                <button className="linkbtn danger" onClick={() => update(p, { can_approve_rates: false })}>
+                  Remove
+                </button>
+              </span>
+            </div>
+          ))}
+          <div className="row-form">
+            <select value={approverToAdd} onChange={(e) => setApproverToAdd(e.target.value)} style={{ flex: 1 }}>
+              <option value="">Pick an email to allow…</option>
+              {nonApprovers.map((p) => (
+                <option key={p.id} value={p.id}>{label(p)}</option>
+              ))}
+            </select>
+            <button
+              className="btn"
+              disabled={!approverToAdd}
+              onClick={() => {
+                const p = profiles.find((x) => x.id === approverToAdd)
+                if (p) update(p, { can_approve_rates: true, approval_role: p.approval_role ?? 'verify' })
+                setApproverToAdd('')
+              }}
+            >
+              Allow
             </button>
           </div>
-        ))}
-        <div className="row-form">
-          <select value={approverToAdd} onChange={(e) => setApproverToAdd(e.target.value)} style={{ flex: 1 }}>
-            <option value="">Pick an email to allow…</option>
-            {nonApprovers.map((p) => (
-              <option key={p.id} value={p.id}>{label(p)}</option>
+        </div>
+
+        {/* 2 — the tags; click one to see what it can see and do */}
+        <div className="card stack">
+          <h3>Tags</h3>
+          <p className="muted small">Click a tag to see its access. Manage them in the Tags tab.</p>
+          <div className="tag-list">
+            {grades.map((g) => (
+              <button className="tag-row" key={g.id} onClick={() => setTagInfo(g)}>
+                <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
+                <span>{g.name}</span>
+              </button>
             ))}
-          </select>
-          <button
-            className="btn"
-            disabled={!approverToAdd}
-            onClick={() => {
-              const p = profiles.find((x) => x.id === approverToAdd)
-              if (p) update(p, { can_approve_rates: true })
-              setApproverToAdd('')
-            }}
-          >
-            Allow approval
-          </button>
+          </div>
         </div>
       </div>
 
-      {/* 2 — what each tag level can see and do */}
-      <div className="card stack">
-        <h3>Tag access levels</h3>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Tag</th>
-              <th>Can see / do</th>
-            </tr>
-          </thead>
-          <tbody>
-            {grades.map((g) => (
-              <tr key={g.id}>
-                <td><span className={tagClass(g.color)}>{g.name}</span></td>
-                <td className="muted">{g.ability ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="muted small">Edit names, colours and abilities in the Tags tab.</p>
-      </div>
+      {tagInfo && (
+        <div className="modal-overlay" onClick={() => setTagInfo(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="row-form spread">
+              <h2><span className={tagClass(tagInfo.color)}>{tagInfo.name}</span></h2>
+              <button type="button" className="modal-close" onClick={() => setTagInfo(null)} aria-label="Close">×</button>
+            </div>
+            <p className="muted small">Tier {tagInfo.sort_order} — sees its own tier and every tier below.</p>
+            <div className="field">
+              <span>Can see / do</span>
+              <p style={{ margin: 0 }}>{tagInfo.ability ?? 'Not described yet — set it in the Tags tab.'}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 3 — every signed-up account */}
       <div className="card stack">

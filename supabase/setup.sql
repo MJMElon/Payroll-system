@@ -166,10 +166,33 @@ update public.jobs set grade_id = null
   where grade_id in (select id from public.grades where name = 'Piece rate approval');
 delete from public.grades where name = 'Piece rate approval';
 
--- New piece rates wait for approval by a user with the approval permission.
--- Existing rows default to approved.
+-- New piece rates go through a two-step flow: proposed (pending) ->
+-- verified (by an approver preset to 'verify') -> approved (preset
+-- 'approve'). Who did each step is recorded. Existing rows default approved.
 alter table public.jobs add column if not exists approval_status text not null default 'approved'
   check (approval_status in ('pending', 'approved', 'rejected'));
+alter table public.jobs drop constraint if exists jobs_approval_status_check;
+alter table public.jobs add constraint jobs_approval_status_check
+  check (approval_status in ('pending', 'verified', 'approved', 'rejected'));
+alter table public.jobs add column if not exists verified_by text;
+alter table public.jobs add column if not exists verified_at timestamptz;
+alter table public.jobs add column if not exists approved_by text;
+alter table public.jobs add column if not exists approved_at timestamptz;
+
+-- Each approver email is preset to its step in the approval process.
+alter table public.access_profiles add column if not exists approval_role text
+  check (approval_role in ('verify', 'approve'));
+
+-- Approvers may update jobs (verify/approve/reject) even without the
+-- admin/manager role.
+drop policy if exists "approvers update jobs" on public.jobs;
+create policy "approvers update jobs" on public.jobs
+  for update using (
+    exists (
+      select 1 from public.access_profiles p
+      where p.id = auth.uid() and p.can_approve_rates
+    )
+  );
 create unique index if not exists jobs_station_grade_name_idx
   on public.jobs (station_id, grade_id, name);
 

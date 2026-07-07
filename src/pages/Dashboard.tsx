@@ -89,8 +89,11 @@ export default function Dashboard() {
 
   function dropOn(targetKey: string) {
     if (!dragKey || dragKey === targetKey) return
+    // Moving forward lands AFTER the target, moving backward lands BEFORE it —
+    // so a drag works in both directions.
+    const movingForward = order.indexOf(dragKey) < order.indexOf(targetKey)
     const next = order.filter((k) => k !== dragKey)
-    next.splice(next.indexOf(targetKey), 0, dragKey)
+    next.splice(next.indexOf(targetKey) + (movingForward ? 1 : 0), 0, dragKey)
     setOrder(next)
     localStorage.setItem(ORDER_KEY, JSON.stringify(next))
     setDragKey(null)

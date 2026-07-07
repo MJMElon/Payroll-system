@@ -32,6 +32,7 @@ export interface Profile {
   worker_id: string | null
   grade_id: string | null
   can_approve_rates: boolean
+  approval_role: 'verify' | 'approve' | null
 }
 
 // Rows of the work tables (see supabase/setup.sql).
@@ -65,7 +66,9 @@ export interface Job {
   name: string
   unit: string
   active: boolean
-  approval_status: 'pending' | 'approved' | 'rejected'
+  approval_status: 'pending' | 'verified' | 'approved' | 'rejected'
+  verified_by: string | null
+  approved_by: string | null
 }
 
 export interface PieceRate {

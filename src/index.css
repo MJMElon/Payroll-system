@@ -245,6 +245,50 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 .module-tile { cursor: grab; }
 .module-tile.dragging { opacity: 0.5; cursor: grabbing; }
 
+/* Side-by-side settings blocks */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
+@media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } }
+
+/* Button with a red notification counter at its top-right corner */
+.badge-holder { position: relative; }
+.count-badge {
+  position: absolute; top: -7px; right: -7px;
+  min-width: 19px; height: 19px; padding: 0 5px;
+  background: #dc2626; color: #fff; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 700; line-height: 19px; text-align: center;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.45);
+}
+
+/* Wider pop-out for the approval list */
+.modal.modal-wide { max-width: 620px; }
+.approval-item {
+  border: 1px solid var(--border); border-radius: 12px; padding: 0.8rem 0.9rem;
+}
+.approval-trail { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem; }
+.btn.ghost.danger { color: var(--danger); border-color: #f1cfcd; }
+
+/* Clickable tag list with colour dots */
+.tag-list { display: flex; flex-direction: column; gap: 0.15rem; }
+.tag-row {
+  appearance: none; background: none; border: none; cursor: pointer;
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.45rem 0.5rem; border-radius: 8px; font-size: 0.9rem; text-align: left;
+  color: var(--text);
+}
+.tag-row:hover { background: var(--bg); }
+.tag-dot { width: 14px; height: 14px; border-radius: 5px; flex: none; }
+.dot-blue { background: #3b82f6; }
+.dot-yellow { background: #eab308; }
+.dot-red { background: #ef4444; }
+.dot-green { background: #22c55e; }
+.dot-grey { background: #9ca3af; }
+.dot-silver { background: linear-gradient(135deg, #e2e8f0, #94a3b8); }
+.dot-gold { background: linear-gradient(135deg, #fde68a, #d97706); }
+.dot-diamond {
+  background: linear-gradient(135deg, #bae6fd, #ffffff 50%, #7dd3fc);
+  box-shadow: 0 0 6px rgba(125, 211, 252, 0.8);
+}
+
 /* Small link-style action buttons in tables */
 .linkbtn {
   appearance: none; background: none; border: none; cursor: pointer; padding: 0;
