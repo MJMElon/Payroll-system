@@ -190,7 +190,8 @@ alter table public.grades add column if not exists ability text;
 alter table public.grades add column if not exists modules text[] not null
   default '{station-status,piece-rate}';
 update public.grades set modules = '{station-status,piece-rate,payroll,demo-mobile}'
-  where name in ('Management', 'Manager', 'Engineer');
+  where name in ('Management', 'Manager', 'Engineer')
+    and modules = '{station-status,piece-rate}';
 
 -- The signed-in user's tag tier (security definer avoids RLS recursion when
 -- used inside the grades policies).
@@ -386,7 +387,10 @@ create policy "admin manager payroll_adjustments" on public.payroll_adjustments
 -- Seed the 7 mill stations
 -- ---------------------------------------------------------------------------
 
-insert into public.stations (name, sort_order) values
+-- Seed only when the table is empty, so stations you delete stay deleted
+-- on later re-runs.
+insert into public.stations (name, sort_order)
+select v.name, v.sort_order from (values
   ('Loading Ramp', 1),
   ('Sterilizer', 2),
   ('Thresher', 3),
@@ -394,11 +398,14 @@ insert into public.stations (name, sort_order) values
   ('Clarification', 5),
   ('Kernel Recovery', 6),
   ('Boiler', 7)
-on conflict (name) do nothing;
+) as v(name, sort_order)
+where not exists (select 1 from public.stations);
 
 -- Starter grades (tags) — tier 1 is the HIGHEST; a tier sees every tier
--- below it. Reorder by dragging in Settings -> Tags management.
-insert into public.grades (name, sort_order) values
+-- below it. Seeded only when the table is empty, so tags you delete or
+-- re-order stay that way on later re-runs.
+insert into public.grades (name, sort_order)
+select v.name, v.sort_order from (values
   ('Management', 1),
   ('Manager', 2),
   ('Engineer', 3),
@@ -406,17 +413,26 @@ insert into public.grades (name, sort_order) values
   ('Assistant Station Head', 5),
   ('Operator', 6),
   ('General Worker', 7)
-on conflict (name) do nothing;
+) as v(name, sort_order)
+where not exists (select 1 from public.grades);
 
--- Remap the seeded tags to tier-1-is-highest (older databases had the
--- opposite order).
-update public.grades set sort_order = 1 where name = 'Management';
-update public.grades set sort_order = 2 where name = 'Manager';
-update public.grades set sort_order = 3 where name = 'Engineer';
-update public.grades set sort_order = 4 where name = 'Station Head';
-update public.grades set sort_order = 5 where name = 'Assistant Station Head';
-update public.grades set sort_order = 6 where name = 'Operator';
-update public.grades set sort_order = 7 where name = 'General Worker';
+-- One-time remap for databases created before tier-1-was-highest (detected
+-- by Operator still sitting above Management).
+do $$
+begin
+  if exists (
+    select 1 from public.grades m, public.grades o
+    where m.name = 'Management' and o.name = 'Operator' and m.sort_order > o.sort_order
+  ) then
+    update public.grades set sort_order = 1 where name = 'Management';
+    update public.grades set sort_order = 2 where name = 'Manager';
+    update public.grades set sort_order = 3 where name = 'Engineer';
+    update public.grades set sort_order = 4 where name = 'Station Head';
+    update public.grades set sort_order = 5 where name = 'Assistant Station Head';
+    update public.grades set sort_order = 6 where name = 'Operator';
+    update public.grades set sort_order = 7 where name = 'General Worker';
+  end if;
+end $$;
 
 -- Default colours/abilities (only fills tags still on the default grey).
 update public.grades set color = 'blue',

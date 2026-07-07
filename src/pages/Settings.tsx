@@ -305,6 +305,7 @@ function TagsTab() {
   const [editor, setEditor] = useState<'closed' | 'new' | Grade>('closed')
   const [addingStation, setAddingStation] = useState(false)
   const [stationName, setStationName] = useState('')
+  const [dragStation, setDragStation] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -376,6 +377,24 @@ function TagsTab() {
     const { error } = await supabase.from('stations').update({ name: next.trim() }).eq('id', st.id)
     if (error) setError(error.message)
     else load()
+  }
+
+  // Reorder the station list by dragging (display sequence only).
+  async function dropOnStation(targetId: string) {
+    if (!dragStation || dragStation === targetId) return
+    const movingDown =
+      stations.findIndex((x) => x.id === dragStation) < stations.findIndex((x) => x.id === targetId)
+    const next = stations.filter((x) => x.id !== dragStation)
+    const dragged = stations.find((x) => x.id === dragStation)!
+    next.splice(next.findIndex((x) => x.id === targetId) + (movingDown ? 1 : 0), 0, dragged)
+    setDragStation(null)
+    setStations(next.map((x, i) => ({ ...x, sort_order: i + 1 })))
+    const results = await Promise.all(
+      next.map((x, i) => supabase.from('stations').update({ sort_order: i + 1 }).eq('id', x.id)),
+    )
+    const err = results.find((r) => r.error)
+    if (err?.error) setError(err.error.message)
+    load()
   }
 
   async function removeStation(st: Station) {
@@ -461,7 +480,13 @@ function TagsTab() {
         <div className="row-form spread">
           <h3>Station tags</h3>
           {canManageStations && (
-            <button className="btn" onClick={() => setAddingStation((v) => !v)}>
+            <button
+              className="btn"
+              onClick={() => {
+                setStationName('')
+                setAddingStation((v) => !v)
+              }}
+            >
               {addingStation ? 'Cancel' : '+ Add station'}
             </button>
           )}
@@ -480,6 +505,7 @@ function TagsTab() {
         <table className="table">
           <thead>
             <tr>
+              {canManageStations && <th></th>}
               <th>#</th>
               <th>Station</th>
               {canManageStations && <th className="right">Actions</th>}
@@ -487,7 +513,21 @@ function TagsTab() {
           </thead>
           <tbody>
             {stations.map((st, i) => (
-              <tr key={st.id}>
+              <tr
+                key={st.id}
+                className={`${canManageStations ? 'drag-row' : ''} ${dragStation === st.id ? 'dragging' : ''}`}
+                draggable={canManageStations}
+                onDragStart={() => canManageStations && setDragStation(st.id)}
+                onDragEnd={() => setDragStation(null)}
+                onDragOver={(e) => canManageStations && e.preventDefault()}
+                onDrop={(e) => {
+                  if (!canManageStations) return
+                  e.preventDefault()
+                  dropOnStation(st.id)
+                }}
+                title={canManageStations ? 'Drag to reorder' : undefined}
+              >
+                {canManageStations && <td className="drag-handle" aria-hidden="true">⠿</td>}
                 <td className="muted">{i + 1}</td>
                 <td>{st.name}</td>
                 {canManageStations && (
