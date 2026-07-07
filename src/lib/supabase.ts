@@ -41,6 +41,16 @@ export interface Station {
   id: string
   name: string
   sort_order: number
+  // Mobile-view presets (optional: older queries don't select them).
+  hourly_count?: boolean
+  hourly_target?: number
+}
+
+export interface PhotoRecord {
+  id: string
+  station_id: string
+  photo_path: string | null
+  taken_at: string
 }
 
 export interface Worker {

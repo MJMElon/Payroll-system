@@ -306,13 +306,14 @@ function TagsTab() {
   const [addingStation, setAddingStation] = useState(false)
   const [stationName, setStationName] = useState('')
   const [dragStation, setDragStation] = useState<string | null>(null)
+  const [stationEditor, setStationEditor] = useState<Station | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   async function load() {
     const [g, st] = await Promise.all([
       supabase.from('grades').select('*').order('sort_order'),
-      supabase.from('stations').select('id, name, sort_order').order('sort_order'),
+      supabase.from('stations').select('*').order('sort_order'),
     ])
     const err = g.error || st.error
     if (err) setError(err.message)
@@ -369,14 +370,6 @@ function TagsTab() {
     setStationName('')
     setAddingStation(false)
     load()
-  }
-
-  async function renameStation(st: Station) {
-    const next = window.prompt('Station name', st.name)
-    if (!next || next.trim() === st.name) return
-    const { error } = await supabase.from('stations').update({ name: next.trim() }).eq('id', st.id)
-    if (error) setError(error.message)
-    else load()
   }
 
   // Reorder the station list by dragging (display sequence only).
@@ -508,6 +501,7 @@ function TagsTab() {
               {canManageStations && <th></th>}
               <th>#</th>
               <th>Station</th>
+              <th>Requirement</th>
               {canManageStations && <th className="right">Actions</th>}
             </tr>
           </thead>
@@ -530,9 +524,12 @@ function TagsTab() {
                 {canManageStations && <td className="drag-handle" aria-hidden="true">⠿</td>}
                 <td className="muted">{i + 1}</td>
                 <td>{st.name}</td>
+                <td className="muted small">
+                  {st.hourly_count ? `Hourly count · ${st.hourly_target ?? 6}/hr` : '—'}
+                </td>
                 {canManageStations && (
                   <td className="right">
-                    <button className="linkbtn" onClick={() => renameStation(st)}>Rename</button>{' '}
+                    <button className="linkbtn" onClick={() => setStationEditor(st)}>Edit</button>{' '}
                     <button className="linkbtn danger" onClick={() => removeStation(st)}>Delete</button>
                   </td>
                 )}
@@ -545,6 +542,17 @@ function TagsTab() {
         </p>
       </div>
 
+      {stationEditor && (
+        <StationEditModal
+          station={stationEditor}
+          onClose={() => setStationEditor(null)}
+          onSaved={() => {
+            setStationEditor(null)
+            load()
+          }}
+        />
+      )}
+
       {editor !== 'closed' && (
         <TagEditModal
           grade={editor === 'new' ? null : editor}
@@ -556,6 +564,90 @@ function TagsTab() {
           }}
         />
       )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Station edit pop-out: name + the work requirement preset shown in  */
+/* the mobile view (hourly stamp card).                               */
+/* ------------------------------------------------------------------ */
+
+function StationEditModal({
+  station,
+  onClose,
+  onSaved,
+}: {
+  station: Station
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [name, setName] = useState(station.name)
+  const [hourly, setHourly] = useState(Boolean(station.hourly_count))
+  const [targetInput, setTargetInput] = useState(String(station.hourly_target ?? 6))
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    const target = Number(targetInput)
+    if (hourly && (!Number.isInteger(target) || target < 1 || target > 60)) {
+      return setError('Target per hour must be a whole number between 1 and 60.')
+    }
+    setSaving(true)
+    const { error } = await supabase
+      .from('stations')
+      .update({ name: name.trim(), hourly_count: hourly, hourly_target: hourly ? target : station.hourly_target ?? 6 })
+      .eq('id', station.id)
+    setSaving(false)
+    if (error) return setError(error.message)
+    onSaved()
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+        <div className="row-form spread">
+          <h2>Edit station</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        <label className="field">
+          <span>Station name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
+        </label>
+
+        <div className="field">
+          <span>Work requirement (shown in the mobile view)</span>
+          <label className="checkbox small" style={{ margin: 0 }}>
+            <input type="checkbox" checked={hourly} onChange={(e) => setHourly(e.target.checked)} />{' '}
+            Hourly count — records are counted per hour (stamp card)
+          </label>
+        </div>
+
+        {hourly && (
+          <label className="field">
+            <span>Target records per hour</span>
+            <input
+              inputMode="numeric"
+              value={targetInput}
+              onChange={(e) => setTargetInput(e.target.value)}
+              placeholder="6"
+              required
+            />
+          </label>
+        )}
+
+        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Save station'}
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

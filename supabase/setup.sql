@@ -176,6 +176,49 @@ alter table public.access_profiles add column if not exists can_approve_rates bo
 
 -- A user can hold several station tags (empty = all stations).
 alter table public.access_profiles add column if not exists station_ids uuid[];
+
+-- Station work presets for the mobile view: hourly-counted stations expect
+-- a target number of photo records every hour (the stamp card).
+alter table public.stations add column if not exists hourly_count boolean not null default false;
+alter table public.stations add column if not exists hourly_target int not null default 6;
+
+-- Photo records taken from the mobile view, one row per photo.
+create table if not exists public.photo_records (
+  id uuid primary key default gen_random_uuid(),
+  station_id uuid not null references public.stations (id),
+  photo_path text,
+  taken_at timestamptz not null default now(),
+  created_by uuid references auth.users (id) default auth.uid()
+);
+create index if not exists photo_records_station_time_idx
+  on public.photo_records (station_id, taken_at);
+
+alter table public.photo_records enable row level security;
+
+drop policy if exists "authenticated read photo records" on public.photo_records;
+create policy "authenticated read photo records" on public.photo_records
+  for select using (auth.uid() is not null);
+
+drop policy if exists "authenticated insert photo records" on public.photo_records;
+create policy "authenticated insert photo records" on public.photo_records
+  for insert with check (auth.uid() is not null);
+
+drop policy if exists "admin manager delete photo records" on public.photo_records;
+create policy "admin manager delete photo records" on public.photo_records
+  for delete using (public.my_role() in ('admin', 'manager'));
+
+-- Storage bucket for the photos (public so thumbnails render directly).
+insert into storage.buckets (id, name, public)
+values ('records', 'records', true)
+on conflict (id) do nothing;
+
+drop policy if exists "authenticated upload records" on storage.objects;
+create policy "authenticated upload records" on storage.objects
+  for insert with check (bucket_id = 'records' and auth.uid() is not null);
+
+drop policy if exists "public read records" on storage.objects;
+create policy "public read records" on storage.objects
+  for select using (bucket_id = 'records');
 update public.access_profiles set station_ids = array[station_id]
   where station_id is not null and station_ids is null;
 update public.access_profiles p set email = u.email

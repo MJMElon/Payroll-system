@@ -1,184 +1,287 @@
-import { useState } from 'react'
+// ---------------------------------------------------------------------------
+// DEMO MOBILE VIEW — one mobile app for every station (will move to its own
+// repo later). Landing = station selection; tapping a station opens its
+// record-taking page: a stamp-card status block (photos this hour vs the
+// station's hourly target, minutes left), an Add record camera button, and a
+// day-by-day list of photo records. Photos upload to the 'records' storage
+// bucket; rows land in photo_records.
+// ---------------------------------------------------------------------------
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-
-// Sandbox for the future mobile app (separate repo later). Each role gets a
-// mock screen inside a phone frame so the UI can be designed here first.
-const ROLES = [
-  'Operator',
-  'Assistant Station Head',
-  'Station Head',
-  'Engineer',
-  'Manager',
-] as const
-
-type DemoRole = (typeof ROLES)[number]
+import { supabase, type PhotoRecord, type Station } from '../lib/supabase'
 
 export default function DemoMobile() {
-  const [role, setRole] = useState<DemoRole>('Operator')
+  const [stations, setStations] = useState<Station[]>([])
+  const [station, setStation] = useState<Station | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      const { data, error } = await supabase.from('stations').select('*').order('sort_order')
+      if (error) setError(error.message)
+      setStations(data ?? [])
+      setLoading(false)
+    }
+    load()
+  }, [])
 
   return (
     <div className="stack">
       <div>
-        <Link to="/" className="small muted">← Back to main page</Link>
+        <Link to="/" className="small muted backlink">← Back to main page</Link>
         <h1>Demo Mobile View</h1>
         <p className="muted">
-          Design sandbox for the mobile app (will move to its own repo). Pick a role to
-          preview its screen.
+          One app for all stations — pick a station, collect stamps, snap records.
+          Station requirements are preset in Settings → Tags management.
         </p>
       </div>
 
-      <div className="tabs">
-        {ROLES.map((r) => (
-          <button
-            key={r}
-            className={`tab ${role === r ? 'active' : ''}`}
-            onClick={() => setRole(r)}
-          >
-            {r}
-          </button>
-        ))}
-      </div>
+      {error && <div className="error">{error}</div>}
 
       <div className="phone-wrap">
         <div className="phone">
           <div className="phone-screen">
             <div className="mob-status">
-              <span>09:41</span>
+              <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               <span>MJM</span>
               <span>▮▮▮</span>
             </div>
-            <div className="mob-header">
-              <div>
-                <div className="mob-role">{role}</div>
-                <div className="mob-sub">Sterilizer Station</div>
-              </div>
-              <div className="mob-avatar">A</div>
-            </div>
-            <div className="mob-body">
-              {role === 'Operator' && <OperatorScreen />}
-              {role === 'Assistant Station Head' && <AssistantScreen />}
-              {role === 'Station Head' && <StationHeadScreen />}
-              {role === 'Engineer' && <EngineerScreen />}
-              {role === 'Manager' && <ManagerScreen />}
-            </div>
-            <div className="mob-nav">
-              <span className="on">Home</span>
-              <span>Records</span>
-              <span>Alerts</span>
-              <span>Me</span>
-            </div>
+
+            {loading ? (
+              <div className="mob-body"><p className="muted small">Loading…</p></div>
+            ) : station ? (
+              <StationScreen station={station} onBack={() => setStation(null)} onError={setError} />
+            ) : (
+              <StationPicker stations={stations} onPick={setStation} />
+            )}
           </div>
         </div>
-        <p className="muted small">Static mockups — no data is saved from this screen.</p>
+        <p className="muted small">
+          Live demo — photos really upload. On a phone the camera opens directly.
+        </p>
       </div>
     </div>
   )
 }
 
-function OperatorScreen() {
-  return (
-    <>
-      <div className="mob-card mob-highlight">
-        <div className="mob-big">14</div>
-        <div className="mob-sub">tips this shift · last 14:32</div>
-        <button className="mob-btn">+ Record tip</button>
-      </div>
-      <div className="mob-card">
-        <div className="mob-title">Quick entry</div>
-        <div className="mob-row"><span>Job</span><span className="mob-chip">Sterilize FFB</span></div>
-        <div className="mob-row"><span>Quantity</span><span className="mob-chip">1 cage</span></div>
-        <button className="mob-btn ghost">Submit entry</button>
-      </div>
-      <div className="mob-card">
-        <div className="mob-title">Today</div>
-        <div className="mob-row"><span>14:32 · cage #14</span><span>✓</span></div>
-        <div className="mob-row"><span>13:58 · cage #13</span><span>✓</span></div>
-        <div className="mob-row"><span>13:20 · cage #12</span><span>✓</span></div>
-      </div>
-    </>
-  )
-}
+/* ------------------------------------------------------------------ */
+/* Landing: choose your station                                       */
+/* ------------------------------------------------------------------ */
 
-function AssistantScreen() {
+function StationPicker({
+  stations,
+  onPick,
+}: {
+  stations: Station[]
+  onPick: (s: Station) => void
+}) {
   return (
     <>
-      <div className="mob-card">
-        <div className="mob-title">Pending confirmation (3)</div>
-        <div className="mob-row"><span>Ali · 3 cages · 14:30</span><button className="mob-mini">Confirm</button></div>
-        <div className="mob-row"><span>Ravi · 2 cages · 14:05</span><button className="mob-mini">Confirm</button></div>
-        <div className="mob-row"><span>Kumar · 4 cages · 13:40</span><button className="mob-mini">Confirm</button></div>
-      </div>
-      <div className="mob-card">
-        <div className="mob-title">Shift summary</div>
-        <div className="mob-row"><span>Confirmed</span><span>22</span></div>
-        <div className="mob-row"><span>Rejected</span><span>1</span></div>
-      </div>
-    </>
-  )
-}
-
-function StationHeadScreen() {
-  return (
-    <>
-      <div className="mob-card mob-highlight">
-        <div className="mob-title">Station today</div>
-        <div className="mob-big">86 t</div>
-        <div className="mob-sub">throughput · target 100 t</div>
-        <div className="mob-bar"><div style={{ width: '86%' }} /></div>
-      </div>
-      <div className="mob-card">
-        <div className="mob-title">Team (6 on shift)</div>
-        <div className="mob-row"><span>Ali</span><span>14 entries</span></div>
-        <div className="mob-row"><span>Ravi</span><span>11 entries</span></div>
-        <div className="mob-row"><span>Kumar</span><span>9 entries</span></div>
-        <button className="mob-btn ghost">Approve day sheet</button>
-      </div>
-    </>
-  )
-}
-
-function EngineerScreen() {
-  return (
-    <>
-      <div className="mob-card">
-        <div className="mob-title">Station health</div>
-        <div className="mob-row"><span>Sterilizer #1</span><span className="mob-chip ok">Running</span></div>
-        <div className="mob-row"><span>Sterilizer #2</span><span className="mob-chip warn">Idle 42m</span></div>
-        <div className="mob-row"><span>Press #1</span><span className="mob-chip ok">Running</span></div>
-      </div>
-      <div className="mob-card">
-        <div className="mob-title">Downtime log</div>
-        <div className="mob-row"><span>10:20 · Press #2 belt</span><span>35m</span></div>
-        <div className="mob-row"><span>08:05 · Boiler feed</span><span>12m</span></div>
-        <button className="mob-btn ghost">+ Log downtime</button>
-      </div>
-    </>
-  )
-}
-
-function ManagerScreen() {
-  return (
-    <>
-      <div className="mob-grid2">
-        <div className="mob-card mob-highlight">
-          <div className="mob-big">412 t</div>
-          <div className="mob-sub">FFB processed</div>
+      <div className="mob-header">
+        <div>
+          <div className="mob-role">Select station</div>
+          <div className="mob-sub">Where are you working now?</div>
         </div>
-        <div className="mob-card mob-highlight">
-          <div className="mob-big">57</div>
-          <div className="mob-sub">workers on shift</div>
+        <div className="mob-avatar">A</div>
+      </div>
+      <div className="mob-body">
+        {stations.length === 0 && (
+          <p className="muted small">No stations yet — create them in Settings.</p>
+        )}
+        {stations.map((s) => (
+          <button className="mob-station" key={s.id} onClick={() => onPick(s)}>
+            <span>{s.name}</span>
+            <span className="mob-station-meta">
+              {s.hourly_count ? `hourly · ${s.hourly_target ?? 6}/hr` : 'daily'} ›
+            </span>
+          </button>
+        ))}
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Station record page: stamp card, camera, day-by-day records        */
+/* ------------------------------------------------------------------ */
+
+function dayISO(d: Date) {
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}
+
+function StationScreen({
+  station,
+  onBack,
+  onError,
+}: {
+  station: Station
+  onBack: () => void
+  onError: (m: string | null) => void
+}) {
+  const [viewDate, setViewDate] = useState(() => new Date())
+  const [records, setRecords] = useState<PhotoRecord[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [, forceTick] = useState(0)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const isToday = dayISO(viewDate) === dayISO(new Date())
+  const target = station.hourly_target ?? 6
+
+  async function loadRecords() {
+    const start = new Date(viewDate)
+    start.setHours(0, 0, 0, 0)
+    const end = new Date(start.getTime() + 24 * 3_600_000)
+    const { data, error } = await supabase
+      .from('photo_records')
+      .select('id, station_id, photo_path, taken_at')
+      .eq('station_id', station.id)
+      .gte('taken_at', start.toISOString())
+      .lt('taken_at', end.toISOString())
+      .order('taken_at', { ascending: false })
+    if (error) onError(error.message)
+    else setRecords(data ?? [])
+  }
+
+  useEffect(() => {
+    loadRecords()
+    const t = setInterval(() => {
+      forceTick((x) => x + 1) // refresh the minutes-left countdown
+      if (dayISO(viewDate) === dayISO(new Date())) loadRecords()
+    }, 30_000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [station.id, viewDate])
+
+  const now = new Date()
+  const stampsThisHour = records.filter((r) => {
+    const t = new Date(r.taken_at)
+    return isToday && t.getHours() === now.getHours()
+  }).length
+  const minutesLeft = 59 - now.getMinutes()
+
+  async function handleFile(file: File | undefined) {
+    if (!file) return
+    setUploading(true)
+    onError(null)
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const path = `${station.id}/${stamp}-${Math.random().toString(36).slice(2, 7)}.jpg`
+      const { error: upErr } = await supabase.storage.from('records').upload(path, file)
+      if (upErr) throw new Error(upErr.message)
+      const { error: insErr } = await supabase
+        .from('photo_records')
+        .insert({ station_id: station.id, photo_path: path })
+      if (insErr) throw new Error(insErr.message)
+      setViewDate(new Date())
+      await loadRecords()
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  function shiftDay(delta: number) {
+    const next = new Date(viewDate)
+    next.setDate(next.getDate() + delta)
+    if (dayISO(next) > dayISO(new Date())) return // no future days
+    setViewDate(next)
+  }
+
+  const photoUrl = (path: string | null) =>
+    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
+
+  return (
+    <>
+      <div className="mob-header">
+        <div>
+          <button className="mob-back" onClick={onBack}>‹ Stations</button>
+          <div className="mob-role">{station.name}</div>
         </div>
+        <div className="mob-avatar">A</div>
       </div>
-      <div className="mob-card">
-        <div className="mob-title">Stations now</div>
-        <div className="mob-row"><span>Loading Ramp</span><span className="mob-chip ok">4/hr</span></div>
-        <div className="mob-row"><span>Sterilizer</span><span className="mob-chip ok">4/hr</span></div>
-        <div className="mob-row"><span>Press</span><span className="mob-chip warn">0/hr</span></div>
-      </div>
-      <div className="mob-card">
-        <div className="mob-title">Payroll</div>
-        <div className="mob-row"><span>June run</span><span className="mob-chip ok">finalized</span></div>
-        <div className="mob-row"><span>July (to date)</span><span>RM 48,210</span></div>
+
+      <div className="mob-body">
+        {/* 1 — status stamp card */}
+        <div className="mob-card mob-highlight">
+          {station.hourly_count ? (
+            <>
+              <div className="mob-title">This hour</div>
+              <div className="stamp-row">
+                {Array.from({ length: target }, (_, i) => (
+                  <span key={i} className={`stamp ${i < stampsThisHour ? 'filled' : ''}`}>
+                    {i < stampsThisHour ? '✓' : ''}
+                  </span>
+                ))}
+              </div>
+              <div className="mob-sub">
+                {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mob-big">{records.length}</div>
+              <div className="mob-sub">records {isToday ? 'today' : 'this day'}</div>
+            </>
+          )}
+        </div>
+
+        {/* 2 — add record (camera) */}
+        <div className="mob-card">
+          <div className="mob-title">Add record</div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: 'none' }}
+            onChange={(e) => handleFile(e.target.files?.[0])}
+          />
+          <button
+            className="mob-btn"
+            disabled={uploading}
+            onClick={() => fileRef.current?.click()}
+          >
+            {uploading ? 'Uploading…' : '📷 Take photo'}
+          </button>
+        </div>
+
+        {/* 3 — records with day navigation */}
+        <div className="mob-card">
+          <div className="mob-daynav">
+            <button className="mob-mini" onClick={() => shiftDay(-1)}>‹</button>
+            <span className="mob-title">
+              {isToday
+                ? "Today's records"
+                : viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+            </span>
+            <button className="mob-mini" onClick={() => shiftDay(1)} disabled={isToday}>›</button>
+          </div>
+          {records.length === 0 && <div className="mob-sub">No records this day.</div>}
+          {records.map((r) => {
+            const url = photoUrl(r.photo_path)
+            const t = new Date(r.taken_at)
+            return (
+              <div className="mob-row" key={r.id}>
+                <span>
+                  {t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  <span className="mob-station-meta">
+                    {' '}· {t.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                  </span>
+                </span>
+                {url ? (
+                  <a href={url} target="_blank" rel="noreferrer">
+                    <img className="mob-thumb" src={url} alt="record" />
+                  </a>
+                ) : (
+                  <span className="mob-chip">no photo</span>
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
     </>
   )
