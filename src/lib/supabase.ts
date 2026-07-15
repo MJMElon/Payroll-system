@@ -97,7 +97,8 @@ export interface ProductionEntry {
   work_date: string
   station_id: string
   job_id: string
-  worker_id: string
+  worker_id: string | null
+  user_id: string | null
   quantity: number
   notes: string | null
   created_by: string | null
@@ -116,7 +117,8 @@ export interface PayrollRun {
 export interface PayrollLine {
   id: string
   run_id: string
-  worker_id: string
+  worker_id: string | null
+  user_id: string | null
   job_id: string
   quantity: number
   rate: number
@@ -126,9 +128,15 @@ export interface PayrollLine {
 export interface PayrollAdjustment {
   id: string
   run_id: string
-  worker_id: string
+  worker_id: string | null
+  user_id: string | null
   amount: number
   reason: string
+}
+
+/** Display name for an account: full name, else email, else short id. */
+export function profileName(p: Pick<Profile, 'full_name' | 'email' | 'id'> | undefined | null) {
+  return p ? p.full_name ?? p.email ?? p.id.slice(0, 8) : '?'
 }
 
 /** Today as a YYYY-MM-DD string in local time (what date inputs expect). */

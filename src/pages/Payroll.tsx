@@ -3,10 +3,12 @@ import { Link } from 'react-router-dom'
 import {
   supabase,
   todayISO,
+  profileName,
   type Job,
   type PayrollAdjustment,
   type PayrollLine,
   type PayrollRun,
+  type Profile,
   type Worker,
 } from '../lib/supabase'
 
@@ -107,7 +109,7 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
       // 1. Production in the period.
       const { data: entries, error: entErr } = await supabase
         .from('production_entries')
-        .select('worker_id, job_id, quantity')
+        .select('worker_id, user_id, job_id, quantity')
         .gte('work_date', start)
         .lte('work_date', end)
       if (entErr) throw new Error(entErr.message)
@@ -129,11 +131,19 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
         if (!rateByJob.has(r.job_id)) rateByJob.set(r.job_id, Number(r.rate))
       }
 
-      // 3. Sum quantities per worker + job.
-      const sums = new Map<string, { worker_id: string; job_id: string; quantity: number }>()
+      // 3. Sum quantities per person (user, or legacy worker) + job.
+      const sums = new Map<
+        string,
+        { user_id: string | null; worker_id: string | null; job_id: string; quantity: number }
+      >()
       for (const en of entries) {
-        const key = `${en.worker_id}|${en.job_id}`
-        const cur = sums.get(key) ?? { worker_id: en.worker_id, job_id: en.job_id, quantity: 0 }
+        const key = `${en.user_id ?? 'w:' + en.worker_id}|${en.job_id}`
+        const cur = sums.get(key) ?? {
+          user_id: en.user_id ?? null,
+          worker_id: en.user_id ? null : en.worker_id ?? null,
+          job_id: en.job_id,
+          quantity: 0,
+        }
         cur.quantity += Number(en.quantity)
         sums.set(key, cur)
       }
@@ -150,6 +160,7 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
         const rate = rateByJob.get(s.job_id) ?? 0
         return {
           run_id: run.id,
+          user_id: s.user_id,
           worker_id: s.worker_id,
           job_id: s.job_id,
           quantity: s.quantity,
@@ -192,6 +203,7 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
   const [status, setStatus] = useState(run.status)
   const [lines, setLines] = useState<PayrollLine[]>([])
   const [adjustments, setAdjustments] = useState<PayrollAdjustment[]>([])
+  const [users, setUsers] = useState<Profile[]>([])
   const [workers, setWorkers] = useState<Worker[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -204,20 +216,22 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
   const editable = status === 'draft'
 
   async function load() {
-    const [l, a, w, j] = await Promise.all([
+    const [l, a, u, w, j] = await Promise.all([
       supabase.from('payroll_lines')
-        .select('id, run_id, worker_id, job_id, quantity, rate, amount')
+        .select('id, run_id, worker_id, user_id, job_id, quantity, rate, amount')
         .eq('run_id', run.id),
       supabase.from('payroll_adjustments')
-        .select('id, run_id, worker_id, amount, reason')
+        .select('id, run_id, worker_id, user_id, amount, reason')
         .eq('run_id', run.id),
+      supabase.from('access_profiles').select('*').order('email'),
       supabase.from('workers').select('id, full_name, station_id, grade_id, can_approve_rates, active'),
       supabase.from('jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
     ])
-    const err = l.error || a.error || w.error || j.error
+    const err = l.error || a.error || u.error || w.error || j.error
     if (err) setError(err.message)
     setLines(l.data ?? [])
     setAdjustments(a.data ?? [])
+    setUsers((u.data ?? []) as Profile[])
     setWorkers(w.data ?? [])
     setJobs(j.data ?? [])
     setLoading(false)
@@ -228,26 +242,33 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id])
 
-  const workerName = (id: string) => workers.find((w) => w.id === id)?.full_name ?? '?'
+  const personKey = (x: { user_id: string | null; worker_id: string | null }) =>
+    x.user_id ?? 'w:' + (x.worker_id ?? '?')
+  const personName = (key: string) =>
+    key.startsWith('w:')
+      ? workers.find((w) => w.id === key.slice(2))?.full_name ?? '?'
+      : profileName(users.find((u) => u.id === key))
   const jobLabel = (id: string) => {
     const j = jobs.find((x) => x.id === id)
     return j ? `${j.name} (${j.unit})` : '?'
   }
 
-  // Group lines by worker for a per-worker payslip-style view.
+  // Group lines by person (user, or legacy worker) for a payslip-style view.
   const byWorker = useMemo(() => {
     const m = new Map<string, { lines: PayrollLine[]; adjustments: PayrollAdjustment[] }>()
     for (const l of lines) {
-      if (!m.has(l.worker_id)) m.set(l.worker_id, { lines: [], adjustments: [] })
-      m.get(l.worker_id)!.lines.push(l)
+      const k = personKey(l)
+      if (!m.has(k)) m.set(k, { lines: [], adjustments: [] })
+      m.get(k)!.lines.push(l)
     }
     for (const a of adjustments) {
-      if (!m.has(a.worker_id)) m.set(a.worker_id, { lines: [], adjustments: [] })
-      m.get(a.worker_id)!.adjustments.push(a)
+      const k = personKey(a)
+      if (!m.has(k)) m.set(k, { lines: [], adjustments: [] })
+      m.get(k)!.adjustments.push(a)
     }
-    return [...m.entries()].sort((x, y) => workerName(x[0]).localeCompare(workerName(y[0])))
+    return [...m.entries()].sort((x, y) => personName(x[0]).localeCompare(personName(y[0])))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, adjustments, workers])
+  }, [lines, adjustments, workers, users])
 
   const grandTotal =
     lines.reduce((s, l) => s + Number(l.amount), 0) +
@@ -262,7 +283,7 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
     if (Number.isNaN(amount) || amount === 0) return setError('Adjustment amount must be a non-zero number.')
     const { error } = await supabase.from('payroll_adjustments').insert({
       run_id: run.id,
-      worker_id: adjWorker,
+      user_id: adjWorker,
       amount,
       reason: adjReason.trim(),
     })
@@ -323,12 +344,12 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
         </div>
       )}
 
-      {byWorker.map(([workerId, group]) => {
+      {byWorker.map(([personId, group]) => {
         const lineTotal = group.lines.reduce((s, l) => s + Number(l.amount), 0)
         const adjTotal = group.adjustments.reduce((s, a) => s + Number(a.amount), 0)
         return (
-          <div className="card" key={workerId}>
-            <h3>{workerName(workerId)}</h3>
+          <div className="card" key={personId}>
+            <h3>{personName(personId)}</h3>
             <table className="table">
               <thead>
                 <tr>
@@ -375,15 +396,12 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
       {editable && (
         <form className="card row-form" onSubmit={addAdjustment}>
           <label className="field inline">
-            <span>Adjustment — worker</span>
+            <span>Adjustment — user</span>
             <select value={adjWorker} onChange={(e) => setAdjWorker(e.target.value)} required>
               <option value="">Pick…</option>
-              {workers
-                .slice()
-                .sort((a, b) => a.full_name.localeCompare(b.full_name))
-                .map((w) => (
-                  <option key={w.id} value={w.id}>{w.full_name}</option>
-                ))}
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{profileName(u)}</option>
+              ))}
             </select>
           </label>
           <label className="field inline">

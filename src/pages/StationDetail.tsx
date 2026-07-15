@@ -4,8 +4,10 @@ import { useAuth } from '../context/AuthContext'
 import {
   supabase,
   todayISO,
+  profileName,
   type Grade,
   type Job,
+  type Profile,
   type ProductionEntry,
   type Station,
   type Worker,
@@ -32,12 +34,13 @@ export default function StationDetail() {
   const [station, setStation] = useState<Station | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
+  const [users, setUsers] = useState<Profile[]>([])
   const [workers, setWorkers] = useState<Worker[]>([])
   const [entries, setEntries] = useState<ProductionEntry[]>([])
 
   const [workDate, setWorkDate] = useState(todayISO())
   const [jobId, setJobId] = useState('')
-  const [workerId, setWorkerId] = useState('')
+  const [userId, setUserId] = useState('')
   const [quantity, setQuantity] = useState('')
   const [notes, setNotes] = useState('')
 
@@ -47,7 +50,7 @@ export default function StationDetail() {
 
   useEffect(() => {
     async function loadMaster() {
-      const [s, j, w, g] = await Promise.all([
+      const [s, j, w, u, g] = await Promise.all([
         supabase.from('stations').select('id, name, sort_order').eq('id', stationId).single(),
         supabase
           .from('jobs')
@@ -59,14 +62,15 @@ export default function StationDetail() {
         supabase
           .from('workers')
           .select('id, full_name, station_id, grade_id, can_approve_rates, active')
-          .eq('active', true)
           .order('full_name'),
+        supabase.from('access_profiles').select('*').order('email'),
         supabase.from('grades').select('*').order('sort_order'),
       ])
       if (s.error) setError(s.error.message)
       else setStation(s.data)
       setJobs(j.data ?? [])
       setWorkers(w.data ?? [])
+      setUsers(((u.data ?? []) as Profile[]))
       setGrades(g.data ?? [])
       setLoading(false)
     }
@@ -76,7 +80,7 @@ export default function StationDetail() {
   async function loadEntries() {
     const { data, error } = await supabase
       .from('production_entries')
-      .select('id, work_date, station_id, job_id, worker_id, quantity, notes, created_by, created_at')
+      .select('id, work_date, station_id, job_id, worker_id, user_id, quantity, notes, created_by, created_at')
       .eq('work_date', workDate)
       .eq('station_id', stationId)
       .order('created_at', { ascending: false })
@@ -91,6 +95,24 @@ export default function StationDetail() {
 
   const jobById = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs])
   const workerById = useMemo(() => new Map(workers.map((w) => [w.id, w])), [workers])
+  const userById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users])
+  // Users tagged to this station come first; users with no station tag work
+  // anywhere; users tagged elsewhere are excluded.
+  const stationUsers = useMemo(() => {
+    const list = users.filter((u) => {
+      const tags = u.station_ids && u.station_ids.length > 0
+        ? u.station_ids
+        : u.station_id
+          ? [u.station_id]
+          : []
+      return tags.length === 0 || (stationId ? tags.includes(stationId) : false)
+    })
+    return list
+  }, [users, stationId])
+  const entryName = (en: ProductionEntry) =>
+    en.user_id
+      ? profileName(userById.get(en.user_id))
+      : workerById.get(en.worker_id ?? '')?.full_name ?? '?'
 
   async function addEntry(e: FormEvent) {
     e.preventDefault()
@@ -102,7 +124,7 @@ export default function StationDetail() {
       work_date: workDate,
       station_id: stationId,
       job_id: jobId,
-      worker_id: workerId,
+      user_id: userId,
       quantity: qty,
       notes: notes.trim() || null,
     })
@@ -158,11 +180,11 @@ export default function StationDetail() {
             </select>
           </label>
           <label className="field inline">
-            <span>Worker</span>
-            <select value={workerId} onChange={(e) => setWorkerId(e.target.value)} required>
+            <span>User</span>
+            <select value={userId} onChange={(e) => setUserId(e.target.value)} required>
               <option value="">Pick…</option>
-              {workers.map((w) => (
-                <option key={w.id} value={w.id}>{w.full_name}</option>
+              {stationUsers.map((u) => (
+                <option key={u.id} value={u.id}>{profileName(u)}</option>
               ))}
             </select>
           </label>
@@ -198,7 +220,7 @@ export default function StationDetail() {
           <thead>
             <tr>
               <th>Time</th>
-              <th>Worker</th>
+              <th>User</th>
               <th>Job</th>
               <th className="right">Quantity</th>
               <th>Notes</th>
@@ -216,7 +238,7 @@ export default function StationDetail() {
                   <td className="muted">
                     {new Date(en.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </td>
-                  <td>{workerById.get(en.worker_id)?.full_name ?? '?'}</td>
+                  <td>{entryName(en)}</td>
                   <td>{job ? `${job.name} (${job.unit})` : '?'}</td>
                   <td className="right">{Number(en.quantity)}</td>
                   <td className="muted">{en.notes}</td>
