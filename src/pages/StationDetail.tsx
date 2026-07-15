@@ -18,10 +18,16 @@ export default function StationDetail() {
   const { profile } = useAuth()
 
   // Operators may only record for their own station (also enforced by RLS).
+  const myStations =
+    profile?.station_ids && profile.station_ids.length > 0
+      ? profile.station_ids
+      : profile?.station_id
+        ? [profile.station_id]
+        : []
   const canRecord =
     profile?.role === 'admin' ||
     profile?.role === 'manager' ||
-    (profile?.role === 'operator' && profile.station_id === stationId)
+    (profile?.role === 'operator' && !!stationId && myStations.includes(stationId))
 
   const [station, setStation] = useState<Station | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])

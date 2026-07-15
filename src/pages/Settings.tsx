@@ -813,6 +813,14 @@ function TagEditModal({
         </div>
 
         <div className="field">
+          <span>Can see (data — fixed rule)</span>
+          <p className="muted small" style={{ margin: 0 }}>
+            Piece rates of its own tier and every tier below. If the user also has
+            station tags, only those stations' rates.
+          </p>
+        </div>
+
+        <div className="field">
           <span>Can do (standardized)</span>
           <div className="stack" style={{ gap: '0.3rem' }}>
             {CAPABILITY_OPTIONS.map((c) => (
