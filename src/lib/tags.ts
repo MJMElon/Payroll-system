@@ -14,3 +14,14 @@ export const MODULE_OPTIONS = [
 ] as const
 
 export const DEFAULT_MODULES = ['station-status', 'piece-rate']
+
+// Standardized per-tier capabilities ("can do").
+export const CAPABILITY_OPTIONS = [
+  { key: 'data-entry', label: 'Data entry' },
+  { key: 'verify', label: "Verify below all tiers' work entry" },
+  { key: 'approve', label: "Approve below all tiers' work entry" },
+] as const
+
+export function capabilityLabel(key: string) {
+  return CAPABILITY_OPTIONS.find((c) => c.key === key)?.label ?? key
+}

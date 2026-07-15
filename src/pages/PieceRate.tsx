@@ -66,11 +66,14 @@ export default function PieceRate() {
     load()
   }, [])
 
-  // Approval rights follow the tag tiers: tier 2 (Manager) verifies, tier 1
-  // (Management) gives final approval. Admins can do both.
-  const canVerify = isAdmin || myTier === 2
-  const canFinal = isAdmin || myTier === 1
-  const isApprover = isAdmin || myTier === 1 || myTier === 2
+  // Approval rights follow the tag's standardized capabilities (Settings →
+  // Tags management). Admins can do both.
+  const myCaps = (profile?.grade_id
+    ? grades.find((g) => g.id === profile.grade_id)?.capabilities
+    : null) ?? []
+  const canVerify = isAdmin || myCaps.includes('verify')
+  const canFinal = isAdmin || myCaps.includes('approve')
+  const isApprover = isAdmin || canVerify || canFinal
 
   // Tier comes from the signed-in account's grade tag.
   useEffect(() => {

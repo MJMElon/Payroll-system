@@ -8,7 +8,7 @@ import {
   type Role,
   type Station,
 } from '../lib/supabase'
-import { DEFAULT_MODULES, MODULE_OPTIONS, TAG_COLORS, tagClass } from '../lib/tags'
+import { CAPABILITY_OPTIONS, DEFAULT_MODULES, MODULE_OPTIONS, TAG_COLORS, capabilityLabel, tagClass } from '../lib/tags'
 
 type Tab = 'access' | 'tags'
 
@@ -100,10 +100,12 @@ function UserAccessTab() {
   const label = (p: Profile) => p.email ?? p.full_name ?? p.id.slice(0, 8)
   const tierOf = (p: Profile) =>
     p.grade_id ? grades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
-  // Approval steps follow the tags: tier 1 (Management) approves, tier 2
-  // (Manager) verifies — assigned in the control panel below.
-  const approvalUsers = profiles.filter((p) => tierOf(p) === 1)
-  const verifyUsers = profiles.filter((p) => tierOf(p) === 2)
+  // Approval steps follow the tags' standardized capabilities, assigned in
+  // the control panel below.
+  const capsOf = (p: Profile) =>
+    (p.grade_id ? grades.find((g) => g.id === p.grade_id)?.capabilities : null) ?? []
+  const approvalUsers = profiles.filter((p) => capsOf(p).includes('approve'))
+  const verifyUsers = profiles.filter((p) => capsOf(p).includes('verify'))
   // Untagged (newly signed-up) users first so they get set up quickly, then
   // everyone else in tag tier order.
   const sortedProfiles = [...profiles].sort((a, b) => {
@@ -124,13 +126,13 @@ function UserAccessTab() {
           <div className="field">
             <span>Verify by</span>
             {verifyUsers.length === 0
-              ? <p className="muted small" style={{ margin: 0 }}>No one yet — tag a user as tier 2.</p>
+              ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the verify capability.</p>
               : verifyUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
           </div>
           <div className="field">
             <span>Approval by</span>
             {approvalUsers.length === 0
-              ? <p className="muted small" style={{ margin: 0 }}>No one yet — tag a user as tier 1.</p>
+              ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the approve capability.</p>
               : approvalUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
           </div>
         </div>
@@ -167,7 +169,11 @@ function UserAccessTab() {
             </div>
             <div className="field">
               <span>Can do</span>
-              <p style={{ margin: 0 }}>{tagInfo.ability ?? 'Not described yet — set it in Tags management.'}</p>
+              <p style={{ margin: 0 }}>
+                {(tagInfo.capabilities ?? []).length
+                  ? (tagInfo.capabilities ?? []).map(capabilityLabel).join(' · ')
+                  : tagInfo.ability ?? 'Nothing set yet — edit it in Tags management.'}
+              </p>
             </div>
           </div>
         </div>
@@ -450,7 +456,15 @@ function TagsTab() {
                     .map((k) => MODULE_OPTIONS.find((m) => m.key === k)?.label ?? k)
                     .join(', ')}
                 </td>
-                <td className="muted small">{g.ability ?? '—'}</td>
+                <td className="muted small">
+                  {(g.capabilities ?? []).length
+                    ? (g.capabilities ?? []).map((c) => (
+                        <span key={c} className="badge off" style={{ marginRight: '0.3rem' }}>
+                          {capabilityLabel(c)}
+                        </span>
+                      ))
+                    : '—'}
+                </td>
                 {canEditTags && (
                   <td className="right">
                     <button className="linkbtn" onClick={() => setEditor(g)}>Edit</button>{' '}
@@ -725,6 +739,7 @@ function TagEditModal({
   const [name, setName] = useState(grade?.name ?? '')
   const [color, setColor] = useState(grade?.color ?? 'blue')
   const [modules, setModules] = useState<string[]>(grade?.modules ?? [...DEFAULT_MODULES])
+  const [capabilities, setCapabilities] = useState<string[]>(grade?.capabilities ?? ['data-entry'])
   const ability = grade?.ability ?? ''
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -733,11 +748,15 @@ function TagEditModal({
     setModules((m) => (m.includes(key) ? m.filter((k) => k !== key) : [...m, key]))
   }
 
+  function toggleCapability(key: string) {
+    setCapabilities((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]))
+  }
+
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
     setSaving(true)
-    const fields = { name: name.trim(), color, modules, ability: ability || null }
+    const fields = { name: name.trim(), color, modules, capabilities, ability: ability || null }
     const { error } = grade
       ? await supabase.from('grades').update(fields).eq('id', grade.id)
       : await supabase.from('grades').insert({ ...fields, sort_order: nextTier })
@@ -794,10 +813,19 @@ function TagEditModal({
         </div>
 
         <div className="field">
-          <span>Can do (preset — not editable)</span>
-          <p className="muted small" style={{ margin: 0 }}>
-            {grade?.ability ?? 'Follows the tier: sees own tier and below; tier 2 verifies and tier 1 approves new piece rates.'}
-          </p>
+          <span>Can do (standardized)</span>
+          <div className="stack" style={{ gap: '0.3rem' }}>
+            {CAPABILITY_OPTIONS.map((c) => (
+              <label key={c.key} className="checkbox small" style={{ margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={capabilities.includes(c.key)}
+                  onChange={() => toggleCapability(c.key)}
+                />{' '}
+                {c.label}
+              </label>
+            ))}
+          </div>
         </div>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>

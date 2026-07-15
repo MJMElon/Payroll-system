@@ -234,6 +234,36 @@ alter table public.grades add column if not exists ability text;
 -- station board + piece rate module only.
 alter table public.grades add column if not exists modules text[] not null
   default '{station-status,piece-rate}';
+
+-- What each tag can DO — standardized capabilities:
+--   data-entry: record work (photos / production entries)
+--   verify:     verify work entries of all tiers below
+--   approve:    approve work entries of all tiers below
+alter table public.grades add column if not exists capabilities text[] not null default '{}';
+
+-- Sensible defaults for the seeded tags (only fills empty ones).
+update public.grades set capabilities = '{data-entry}'
+  where name in ('Operator', 'Assistant Station Head', 'Station Head', 'General Worker')
+    and capabilities = '{}';
+update public.grades set capabilities = '{data-entry,verify}'
+  where name = 'Engineer' and capabilities = '{}';
+update public.grades set capabilities = '{verify}'
+  where name = 'Manager' and capabilities = '{}';
+update public.grades set capabilities = '{approve}'
+  where name = 'Management' and capabilities = '{}';
+
+-- The signed-in user's tag capabilities (security definer for policy use).
+create or replace function public.my_capabilities()
+returns text[]
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(g.capabilities, '{}') from public.access_profiles p
+  join public.grades g on g.id = p.grade_id
+  where p.id = auth.uid();
+$$;
 update public.grades set modules = '{station-status,piece-rate,payroll,demo-mobile}'
   where name in ('Management', 'Manager', 'Engineer')
     and modules = '{station-status,piece-rate}';
@@ -283,7 +313,7 @@ create policy "approvers update jobs" on public.jobs
       select 1 from public.access_profiles p
       where p.id = auth.uid() and p.can_approve_rates
     )
-    or public.my_tag_tier() in (1, 2)
+    or public.my_capabilities() && array['verify', 'approve']
   );
 create unique index if not exists jobs_station_grade_name_idx
   on public.jobs (station_id, grade_id, name);

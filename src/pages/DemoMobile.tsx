@@ -8,9 +8,12 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 import { supabase, type PhotoRecord, type Station } from '../lib/supabase'
 
 export default function DemoMobile() {
+  const { profile } = useAuth()
+  const [canEntry, setCanEntry] = useState(true)
   const [stations, setStations] = useState<Station[]>([])
   const [station, setStation] = useState<Station | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -25,6 +28,21 @@ export default function DemoMobile() {
     }
     load()
   }, [])
+
+  // Only tags with the data-entry capability may add records (admins always).
+  useEffect(() => {
+    async function check() {
+      if (profile?.role === 'admin' || profile?.role === 'manager') return setCanEntry(true)
+      if (!profile?.grade_id) return setCanEntry(false)
+      const { data } = await supabase
+        .from('grades')
+        .select('capabilities')
+        .eq('id', profile.grade_id)
+        .maybeSingle()
+      setCanEntry(((data?.capabilities as string[] | undefined) ?? []).includes('data-entry'))
+    }
+    check()
+  }, [profile])
 
   return (
     <div className="stack">
@@ -50,7 +68,7 @@ export default function DemoMobile() {
             {loading ? (
               <div className="mob-body"><p className="muted small">Loading…</p></div>
             ) : station ? (
-              <StationScreen station={station} onBack={() => setStation(null)} onError={setError} />
+              <StationScreen station={station} canEntry={canEntry} onBack={() => setStation(null)} onError={setError} />
             ) : (
               <StationPicker stations={stations} onPick={setStation} />
             )}
@@ -109,10 +127,12 @@ function dayISO(d: Date) {
 
 function StationScreen({
   station,
+  canEntry,
   onBack,
   onError,
 }: {
   station: Station
+  canEntry: boolean
   onBack: () => void
   onError: (m: string | null) => void
 }) {
@@ -242,9 +262,12 @@ function StationScreen({
           )}
         </div>
 
-        {/* 2 — add record (camera) */}
+        {/* 2 — add record (camera), only for data-entry tags */}
         <div className="mob-card">
           <div className="mob-title">Add record</div>
+          {!canEntry && (
+            <div className="mob-sub">Your tag has no data entry permission.</div>
+          )}
           <input
             ref={fileRef}
             type="file"
@@ -253,13 +276,15 @@ function StationScreen({
             style={{ display: 'none' }}
             onChange={(e) => handleFile(e.target.files?.[0])}
           />
-          <button
-            className="mob-btn"
-            disabled={uploading}
-            onClick={() => fileRef.current?.click()}
-          >
-            {uploading ? 'Uploading…' : '📷 Take photo'}
-          </button>
+          {canEntry && (
+            <button
+              className="mob-btn"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+            >
+              {uploading ? 'Uploading…' : '📷 Take photo'}
+            </button>
+          )}
         </div>
 
         {/* 3 — records with day navigation */}

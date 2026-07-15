@@ -70,6 +70,7 @@ export interface Grade {
   color: string
   ability: string | null
   modules: string[]
+  capabilities: string[]
 }
 
 export interface Job {
