@@ -8,6 +8,7 @@ type Mode = 'signin' | 'signup'
 export default function Login() {
   const { session, signIn, loading } = useAuth()
   const [mode, setMode] = useState<Mode>('signin')
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -25,7 +26,11 @@ export default function Login() {
       const { error } = await signIn(email, password)
       if (error) setError(error)
     } else {
-      const { data, error } = await supabase.auth.signUp({ email, password })
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: name.trim() } },
+      })
       if (error) {
         setError(error.message)
       } else if (!data.session) {
@@ -63,6 +68,18 @@ export default function Login() {
         <h1 className="login-title">MJM</h1>
         <p className="login-tagline">THE FUTURE IS HERE</p>
 
+        {mode === 'signup' && (
+          <input
+            className="login-input"
+            type="text"
+            placeholder="Full name"
+            aria-label="Full name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoComplete="name"
+            required
+          />
+        )}
         <input
           className="login-input"
           type="email"

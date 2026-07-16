@@ -24,10 +24,11 @@ export default function App() {
           <Route path="/piece-rate" element={<PieceRate />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
 
+          <Route path="/settings" element={<Settings />} />
+
           {/* Role-restricted areas */}
           <Route element={<ProtectedRoute allowedRoles={['admin', 'manager']} />}>
             <Route path="/payroll" element={<Payroll />} />
-            <Route path="/settings" element={<Settings />} />
           </Route>
         </Route>
       </Route>

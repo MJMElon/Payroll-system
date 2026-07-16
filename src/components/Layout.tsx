@@ -1,10 +1,27 @@
+import { useEffect, useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { supabase } from '../lib/supabase'
 
 export default function Layout() {
   const { profile, session, signOut } = useAuth()
   const role = profile?.role
-  const canSettings = role === 'admin' || role === 'manager'
+  // Settings is for admins/managers, plus anyone at least one tier above the
+  // bottom (they confirm new signups there).
+  const [upperTier, setUpperTier] = useState(false)
+  useEffect(() => {
+    async function check() {
+      if (!profile?.grade_id) return setUpperTier(false)
+      const [{ data: mine }, { data: all }] = await Promise.all([
+        supabase.from('grades').select('sort_order').eq('id', profile.grade_id).maybeSingle(),
+        supabase.from('grades').select('sort_order').order('sort_order', { ascending: false }).limit(1),
+      ])
+      const bottom = all?.[0]?.sort_order ?? 0
+      setUpperTier(mine != null && mine.sort_order < bottom)
+    }
+    check()
+  }, [profile])
+  const canSettings = role === 'admin' || role === 'manager' || upperTier
 
   return (
     <div className="app">

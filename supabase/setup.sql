@@ -185,6 +185,58 @@ alter table public.stations add column if not exists hourly_target int not null 
 alter table public.stations add column if not exists hourly_min_prev int not null default 0;
 
 -- ---------------------------------------------------------------------------
+-- Per-user web access + signup confirmation flow
+-- ---------------------------------------------------------------------------
+
+-- Which modules THIS USER can see (moved from the tag to the user).
+-- New signups default to seeing every module.
+alter table public.access_profiles add column if not exists modules text[] not null
+  default '{station-status,piece-rate,payroll,demo-mobile}';
+
+-- New signups sit in the 'New sign up' pending list until an upper-tier
+-- user confirms their tags.
+alter table public.access_profiles add column if not exists tags_confirmed boolean not null default false;
+update public.access_profiles set tags_confirmed = true
+  where grade_id is not null and tags_confirmed = false;
+
+-- Tier helpers for the confirmation rules.
+create or replace function public.grade_tier(g uuid)
+returns int
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select sort_order from public.grades where id = g;
+$$;
+
+create or replace function public.bottom_tier()
+returns int
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(max(sort_order), 0) from public.grades;
+$$;
+
+-- Anyone at least one tier above the bottom may manage users BELOW their own
+-- tier (claim new signups into their team, set station/tier tags). They can
+-- never touch their own tier or above; admins are unrestricted (separate
+-- policy above).
+drop policy if exists "upper tier manages lower signups" on public.access_profiles;
+create policy "upper tier manages lower signups" on public.access_profiles
+  for update using (
+    public.my_tag_tier() is not null
+    and public.my_tag_tier() < public.bottom_tier()
+    and id <> auth.uid()
+    and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
+  )
+  with check (
+    grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier()
+  );
+
+-- ---------------------------------------------------------------------------
 -- Workers -> users unification (Option A). Work and pay now attach to the
 -- signed-up USER; the old workers table stays read-only for history.
 -- ---------------------------------------------------------------------------

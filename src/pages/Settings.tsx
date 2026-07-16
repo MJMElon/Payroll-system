@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   supabase,
+  profileName,
   type Grade,
   type Profile,
   type Role,
@@ -56,18 +57,20 @@ export default function Settings() {
 
 function UserAccessTab() {
   const { profile } = useAuth()
-  const isAdmin = profile?.role === 'admin'
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [tagInfo, setTagInfo] = useState<Grade | null>(null)
+  const [accessUser, setAccessUser] = useState<Profile | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+
+  const isAdmin = profile?.role === 'admin'
 
   async function load() {
     const [p, s, g] = await Promise.all([
       supabase.from('access_profiles').select('*').order('email'),
-      supabase.from('stations').select('id, name, sort_order').order('sort_order'),
+      supabase.from('stations').select('*').order('sort_order'),
       supabase.from('grades').select('*').order('sort_order'),
     ])
     const err = p.error || s.error || g.error
@@ -88,68 +91,219 @@ function UserAccessTab() {
     else load()
   }
 
-  if (!isAdmin) {
+  const tierOf = (p: Profile) =>
+    p.grade_id ? grades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
+  const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
+  const myTier = profile?.grade_id
+    ? grades.find((g) => g.id === profile.grade_id)?.sort_order ?? null
+    : null
+  // Anyone at least one tier above the bottom can see + confirm new signups.
+  const canConfirm = isAdmin || (myTier !== null && myTier < bottomTier)
+  // Non-admins may only hand out tiers strictly below their own.
+  const assignableGrades = isAdmin
+    ? grades
+    : grades.filter((g) => myTier !== null && g.sort_order > myTier)
+
+  if (!canConfirm) {
     return (
       <div className="card">
-        <p className="muted">Only admins can manage user access.</p>
+        <p className="muted">Only upper tiers or admins can manage user access.</p>
       </div>
     )
   }
   if (loading) return <p className="muted">Loading…</p>
 
-  const label = (p: Profile) => p.email ?? p.full_name ?? p.id.slice(0, 8)
-  const tierOf = (p: Profile) =>
-    p.grade_id ? grades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
-  // Approval steps follow the tags' standardized capabilities, assigned in
-  // the control panel below.
+  const label = (p: Profile) => profileName(p)
   const capsOf = (p: Profile) =>
     (p.grade_id ? grades.find((g) => g.id === p.grade_id)?.capabilities : null) ?? []
   const approvalUsers = profiles.filter((p) => capsOf(p).includes('approve'))
   const verifyUsers = profiles.filter((p) => capsOf(p).includes('verify'))
-  // Untagged (newly signed-up) users first so they get set up quickly, then
-  // everyone else in tag tier order.
-  const sortedProfiles = [...profiles].sort((a, b) => {
-    const ta = tierOf(a) ?? 0
-    const tb = tierOf(b) ?? 0
-    return ta - tb || (a.email ?? '').localeCompare(b.email ?? '')
-  })
+  const stationLabel = (p: Profile) => {
+    const ids = p.station_ids && p.station_ids.length > 0
+      ? p.station_ids
+      : p.station_id
+        ? [p.station_id]
+        : []
+    if (ids.length === 0) return 'All stations'
+    return ids
+      .map((id) => stations.find((st) => st.id === id)?.name ?? '?')
+      .join(', ')
+  }
+  const gradeOf = (p: Profile) => grades.find((g) => g.id === p.grade_id)
+
+  const pending = profiles.filter((p) => !p.tags_confirmed)
+  const confirmed = profiles
+    .filter((p) => p.tags_confirmed)
+    .sort((a, b) => (tierOf(a) ?? 99) - (tierOf(b) ?? 99) || (a.email ?? '').localeCompare(b.email ?? ''))
+
+  // Sync route access with the tier when a tag is handed out.
+  function tierFields(gradeId: string | null, p: Profile): Partial<Profile> {
+    const g = grades.find((x) => x.id === gradeId)
+    const fields: Partial<Profile> = { grade_id: gradeId }
+    if (p.role !== 'admin') fields.role = roleForTier(g?.sort_order ?? null, g?.name)
+    return fields
+  }
 
   return (
     <div className="stack">
       {error && <div className="error">{error}</div>}
 
-      <div className="grid-2">
-        {/* 1 — who verifies and who approves, derived from the tags set in
-            the control panel below */}
-        <div className="card stack compact approval-card">
-          <h3>Piece rate approval</h3>
-          <div className="field">
-            <span>Verify by</span>
-            {verifyUsers.length === 0
-              ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the verify capability.</p>
-              : verifyUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
+      {isAdmin && (
+        <div className="grid-2">
+          <div className="card stack compact approval-card">
+            <h3>Piece rate approval</h3>
+            <div className="field">
+              <span>Verify by</span>
+              {verifyUsers.length === 0
+                ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the verify capability.</p>
+                : verifyUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
+            </div>
+            <div className="field">
+              <span>Approval by</span>
+              {approvalUsers.length === 0
+                ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the approve capability.</p>
+                : approvalUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
+            </div>
           </div>
-          <div className="field">
-            <span>Approval by</span>
-            {approvalUsers.length === 0
-              ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the approve capability.</p>
-              : approvalUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
-          </div>
-        </div>
 
-        {/* 2 — the tags; click one to see what it can see and do */}
-        <div className="card stack compact">
-          <h3>Tags</h3>
-          <div className="tag-list">
-            {grades.map((g) => (
-              <button className="tag-row" key={g.id} onClick={() => setTagInfo(g)}>
-                <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
-                <span>{g.name}</span>
-              </button>
-            ))}
+          <div className="card stack compact">
+            <h3>Tags</h3>
+            <div className="tag-list">
+              {grades.map((g) => (
+                <button className="tag-row" key={g.id} onClick={() => setTagInfo(g)}>
+                  <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
+                  <span>{g.name}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
+      )}
+
+      {/* 1 — new signups waiting for their tags to be confirmed */}
+      <div className="card stack approval-card">
+        <div className="row-form spread">
+          <h3>New sign ups — pending tag confirmation</h3>
+          {pending.length > 0 && <span className="count-badge static">{pending.length}</span>}
+        </div>
+        {pending.length === 0 && <p className="muted small">No new sign ups waiting.</p>}
+        {pending.length > 0 && (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Station tag</th>
+                <th>Tier tag</th>
+                <th className="right">Confirm</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pending.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.full_name ?? '—'} <span className="badge new">new</span></td>
+                  <td className="muted small">{p.email}</td>
+                  <td>
+                    <StationMultiSelect
+                      stations={stations}
+                      value={p.station_ids ?? (p.station_id ? [p.station_id] : [])}
+                      onChange={(ids) => update(p, { station_ids: ids, station_id: ids[0] ?? null })}
+                    />
+                  </td>
+                  <td>
+                    <select
+                      value={p.grade_id ?? ''}
+                      onChange={(e) => update(p, tierFields(e.target.value || null, p))}
+                    >
+                      <option value="">—</option>
+                      {assignableGrades.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="right">
+                    <button
+                      className="btn"
+                      disabled={!p.grade_id}
+                      title={p.grade_id ? 'Confirm this user' : 'Set a tier tag first'}
+                      onClick={() => update(p, { tags_confirmed: true })}
+                    >
+                      Confirm
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="muted small">
+          Sign ups default to Operator with all modules visible. Set their station and
+          tier, then confirm to move them into the user list.
+        </p>
       </div>
+
+      {/* 2 — confirmed users */}
+      {isAdmin && (
+        <div className="card stack">
+          <h3>User access control panel</h3>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Station tag</th>
+                <th>Tier tag</th>
+                <th className="right">Access</th>
+              </tr>
+            </thead>
+            <tbody>
+              {confirmed.length === 0 && (
+                <tr><td colSpan={5} className="muted">No confirmed users yet.</td></tr>
+              )}
+              {confirmed.map((p) => {
+                const g = gradeOf(p)
+                return (
+                  <tr key={p.id}>
+                    <td>{p.full_name ?? '—'}</td>
+                    <td className="muted small">{p.email}</td>
+                    <td className="muted small">{stationLabel(p)}</td>
+                    <td>{g ? <span className={tagClass(g.color)}>{g.name}</span> : '—'}</td>
+                    <td className="right">
+                      <button
+                        className="icon-btn sm"
+                        title="Setting user access"
+                        aria-label={`Set access for ${label(p)}`}
+                        onClick={() => setAccessUser(p)}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="8" r="4" />
+                          <path d="M4 21v-1a7 7 0 0 1 10.6-6" />
+                          <circle cx="18" cy="18" r="3" />
+                          <path d="M18 14.5v1M18 20.5v1M21.5 18h-1M15.5 18h-1" />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {accessUser && (
+        <UserAccessModal
+          user={accessUser}
+          stations={stations}
+          grades={grades}
+          onClose={() => setAccessUser(null)}
+          onSaved={() => {
+            setAccessUser(null)
+            load()
+          }}
+        />
+      )}
 
       {tagInfo && (
         <div className="modal-overlay" onClick={() => setTagInfo(null)}>
@@ -159,14 +313,6 @@ function UserAccessTab() {
               <button type="button" className="modal-close" onClick={() => setTagInfo(null)} aria-label="Close">×</button>
             </div>
             <p className="muted small">Tier {tagInfo.sort_order} (1 is highest) — sees its own tier and every tier below it.</p>
-            <div className="field">
-              <span>Can see</span>
-              <p style={{ margin: 0 }}>
-                {(tagInfo.modules ?? DEFAULT_MODULES)
-                  .map((k) => MODULE_OPTIONS.find((m) => m.key === k)?.label ?? k)
-                  .join(', ')}
-              </p>
-            </div>
             <div className="field">
               <span>Can do</span>
               <p style={{ margin: 0 }}>
@@ -178,73 +324,124 @@ function UserAccessTab() {
           </div>
         </div>
       )}
-
-      {/* 3 — every signed-up account, untagged first then by tier */}
-      <div className="card stack">
-        <h3>User access control panel</h3>
-        <p className="muted small">
-          Accounts appear here when someone signs up (default: Operator). Users still
-          without a tag are listed first — appoint their tags; the tags decide what
-          they see.
-        </p>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Email</th>
-              <th>Station tag</th>
-              <th>Tier tag</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedProfiles.length === 0 && (
-              <tr><td colSpan={3} className="muted">No sign-ups yet.</td></tr>
-            )}
-            {sortedProfiles.map((p) => (
-              <tr key={p.id}>
-                <td>
-                  {label(p)}{' '}
-                  {!p.grade_id && <span className="badge new">new — set tag</span>}
-                </td>
-                <td>
-                  <StationMultiSelect
-                    stations={stations}
-                    value={p.station_ids ?? (p.station_id ? [p.station_id] : [])}
-                    onChange={(ids) =>
-                      update(p, { station_ids: ids, station_id: ids[0] ?? null })
-                    }
-                  />
-                </td>
-                <td>
-                  <select
-                    value={p.grade_id ?? ''}
-                    onChange={(e) => {
-                      const gradeId = e.target.value || null
-                      const g = grades.find((x) => x.id === gradeId)
-                      const fields: Partial<Profile> = { grade_id: gradeId }
-                      // Keep route access in step with the tier (admins stay admin).
-                      if (p.role !== 'admin') {
-                        fields.role = roleForTier(g?.sort_order ?? null, g?.name)
-                      }
-                      update(p, fields)
-                    }}
-                  >
-                    <option value="">—</option>
-                    {grades.map((g) => (
-                      <option key={g.id} value={g.id}>{g.name}</option>
-                    ))}
-                  </select>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/* Tags: grade tags with colour + ability (the access legend).        */
+/* Per-user access pop-out: name, email, station, tier and which      */
+/* modules this user can see on the web.                              */
+/* ------------------------------------------------------------------ */
+
+function UserAccessModal({
+  user,
+  stations,
+  grades,
+  onClose,
+  onSaved,
+}: {
+  user: Profile
+  stations: Station[]
+  grades: Grade[]
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [name, setName] = useState(user.full_name ?? '')
+  const [stationIds, setStationIds] = useState<string[]>(
+    user.station_ids ?? (user.station_id ? [user.station_id] : []),
+  )
+  const [gradeId, setGradeId] = useState(user.grade_id ?? '')
+  const [modules, setModules] = useState<string[]>(
+    user.modules && user.modules.length > 0 ? user.modules : MODULE_OPTIONS.map((m) => m.key),
+  )
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  function toggleModule(key: string) {
+    setModules((m) => (m.includes(key) ? m.filter((k) => k !== key) : [...m, key]))
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setSaving(true)
+    const g = grades.find((x) => x.id === gradeId)
+    const fields: Partial<Profile> = {
+      full_name: name.trim() || null,
+      station_ids: stationIds,
+      station_id: stationIds[0] ?? null,
+      grade_id: gradeId || null,
+      modules,
+    }
+    if (user.role !== 'admin') fields.role = roleForTier(g?.sort_order ?? null, g?.name)
+    const { error } = await supabase.from('access_profiles').update(fields).eq('id', user.id)
+    setSaving(false)
+    if (error) return setError(error.message)
+    onSaved()
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+        <div className="row-form spread">
+          <h2>User access</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        <label className="field">
+          <span>Name (keyed in at sign up)</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+
+        <div className="field">
+          <span>Email</span>
+          <p style={{ margin: 0 }}>{user.email ?? '—'}</p>
+        </div>
+
+        <div className="field">
+          <span>Station tag</span>
+          <StationMultiSelect stations={stations} value={stationIds} onChange={setStationIds} />
+        </div>
+
+        <label className="field">
+          <span>Tier tag</span>
+          <select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
+            <option value="">—</option>
+            {grades.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <div className="field">
+          <span>Can see (modules on the web)</span>
+          <div className="stack" style={{ gap: '0.3rem' }}>
+            {MODULE_OPTIONS.map((m) => (
+              <label key={m.key} className="checkbox small" style={{ margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={modules.includes(m.key)}
+                  onChange={() => toggleModule(m.key)}
+                />{' '}
+                {m.label}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Save access'}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ */
 /* Pick any number of station tags for a user (none = all stations).  */
 /* ------------------------------------------------------------------ */
@@ -435,7 +632,6 @@ function TagsTab() {
               {canEditTags && <th></th>}
               <th>Tier</th>
               <th>Tag</th>
-              <th>Can see</th>
               <th>Can do</th>
               {canEditTags && <th className="right">Actions</th>}
             </tr>
@@ -462,11 +658,6 @@ function TagsTab() {
                 {canEditTags && <td className="drag-handle" aria-hidden="true">⠿</td>}
                 <td className="muted">{g.sort_order}</td>
                 <td><span className={tagClass(g.color)}>{g.name}</span></td>
-                <td className="muted small">
-                  {(g.modules ?? DEFAULT_MODULES)
-                    .map((k) => MODULE_OPTIONS.find((m) => m.key === k)?.label ?? k)
-                    .join(', ')}
-                </td>
                 <td className="muted small">
                   {(g.capabilities ?? []).length
                     ? (g.capabilities ?? []).map((c) => (
@@ -749,15 +940,11 @@ function TagEditModal({
 }) {
   const [name, setName] = useState(grade?.name ?? '')
   const [color, setColor] = useState(grade?.color ?? 'blue')
-  const [modules, setModules] = useState<string[]>(grade?.modules ?? [...DEFAULT_MODULES])
+  const modules = grade?.modules ?? [...DEFAULT_MODULES]
   const [capabilities, setCapabilities] = useState<string[]>(grade?.capabilities ?? ['data-entry'])
   const ability = grade?.ability ?? ''
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
-
-  function toggleModule(key: string) {
-    setModules((m) => (m.includes(key) ? m.filter((k) => k !== key) : [...m, key]))
-  }
 
   function toggleCapability(key: string) {
     setCapabilities((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]))
@@ -803,22 +990,6 @@ function TagEditModal({
                 title={c}
                 aria-label={c}
               />
-            ))}
-          </div>
-        </div>
-
-        <div className="field">
-          <span>Can see (modules shown on the web)</span>
-          <div className="stack" style={{ gap: '0.3rem' }}>
-            {MODULE_OPTIONS.map((m) => (
-              <label key={m.key} className="checkbox small" style={{ margin: 0 }}>
-                <input
-                  type="checkbox"
-                  checked={modules.includes(m.key)}
-                  onChange={() => toggleModule(m.key)}
-                />{' '}
-                {m.label}
-              </label>
             ))}
           </div>
         </div>

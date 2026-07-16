@@ -34,6 +34,8 @@ export interface Profile {
   grade_id: string | null
   can_approve_rates: boolean
   approval_role: 'verify' | 'approve' | null
+  modules?: string[] | null
+  tags_confirmed?: boolean
 }
 
 // Rows of the work tables (see supabase/setup.sql).

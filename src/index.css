@@ -251,6 +251,7 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 
 /* Button with a red notification counter at its top-right corner */
 .badge-holder { position: relative; }
+.count-badge.static { position: static; display: inline-block; }
 .count-badge {
   position: absolute; top: -7px; right: -7px;
   min-width: 19px; height: 19px; padding: 0 5px;

@@ -76,12 +76,13 @@ export default function Dashboard() {
   const { profile } = useAuth()
   const isManage = profile?.role === 'admin' || profile?.role === 'manager'
 
-  // What this user's tag allows them to SEE (set per tag in Settings →
-  // Tags management). Admin/manager roles see everything.
+  // What this USER can see — set per user in the access control panel.
+  // Falls back to the tag's modules for accounts saved before the change.
   const [allowed, setAllowed] = useState<string[] | null>(null)
   useEffect(() => {
     async function load() {
       if (isManage) return setAllowed(null) // null = everything
+      if (profile?.modules && profile.modules.length > 0) return setAllowed(profile.modules)
       if (!profile?.grade_id) return setAllowed(DEFAULT_MODULES)
       const { data } = await supabase
         .from('grades')
