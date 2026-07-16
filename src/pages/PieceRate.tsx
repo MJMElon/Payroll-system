@@ -7,8 +7,8 @@
 // capability holder checks it, then an 'approve' capability holder (or an
 // admin, who can do either step) signs off. The page has three sidebar
 // sections: Pending Piece Rate Approval (submissions not yet approved),
-// Piece Rate Master (approved contracts, pivoted so each tag/position is
-// its own column for a station + work description), and Piece Rate History
+// Piece Rate Masterlist (approved contracts, pivoted so each tag/position
+// is its own column for a station + work description), and Piece Rate History
 // (past rate changes for approved contracts, derived from piece_rates rows
 // — no separate history table). Everyone can open the listing, but
 // non-managers only see rates for their own grade tier and below (tier =
@@ -307,7 +307,7 @@ function IconHistory() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Grouping helpers — shared by Piece Rate Master and History, which  */
+/* Grouping helpers — shared by Piece Rate Masterlist and History, which */
 /* both pivot rows by Station + Work description so each tag/position */
 /* gets its own column instead of one row per contract.               */
 /* ------------------------------------------------------------------ */
@@ -336,11 +336,17 @@ function groupJobs(jobs: Job[]): JobGroup[] {
   return [...m.values()]
 }
 
-/** One pivoted column per tag present in `jobs`, plus a "No tag" column if needed. */
-function tagColumns(grades: Grade[], jobs: Job[]): { key: string; label: string }[] {
-  const cols = grades.map((g) => ({ key: g.id, label: g.name }))
-  if (jobs.some((j) => j.grade_id === null)) cols.push({ key: NO_TAG, label: 'No tag' })
-  return cols
+// The Master/History pivot only ever shows these three positions, in this
+// order — other tags (e.g. Management, Manager, Engineer) are left out.
+const MASTER_TAG_ORDER = ['Operator', 'Assistant Station Head', 'Station Head']
+
+/** One pivoted column per tag in MASTER_TAG_ORDER that exists in `grades`. */
+function tagColumns(grades: Grade[]): { key: string; label: string }[] {
+  const byName = new Map(grades.map((g) => [g.name, g]))
+  return MASTER_TAG_ORDER
+    .map((name) => byName.get(name))
+    .filter((g): g is Grade => Boolean(g))
+    .map((g) => ({ key: g.id, label: g.name }))
 }
 
 function addDays(dateStr: string, delta: number) {
@@ -585,7 +591,7 @@ function SubmissionsList({
 }
 
 /* ------------------------------------------------------------------ */
-/* Piece Rate Master — approved contracts, pivoted so each tag/        */
+/* Piece Rate Masterlist — approved contracts, pivoted so each tag/    */
 /* position for a Station + Work description is its own column.       */
 /* ------------------------------------------------------------------ */
 
@@ -623,13 +629,13 @@ function RatesList({
   const groups = groupJobs(filtered).sort(
     (a, b) => stationName(a.station_id).localeCompare(stationName(b.station_id)) || a.name.localeCompare(b.name),
   )
-  const tagCols = tagColumns(grades, filtered)
+  const tagCols = tagColumns(grades)
   const colCount = 3 + tagCols.length + 2 + (canManage ? 1 : 0)
 
   return (
     <div className="card stack">
       <div className="row-form spread">
-        <h3>Piece Rate Master</h3>
+        <h3>Piece Rate Masterlist</h3>
         <div className="row-form">
           <select
             className="filter-select"
@@ -880,7 +886,7 @@ function HistoryList({
   const groups = buildHistory(filteredJobs, rates).sort(
     (a, b) => stationName(a.station_id).localeCompare(stationName(b.station_id)) || a.name.localeCompare(b.name),
   )
-  const tagCols = tagColumns(grades, filteredJobs)
+  const tagCols = tagColumns(grades)
   const colCount = 5 + tagCols.length + 1
   const rowCount = groups.reduce((n, g) => n + g.rows.length, 0)
 
