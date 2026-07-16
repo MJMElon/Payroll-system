@@ -186,6 +186,7 @@ export default function PieceRate() {
                   grades={grades}
                   jobs={jobs}
                   currentRate={latestRate}
+                  pendingCount={openApprovals.length}
                   canManage={canManage}
                   onEdit={(j) => setModal(j)}
                   onChanged={load}
@@ -369,6 +370,7 @@ function SubmissionsList({
   grades,
   jobs,
   currentRate,
+  pendingCount,
   canManage,
   onEdit,
   onChanged,
@@ -378,6 +380,7 @@ function SubmissionsList({
   grades: Grade[]
   jobs: Job[]
   currentRate: Map<string, Rate>
+  pendingCount: number
   canManage: boolean
   onEdit: (j: Job) => void
   onChanged: () => void
@@ -406,7 +409,12 @@ function SubmissionsList({
   return (
     <div className="card stack">
       <div className="row-form spread">
-        <h3>All Submissions</h3>
+        <h3>
+          Pending Piece Rate Approval
+          {pendingCount > 0 && (
+            <span className="count-badge static" style={{ marginLeft: '0.5rem' }}>{pendingCount}</span>
+          )}
+        </h3>
         <select
           className={`th-filter ${stationFilter ? 'active' : ''}`}
           value={stationFilter}
