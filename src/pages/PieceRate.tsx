@@ -144,6 +144,15 @@ export default function PieceRate() {
         )}
       </div>
 
+      {(canManage || isApprover) && (
+        <SubmissionsList
+          stations={stations}
+          grades={grades}
+          jobs={jobs}
+          currentRate={currentRate}
+        />
+      )}
+
       <RatesList
         stations={stations}
         grades={grades}
@@ -286,6 +295,105 @@ function ApprovalModal({
           })
         )}
       </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Submissions tracker — every piece rate regardless of status, so    */
+/* creators and approvers can see where a submission stands.          */
+/* ------------------------------------------------------------------ */
+
+const STATUS_LABEL: Record<Job['approval_status'], string> = {
+  pending: 'Waiting verification',
+  verified: 'Waiting approval',
+  approved: 'Approved',
+  rejected: 'Rejected',
+}
+
+const STATUS_CLASS: Record<Job['approval_status'], string> = {
+  pending: 'badge off',
+  verified: 'badge off',
+  approved: 'badge ok',
+  rejected: 'badge new',
+}
+
+function SubmissionsList({
+  stations,
+  grades,
+  jobs,
+  currentRate,
+}: {
+  stations: Station[]
+  grades: Grade[]
+  jobs: Job[]
+  currentRate: Map<string, Rate>
+}) {
+  const [stationFilter, setStationFilter] = useState('')
+
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
+
+  const list = jobs
+    .filter((j) => (stationFilter ? j.station_id === stationFilter : true))
+    .sort(
+      (a, b) =>
+        stationName(a.station_id).localeCompare(stationName(b.station_id)) ||
+        a.name.localeCompare(b.name),
+    )
+
+  return (
+    <div className="card stack">
+      <div className="row-form spread">
+        <h3>All Submissions</h3>
+        <select
+          className={`th-filter ${stationFilter ? 'active' : ''}`}
+          value={stationFilter}
+          onChange={(e) => setStationFilter(e.target.value)}
+          title="Filter by station"
+        >
+          <option value="">All stations</option>
+          {stations.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+      </div>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Station</th>
+            <th>Work description</th>
+            <th>Tag</th>
+            <th>Unit</th>
+            <th className="right">Rate</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.length === 0 && (
+            <tr>
+              <td colSpan={6} className="muted">No submissions yet.</td>
+            </tr>
+          )}
+          {list.map((j) => {
+            const rate = currentRate.get(j.id)
+            const tag = gradeName(j.grade_id)
+            return (
+              <tr key={j.id}>
+                <td>{stationName(j.station_id)}</td>
+                <td>{j.name}</td>
+                <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
+                <td className="muted">{j.unit}</td>
+                <td className="right">
+                  {rate ? <strong>{Number(rate.rate)}</strong> : <span className="badge off">no rate</span>}
+                </td>
+                <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <p className="muted small">{list.length} submission(s) shown.</p>
     </div>
   )
 }
