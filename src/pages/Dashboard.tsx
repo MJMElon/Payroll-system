@@ -28,7 +28,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'payroll',
     to: '/payroll',
-    title: 'Payroll',
+    title: 'Payroll Management',
     desc: 'Runs, adjustments & finalize',
     show: () => true,
     icon: (
@@ -43,7 +43,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'piece-rate',
     to: '/piece-rate',
-    title: 'Piece Rate',
+    title: 'Piece Rate Management',
     desc: 'Rates, approvals & history',
     show: () => true,
     icon: (
