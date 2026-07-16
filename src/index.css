@@ -577,6 +577,22 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   color: #0369a1;
   box-shadow: inset 0 0 0 3px rgba(3, 105, 161, 0.22), 0 0 10px rgba(125, 211, 252, 0.8);
 }
+/* Overflow marker when the hour beats its target: a smaller "+N" stamp. */
+.stamp.extra {
+  width: 36px; height: 42px; align-self: center;
+  background: rgba(253, 230, 138, 0.18); color: #fde68a;
+  font-size: 0.85rem; transform: rotate(8deg);
+}
+.stamp.extra.reward { background: rgba(125, 211, 252, 0.18); color: #bae6fd; }
+
+/* Hour-zone headers inside the day's record list */
+.mob-hour-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.72rem; font-weight: 700; color: var(--muted);
+  letter-spacing: 0.04em; padding: 0.45rem 0 0.15rem;
+  border-top: 1px solid var(--border); margin-top: 0.25rem;
+}
+.mob-daynav + div > .mob-hour-head { border-top: none; margin-top: 0; padding-top: 0.15rem; }
 
 .mob-nav {
   display: flex; justify-content: space-around; align-items: center;

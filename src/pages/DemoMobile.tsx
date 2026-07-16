@@ -11,6 +11,38 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase, type PhotoRecord, type Station } from '../lib/supabase'
 
+// Status-bar clock that actually ticks (the page itself rarely re-renders).
+function StatusClock() {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 15_000)
+    return () => clearInterval(t)
+  }, [])
+  return <span>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+}
+
+// Camera photos are several MB; shrink to a sensible size before uploading so
+// records post fast on mobile data. Falls back to the original on any failure.
+async function compressImage(file: File): Promise<Blob> {
+  try {
+    const MAX = 1600
+    const bitmap = await createImageBitmap(file)
+    const scale = Math.min(1, MAX / Math.max(bitmap.width, bitmap.height))
+    if (scale === 1 && file.size < 800_000) return file
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(bitmap.width * scale)
+    canvas.height = Math.round(bitmap.height * scale)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return file
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close()
+    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.82))
+    return blob && blob.size < file.size ? blob : file
+  } catch {
+    return file
+  }
+}
+
 export default function DemoMobile() {
   const { profile } = useAuth()
   const [canEntry, setCanEntry] = useState(true)
@@ -61,7 +93,7 @@ export default function DemoMobile() {
         <div className="phone">
           <div className="phone-screen">
             <div className="mob-status">
-              <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <StatusClock />
               <span>▮▮▮</span>
             </div>
 
@@ -125,6 +157,45 @@ function dayISO(d: Date) {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
 
+function hourLabel(h: number) {
+  const h24 = ((h % 24) + 24) % 24
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12
+  return `${h12}${h24 >= 12 ? 'PM' : 'AM'}`
+}
+
+// Records arrive newest-first; keep that order and bucket them per hour zone.
+function groupByHour(records: PhotoRecord[]): Array<[number, PhotoRecord[]]> {
+  const groups: Array<[number, PhotoRecord[]]> = []
+  for (const r of records) {
+    const h = new Date(r.taken_at).getHours()
+    const last = groups[groups.length - 1]
+    if (last && last[0] === h) last[1].push(r)
+    else groups.push([h, [r]])
+  }
+  return groups
+}
+
+function RecordRow({ record, url }: { record: PhotoRecord; url: string | null }) {
+  const t = new Date(record.taken_at)
+  return (
+    <div className="mob-row">
+      <span>
+        {t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        <span className="mob-station-meta">
+          {' '}· {t.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+        </span>
+      </span>
+      {url ? (
+        <a href={url} target="_blank" rel="noreferrer">
+          <img className="mob-thumb" src={url} alt="record" loading="lazy" />
+        </a>
+      ) : (
+        <span className="mob-chip">no photo</span>
+      )}
+    </div>
+  )
+}
+
 function StationScreen({
   station,
   canEntry,
@@ -176,29 +247,29 @@ function StationScreen({
     return isToday && t.getHours() === now.getHours()
   }).length
   const minutesLeft = 59 - now.getMinutes()
-  const hourLabel = (h: number) => {
-    const h24 = ((h % 24) + 24) % 24
-    const h12 = h24 % 12 === 0 ? 12 : h24 % 12
-    return `${h12}${h24 >= 12 ? 'PM' : 'AM'}`
-  }
   const hourZone = `${hourLabel(now.getHours())} – ${hourLabel(now.getHours() + 1)}`
   // Bonus: hitting the preset minimum in the PREVIOUS hour turns this hour's
-  // stamps into reward stamps. (Stamp design to be refined further.)
+  // stamps into reward stamps.
   const minPrev = station.hourly_min_prev ?? 0
   const prevHourCount = records.filter((r) => {
     const t = new Date(r.taken_at)
     return isToday && t.getHours() === now.getHours() - 1
   }).length
   const rewardActive = minPrev > 0 && prevHourCount >= minPrev
+  // ...and this hour's count decides whether the NEXT hour is a bonus hour.
+  const nextHourBonus = minPrev > 0 && stampsThisHour >= minPrev
 
   async function handleFile(file: File | undefined) {
     if (!file) return
     setUploading(true)
     onError(null)
     try {
+      const photo = await compressImage(file)
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')
       const path = `${station.id}/${stamp}-${Math.random().toString(36).slice(2, 7)}.jpg`
-      const { error: upErr } = await supabase.storage.from('records').upload(path, file)
+      const { error: upErr } = await supabase.storage
+        .from('records')
+        .upload(path, photo, { contentType: 'image/jpeg' })
       if (upErr) throw new Error(upErr.message)
       const { error: insErr } = await supabase
         .from('photo_records')
@@ -248,11 +319,23 @@ function StationScreen({
                     ✓
                   </span>
                 ))}
+                {stampsThisHour > target && (
+                  <span className={`stamp extra ${rewardActive ? 'reward' : ''}`}>
+                    +{stampsThisHour - target}
+                  </span>
+                )}
               </div>
               <div className="mob-sub">
                 {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
                 {rewardActive && ' · bonus hour ✨'}
               </div>
+              {minPrev > 0 && (
+                <div className="mob-sub">
+                  {nextHourBonus
+                    ? `Minimum met (${stampsThisHour}/${minPrev}) — next hour is a bonus hour ✨`
+                    : `${minPrev - stampsThisHour} more this hour to make ${hourLabel(now.getHours() + 1)} a bonus hour`}
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -299,27 +382,23 @@ function StationScreen({
             <button className="mob-mini" onClick={() => shiftDay(1)} disabled={isToday}>›</button>
           </div>
           {records.length === 0 && <div className="mob-sub">No records this day.</div>}
-          {records.map((r) => {
-            const url = photoUrl(r.photo_path)
-            const t = new Date(r.taken_at)
-            return (
-              <div className="mob-row" key={r.id}>
-                <span>
-                  {t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  <span className="mob-station-meta">
-                    {' '}· {t.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+          {station.hourly_count ? (
+            groupByHour(records).map(([hour, rows]) => (
+              <div key={hour}>
+                <div className="mob-hour-head">
+                  <span>{hourLabel(hour)} – {hourLabel(hour + 1)}</span>
+                  <span className={`mob-chip ${rows.length >= target ? 'ok' : ''}`}>
+                    {rows.length >= target ? `${rows.length} of ${target} ✓` : `${rows.length} of ${target}`}
                   </span>
-                </span>
-                {url ? (
-                  <a href={url} target="_blank" rel="noreferrer">
-                    <img className="mob-thumb" src={url} alt="record" />
-                  </a>
-                ) : (
-                  <span className="mob-chip">no photo</span>
-                )}
+                </div>
+                {rows.map((r) => (
+                  <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />
+                ))}
               </div>
-            )
-          })}
+            ))
+          ) : (
+            records.map((r) => <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />)
+          )}
         </div>
       </div>
     </>
