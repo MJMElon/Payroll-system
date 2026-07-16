@@ -1160,7 +1160,7 @@ function ManagerProfileTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <div className="mob-avatar">{tierInitial(tier)}</div>
+        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
