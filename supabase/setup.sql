@@ -199,7 +199,20 @@ alter table public.access_profiles add column if not exists tags_confirmed boole
 update public.access_profiles set tags_confirmed = true
   where grade_id is not null and tags_confirmed = false;
 
--- Tier helpers for the confirmation rules.
+-- Tier helpers for the confirmation rules. my_tag_tier is security definer
+-- so policies can use it without RLS recursion.
+create or replace function public.my_tag_tier()
+returns int
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select g.sort_order from public.access_profiles p
+  join public.grades g on g.id = p.grade_id
+  where p.id = auth.uid();
+$$;
+
 create or replace function public.grade_tier(g uuid)
 returns int
 language sql
@@ -349,19 +362,7 @@ update public.grades set modules = '{station-status,piece-rate,payroll,demo-mobi
   where name in ('Management', 'Manager', 'Engineer')
     and modules = '{station-status,piece-rate}';
 
--- The signed-in user's tag tier (security definer avoids RLS recursion when
--- used inside the grades policies).
-create or replace function public.my_tag_tier()
-returns int
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select g.sort_order from public.access_profiles p
-  join public.grades g on g.id = p.grade_id
-  where p.id = auth.uid();
-$$;
+
 update public.workers set grade_id = null
   where grade_id in (select id from public.grades where name = 'Piece rate approval');
 update public.jobs set grade_id = null
