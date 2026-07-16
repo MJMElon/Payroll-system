@@ -28,7 +28,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'payroll',
     to: '/payroll',
-    title: 'Payroll',
+    title: 'Payroll Management',
     desc: 'Runs, adjustments & finalize',
     show: () => true,
     icon: (
