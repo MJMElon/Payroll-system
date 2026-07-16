@@ -522,7 +522,7 @@ function SubmissionsList({
           )}
         </h3>
         <select
-          className={`th-filter ${stationFilter ? 'active' : ''}`}
+          className="filter-select"
           value={stationFilter}
           onChange={(e) => setStationFilter(e.target.value)}
           title="Filter by station"
@@ -632,7 +632,7 @@ function RatesList({
         <h3>Piece Rate Master</h3>
         <div className="row-form">
           <select
-            className={`th-filter ${stationFilter ? 'active' : ''}`}
+            className="filter-select"
             value={stationFilter}
             onChange={(e) => setStationFilter(e.target.value)}
             title="Filter by station"
@@ -890,7 +890,7 @@ function HistoryList({
         <h3>Piece Rate History</h3>
         <div className="row-form">
           <select
-            className={`th-filter ${stationFilter ? 'active' : ''}`}
+            className="filter-select"
             value={stationFilter}
             onChange={(e) => setStationFilter(e.target.value)}
             title="Filter by station"
