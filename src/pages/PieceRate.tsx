@@ -98,6 +98,17 @@ export default function PieceRate() {
     return m
   }, [rates])
 
+  // Unlike currentRate, this includes rates scheduled for a future
+  // effective date — so a just-submitted rate still shows up while
+  // it's waiting for its effective date to arrive.
+  const latestRate = useMemo(() => {
+    const m = new Map<string, Rate>()
+    for (const r of rates) {
+      if (!m.has(r.job_id)) m.set(r.job_id, r)
+    }
+    return m
+  }, [rates])
+
   if (loading) return <p className="muted">Loading…</p>
 
   const openApprovals = jobs.filter(
@@ -174,7 +185,7 @@ export default function PieceRate() {
                   stations={stations}
                   grades={grades}
                   jobs={jobs}
-                  currentRate={currentRate}
+                  currentRate={latestRate}
                   canManage={canManage}
                   onEdit={(j) => setModal(j)}
                   onChanged={load}
@@ -204,7 +215,7 @@ export default function PieceRate() {
           items={openApprovals}
           stations={stations}
           grades={grades}
-          currentRate={currentRate}
+          currentRate={latestRate}
           myEmail={profile?.email ?? 'unknown'}
           canVerify={canVerify}
           canFinal={canFinal}
@@ -219,7 +230,7 @@ export default function PieceRate() {
           stations={stations}
           grades={grades}
           job={modal === 'create' ? null : modal}
-          currentRate={modal === 'create' ? null : currentRate.get(modal.id) ?? null}
+          currentRate={modal === 'create' ? null : latestRate.get(modal.id) ?? null}
           onClose={() => setModal('closed')}
           onSaved={(submitted) => {
             setModal('closed')
@@ -301,6 +312,7 @@ function ApprovalModal({
                     <div className="muted small">
                       {stationName(j.station_id)} · {j.unit} · proposed rate{' '}
                       <strong>{rate ? Number(rate.rate).toFixed(2) : '—'}</strong>
+                      {rate && <> · effective {rate.effective_from}</>}
                     </div>
                     <div className="small approval-trail">
                       {j.approval_status === 'pending' && <span className="badge off">waiting verification</span>}
@@ -415,6 +427,7 @@ function SubmissionsList({
             <th>Tag</th>
             <th>Unit</th>
             <th className="right">Rate</th>
+            <th>Effective date</th>
             <th>Status</th>
             {canManage && <th className="right">Actions</th>}
           </tr>
@@ -422,7 +435,7 @@ function SubmissionsList({
         <tbody>
           {list.length === 0 && (
             <tr>
-              <td colSpan={canManage ? 7 : 6} className="muted">No submissions yet.</td>
+              <td colSpan={canManage ? 8 : 7} className="muted">No submissions yet.</td>
             </tr>
           )}
           {list.map((j) => {
@@ -437,6 +450,7 @@ function SubmissionsList({
                 <td className="right">
                   {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="badge off">no rate</span>}
                 </td>
+                <td className="muted">{rate ? rate.effective_from : '—'}</td>
                 <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
                 {canManage && (
                   <td className="right">
@@ -535,13 +549,14 @@ function RatesList({
             </th>
             <th>Unit</th>
             <th className="right">Rate</th>
+            <th>Effective date</th>
             {canManage && <th className="right">Actions</th>}
           </tr>
         </thead>
         <tbody>
           {list.length === 0 && (
             <tr>
-              <td colSpan={6} className="muted">
+              <td colSpan={canManage ? 7 : 6} className="muted">
                 No piece rates here — click “Create new piece rate” to add one.
               </td>
             </tr>
@@ -558,6 +573,7 @@ function RatesList({
                 <td className="right">
                   {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="badge off">no rate</span>}
                 </td>
+                <td className="muted">{rate ? rate.effective_from : '—'}</td>
                 {canManage && (
                   <td className="right">
                     <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
@@ -612,6 +628,7 @@ function ContractModal({
   const [description, setDescription] = useState(job?.name ?? '')
   const [unit, setUnit] = useState(job?.unit ?? '')
   const [rate, setRate] = useState(currentRate ? String(Number(currentRate.rate)) : '')
+  const [effectiveFrom, setEffectiveFrom] = useState(currentRate?.effective_from ?? todayISO())
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -621,6 +638,9 @@ function ContractModal({
     const rateValue = Number(rate)
     if (rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
       return setError('Enter a valid non-negative rate.')
+    }
+    if (!effectiveFrom) {
+      return setError('Pick an effective date.')
     }
     setSaving(true)
     try {
@@ -646,12 +666,13 @@ function ContractModal({
         if (error) throw new Error(error.message)
         jobId = data.id
       }
-      const unchanged = job && currentRate && Number(currentRate.rate) === rateValue
+      const unchanged =
+        job && currentRate && Number(currentRate.rate) === rateValue && currentRate.effective_from === effectiveFrom
       if (jobId && !unchanged) {
         const { error } = await supabase
           .from('piece_rates')
           .upsert(
-            { job_id: jobId, rate: rateValue, effective_from: todayISO() },
+            { job_id: jobId, rate: rateValue, effective_from: effectiveFrom },
             { onConflict: 'job_id,effective_from' },
           )
         if (error) throw new Error(error.message)
@@ -735,6 +756,17 @@ function ContractModal({
             placeholder="0.00"
             required
           />
+        </label>
+
+        <label className="field">
+          <span>Effective date</span>
+          <input
+            type="date"
+            value={effectiveFrom}
+            onChange={(e) => setEffectiveFrom(e.target.value)}
+            required
+          />
+          <span className="small">Payroll uses whichever rate is effective on the day worked.</span>
         </label>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
