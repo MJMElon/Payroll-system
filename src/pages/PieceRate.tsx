@@ -175,6 +175,10 @@ export default function PieceRate() {
                   grades={grades}
                   jobs={jobs}
                   currentRate={currentRate}
+                  canManage={canManage}
+                  onEdit={(j) => setModal(j)}
+                  onChanged={load}
+                  onError={setError}
                 />
               ) : (
                 <p className="muted">You don't have access to submit or review piece rates.</p>
@@ -353,16 +357,31 @@ function SubmissionsList({
   grades,
   jobs,
   currentRate,
+  canManage,
+  onEdit,
+  onChanged,
+  onError,
 }: {
   stations: Station[]
   grades: Grade[]
   jobs: Job[]
   currentRate: Map<string, Rate>
+  canManage: boolean
+  onEdit: (j: Job) => void
+  onChanged: () => void
+  onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
+
+  async function remove(j: Job) {
+    if (!window.confirm(`Delete "${j.name}"? This fails if it's already used in production or payroll records.`)) return
+    const { error } = await supabase.from('jobs').delete().eq('id', j.id)
+    if (error) onError(error.message)
+    else onChanged()
+  }
 
   const list = jobs
     .filter((j) => (stationFilter ? j.station_id === stationFilter : true))
@@ -397,12 +416,13 @@ function SubmissionsList({
             <th>Unit</th>
             <th className="right">Rate</th>
             <th>Status</th>
+            {canManage && <th className="right">Actions</th>}
           </tr>
         </thead>
         <tbody>
           {list.length === 0 && (
             <tr>
-              <td colSpan={6} className="muted">No submissions yet.</td>
+              <td colSpan={canManage ? 7 : 6} className="muted">No submissions yet.</td>
             </tr>
           )}
           {list.map((j) => {
@@ -418,6 +438,12 @@ function SubmissionsList({
                   {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="badge off">no rate</span>}
                 </td>
                 <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
+                {canManage && (
+                  <td className="right">
+                    <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
+                    <button className="linkbtn danger" onClick={() => remove(j)}>Delete</button>
+                  </td>
+                )}
               </tr>
             )
           })}
