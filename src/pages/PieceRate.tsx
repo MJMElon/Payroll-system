@@ -266,7 +266,7 @@ function ApprovalModal({
                     {tag && <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span>}
                     <div className="muted small">
                       {stationName(j.station_id)} · {j.unit} · proposed rate{' '}
-                      <strong>{rate ? Number(rate.rate) : '—'}</strong>
+                      <strong>{rate ? Number(rate.rate).toFixed(2) : '—'}</strong>
                     </div>
                     <div className="small approval-trail">
                       {j.approval_status === 'pending' && <span className="badge off">waiting verification</span>}
@@ -385,7 +385,7 @@ function SubmissionsList({
                 <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
                 <td className="muted">{j.unit}</td>
                 <td className="right">
-                  {rate ? <strong>{Number(rate.rate)}</strong> : <span className="badge off">no rate</span>}
+                  {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="badge off">no rate</span>}
                 </td>
                 <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
               </tr>
@@ -500,7 +500,7 @@ function RatesList({
                 <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
                 <td className="muted">{j.unit}</td>
                 <td className="right">
-                  {rate ? <strong>{Number(rate.rate)}</strong> : <span className="badge off">no rate</span>}
+                  {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="badge off">no rate</span>}
                 </td>
                 {canManage && (
                   <td className="right">
