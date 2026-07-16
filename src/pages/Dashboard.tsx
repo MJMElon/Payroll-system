@@ -58,7 +58,7 @@ const MODULES: ModuleDef[] = [
     key: 'demo-mobile',
     to: '/demo-mobile',
     title: 'Demo Mobile View',
-    desc: 'Preview the mobile app per role',
+    desc: '',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -149,7 +149,7 @@ export default function Dashboard() {
             <span className="tile-icon" aria-hidden="true">{m.icon}</span>
             <div>
               <h2>{m.title}</h2>
-              <p className="muted small">{m.desc}</p>
+              {m.desc && <p className="muted small">{m.desc}</p>}
             </div>
           </Link>
         ))}
