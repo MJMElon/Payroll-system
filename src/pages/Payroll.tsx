@@ -50,7 +50,7 @@ export default function Payroll() {
     <div className="stack">
       <div>
         <Link to="/" className="small muted">← Back to main page</Link>
-        <h1>Payroll</h1>
+        <h1>Payroll Management</h1>
         <p className="muted">
           A run totals each worker's production in the period and prices it with the
           rate in force at the period end.
