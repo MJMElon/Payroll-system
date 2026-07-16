@@ -249,35 +249,6 @@ create policy "upper tier manages lower signups" on public.access_profiles
     grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier()
   );
 
--- ---------------------------------------------------------------------------
--- Workers -> users unification (Option A). Work and pay now attach to the
--- signed-up USER; the old workers table stays read-only for history.
--- ---------------------------------------------------------------------------
-
--- Everyone signed in may read profiles (needed to show names on entries,
--- boards and payslips). Writing is still admin-only.
-drop policy if exists "authenticated read profiles" on public.access_profiles;
-create policy "authenticated read profiles" on public.access_profiles
-  for select using (auth.uid() is not null);
-
-alter table public.production_entries add column if not exists user_id uuid references public.access_profiles (id);
-alter table public.production_entries alter column worker_id drop not null;
-alter table public.payroll_lines add column if not exists user_id uuid references public.access_profiles (id);
-alter table public.payroll_lines alter column worker_id drop not null;
-alter table public.payroll_adjustments add column if not exists user_id uuid references public.access_profiles (id);
-alter table public.payroll_adjustments alter column worker_id drop not null;
-
--- Backfill: rows whose worker is already linked to an account.
-update public.production_entries pe set user_id = ap.id
-  from public.access_profiles ap
-  where ap.worker_id = pe.worker_id and pe.user_id is null and pe.worker_id is not null;
-update public.payroll_lines pl set user_id = ap.id
-  from public.access_profiles ap
-  where ap.worker_id = pl.worker_id and pl.user_id is null and pl.worker_id is not null;
-update public.payroll_adjustments pa set user_id = ap.id
-  from public.access_profiles ap
-  where ap.worker_id = pa.worker_id and pa.user_id is null and pa.worker_id is not null;
-
 -- Photo records taken from the mobile view, one row per photo.
 create table if not exists public.photo_records (
   id uuid primary key default gen_random_uuid(),
@@ -541,8 +512,33 @@ create policy "admin manager payroll_adjustments" on public.payroll_adjustments
   for all using (public.my_role() in ('admin', 'manager'));
 
 -- ---------------------------------------------------------------------------
--- Seed the 7 mill stations
+-- Workers -> users unification (Option A). Work and pay now attach to the
+-- signed-up USER; the old workers table stays read-only for history.
 -- ---------------------------------------------------------------------------
+
+-- Everyone signed in may read profiles (needed to show names on entries,
+-- boards and payslips). Writing is still admin-only.
+drop policy if exists "authenticated read profiles" on public.access_profiles;
+create policy "authenticated read profiles" on public.access_profiles
+  for select using (auth.uid() is not null);
+
+alter table public.production_entries add column if not exists user_id uuid references public.access_profiles (id);
+alter table public.production_entries alter column worker_id drop not null;
+alter table public.payroll_lines add column if not exists user_id uuid references public.access_profiles (id);
+alter table public.payroll_lines alter column worker_id drop not null;
+alter table public.payroll_adjustments add column if not exists user_id uuid references public.access_profiles (id);
+alter table public.payroll_adjustments alter column worker_id drop not null;
+
+-- Backfill: rows whose worker is already linked to an account.
+update public.production_entries pe set user_id = ap.id
+  from public.access_profiles ap
+  where ap.worker_id = pe.worker_id and pe.user_id is null and pe.worker_id is not null;
+update public.payroll_lines pl set user_id = ap.id
+  from public.access_profiles ap
+  where ap.worker_id = pl.worker_id and pl.user_id is null and pl.worker_id is not null;
+update public.payroll_adjustments pa set user_id = ap.id
+  from public.access_profiles ap
+  where ap.worker_id = pa.worker_id and pa.user_id is null and pa.worker_id is not null;
 
 -- Seed only when the table is empty, so stations you delete stay deleted
 -- on later re-runs.
