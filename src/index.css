@@ -369,8 +369,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px;
   font-size: 0.75rem; font-weight: 500;
 }
-.badge.ok { background: var(--accent-soft); color: var(--accent-strong); }
+.badge.ok { background: #dcfce7; color: #166534; }
 .badge.off { background: #ecedf0; color: var(--muted); }
+.badge.warn { background: #fef3c7; color: #92400e; }
 .badge.new { background: #fee2e2; color: #b91c1c; }
 
 /* Dashboard stats */

@@ -421,7 +421,8 @@ function ApprovalModal({
                       {rate && <> · effective {rate.effective_from}</>}
                     </div>
                     <div className="small approval-trail">
-                      {j.approval_status === 'pending' && <span className="badge off">waiting verification</span>}
+                      {j.approval_status === 'pending' && <span className="badge warn">waiting verification</span>}
+                      {j.approval_status === 'verified' && <span className="badge warn">waiting approval</span>}
                       {j.verified_by && (
                         <span className="badge ok">verified by {j.verified_by}</span>
                       )}
@@ -464,8 +465,8 @@ const STATUS_LABEL: Record<Job['approval_status'], string> = {
 }
 
 const STATUS_CLASS: Record<Job['approval_status'], string> = {
-  pending: 'badge off',
-  verified: 'badge off',
+  pending: 'badge warn',
+  verified: 'badge warn',
   approved: 'badge ok',
   rejected: 'badge new',
 }
