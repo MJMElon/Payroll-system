@@ -54,6 +54,7 @@ export interface PhotoRecord {
   station_id: string
   photo_path: string | null
   taken_at: string
+  entry_id?: string | null
 }
 
 export interface Worker {
@@ -105,6 +106,10 @@ export interface ProductionEntry {
   notes: string | null
   created_by: string | null
   created_at: string
+  // Mobile work-entry approval flow (older queries don't select these).
+  approval_status?: 'pending' | 'verified' | 'approved' | 'rejected'
+  verified_by?: string | null
+  approved_by?: string | null
 }
 
 export interface PayrollRun {

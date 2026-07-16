@@ -540,6 +540,30 @@ update public.payroll_adjustments pa set user_id = ap.id
   from public.access_profiles ap
   where ap.worker_id = pa.worker_id and pa.user_id is null and pa.worker_id is not null;
 
+-- ---------------------------------------------------------------------------
+-- Mobile work-entry approval flow. Entries submitted from the mobile view
+-- start 'pending' and are verified/approved by upper tiers (same states as
+-- piece rates). Old rows default to 'approved' so history stays payable.
+-- Photos can attach to a specific entry as evidence.
+-- ---------------------------------------------------------------------------
+alter table public.production_entries add column if not exists approval_status text not null default 'approved';
+alter table public.production_entries drop constraint if exists production_entries_approval_status_check;
+alter table public.production_entries add constraint production_entries_approval_status_check
+  check (approval_status in ('pending', 'verified', 'approved', 'rejected'));
+alter table public.production_entries add column if not exists verified_by text;
+alter table public.production_entries add column if not exists verified_at timestamptz;
+alter table public.production_entries add column if not exists approved_by text;
+alter table public.production_entries add column if not exists approved_at timestamptz;
+alter table public.photo_records add column if not exists entry_id uuid references public.production_entries (id) on delete set null;
+
+-- Tiers holding the verify/approve capability may update entries below them.
+drop policy if exists "verifiers update production" on public.production_entries;
+create policy "verifiers update production" on public.production_entries
+  for update using (
+    public.my_role() in ('admin', 'manager')
+    or public.my_capabilities() && array['verify', 'approve']
+  );
+
 -- Seed only when the table is empty, so stations you delete stay deleted
 -- on later re-runs.
 insert into public.stations (name, sort_order)

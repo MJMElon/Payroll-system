@@ -1,43 +1,79 @@
 // ---------------------------------------------------------------------------
 // DEMO MOBILE VIEW — one mobile app for every station (will move to its own
 // repo later). A tier rail on the left lists every tier tag straight from
-// the database (new tiers appear, removed ones disappear); picking one
-// previews the phone UI AS that tier, so each tier's version can be
-// designed separately. Landing = station selection; tapping a station opens
-// its record-taking page: a stamp-card status block, an Add record camera
-// button, and a day-by-day list of photo records. Photos upload to the
-// 'records' storage bucket; rows land in photo_records.
+// the database; picking one previews the phone AS that tier.
+//
+// COMMON to all tiers: the bottom tab bar —
+//   left  = Performance (station status: stamp card, photos, records)
+//   middle= Record (big round button: submit a work record → approval flow)
+//   right = Profile (the user's profile & earnings dashboard)
+// Each tier gets its own version of the screens; the Operator view is built
+// first.
 // ---------------------------------------------------------------------------
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase, type Grade, type PhotoRecord, type Station } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
+import {
+  profileName,
+  supabase,
+  todayISO,
+  type Grade,
+  type Job,
+  type PhotoRecord,
+  type PieceRate,
+  type ProductionEntry,
+  type Station,
+} from '../lib/supabase'
+
+type Tab = 'performance' | 'record' | 'profile'
+
+const RM = (n: number) => `RM ${n.toFixed(2)}`
 
 export default function DemoMobile() {
+  const { profile } = useAuth()
   const [grades, setGrades] = useState<Grade[]>([])
   const [tier, setTier] = useState<Grade | null>(null)
   const [stations, setStations] = useState<Station[]>([])
-  const [station, setStation] = useState<Station | null>(null)
+  const [jobs, setJobs] = useState<Job[]>([])
+  const [rates, setRates] = useState<PieceRate[]>([])
+  const [tab, setTab] = useState<Tab>('performance')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
-      const [g, s] = await Promise.all([
+      const [g, s, j, r] = await Promise.all([
         supabase.from('grades').select('*').order('sort_order'),
         supabase.from('stations').select('*').order('sort_order'),
+        supabase.from('jobs').select('*').eq('active', true),
+        supabase.from('piece_rates').select('*'),
       ])
-      const err = g.error || s.error
+      const err = g.error || s.error || j.error || r.error
       if (err) setError(err.message)
       setGrades(g.data ?? [])
       setStations(s.data ?? [])
+      setJobs(j.data ?? [])
+      setRates(r.data ?? [])
       if (g.data && g.data.length > 0) setTier((prev) => prev ?? g.data[0])
       setLoading(false)
     }
     load()
   }, [])
 
+  // Latest rate in force per job (effective_from <= today).
+  const rateFor = useMemo(() => {
+    const today = todayISO()
+    const best = new Map<string, PieceRate>()
+    for (const r of rates) {
+      if (r.effective_from > today) continue
+      const cur = best.get(r.job_id)
+      if (!cur || r.effective_from > cur.effective_from) best.set(r.job_id, r)
+    }
+    return (jobId: string) => best.get(jobId)?.rate ?? 0
+  }, [rates])
+
   // The preview obeys the SELECTED tier's capabilities — only tiers with
-  // the data-entry capability get the camera button.
+  // the data-entry capability may submit records.
   const canEntry = (tier?.capabilities ?? []).includes('data-entry')
 
   return (
@@ -90,26 +126,81 @@ export default function DemoMobile() {
                 </div>
               )}
 
-              {loading ? (
-                <div className="mob-body"><p className="muted small">Loading…</p></div>
-              ) : station ? (
-                <StationScreen
-                  station={station}
-                  tier={tier}
-                  canEntry={canEntry}
-                  onBack={() => setStation(null)}
-                  onError={setError}
-                />
-              ) : (
-                <StationPicker stations={stations} tier={tier} onPick={setStation} />
-              )}
+              <div className="mob-content">
+                {loading ? (
+                  <div className="mob-body"><p className="muted small">Loading…</p></div>
+                ) : tab === 'performance' ? (
+                  <PerformanceTab stations={stations} tier={tier} onError={setError} />
+                ) : tab === 'record' ? (
+                  <RecordTab
+                    profileId={profile?.id ?? null}
+                    myName={profileName(profile)}
+                    tier={tier}
+                    grades={grades}
+                    stations={stations}
+                    jobs={jobs}
+                    rateFor={rateFor}
+                    canEntry={canEntry}
+                    onError={setError}
+                  />
+                ) : (
+                  <ProfileTab
+                    profileId={profile?.id ?? null}
+                    myName={profileName(profile)}
+                    tier={tier}
+                    stations={stations}
+                    jobs={jobs}
+                    rateFor={rateFor}
+                    onRecord={() => setTab('record')}
+                  />
+                )}
+              </div>
+
+              <TabBar tab={tab} onTab={setTab} />
             </div>
           </div>
           <p className="muted small">
-            Live demo — photos really upload. On a phone the camera opens directly.
+            Live demo — records and photos really save. On a phone the camera opens directly.
           </p>
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Bottom tab bar — COMMON to every tier's version                    */
+/* ------------------------------------------------------------------ */
+
+function TabBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+  return (
+    <div className="mob-tabbar">
+      <button className={`mob-tab ${tab === 'performance' ? 'active' : ''}`} onClick={() => onTab('performance')}>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round">
+          <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+        </svg>
+        <span>Performance</span>
+      </button>
+      <button
+        className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
+        onClick={() => onTab('record')}
+        aria-label="Record"
+      >
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </svg>
+      </button>
+      <button className={`mob-tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => onTab('profile')}>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" />
+        </svg>
+        <span>Profile</span>
+      </button>
     </div>
   )
 }
@@ -119,19 +210,44 @@ function tierInitial(tier: Grade | null) {
   return (tier?.name ?? 'A').trim().charAt(0).toUpperCase() || 'A'
 }
 
+function dayISO(d: Date) {
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}
+
+function statusChip(status: string | undefined) {
+  const s = status ?? 'approved'
+  const cls = s === 'approved' ? 'ok' : s === 'rejected' ? 'bad' : s === 'verified' ? 'mid' : 'warn'
+  const label = s === 'approved' ? 'Approved' : s === 'rejected' ? 'Rejected' : s === 'verified' ? 'Verified' : 'Pending'
+  return <span className={`mob-chip ${cls}`}>{label}</span>
+}
+
 /* ------------------------------------------------------------------ */
-/* Landing: choose your station                                       */
+/* TAB 1 — PERFORMANCE: station picker → stamp card & photo records   */
 /* ------------------------------------------------------------------ */
 
-function StationPicker({
+function PerformanceTab({
   stations,
   tier,
-  onPick,
+  onError,
 }: {
   stations: Station[]
   tier: Grade | null
-  onPick: (s: Station) => void
+  onError: (m: string | null) => void
 }) {
+  const [station, setStation] = useState<Station | null>(null)
+  const canEntry = (tier?.capabilities ?? []).includes('data-entry')
+
+  if (station) {
+    return (
+      <StationScreen
+        station={station}
+        tier={tier}
+        canEntry={canEntry}
+        onBack={() => setStation(null)}
+        onError={onError}
+      />
+    )
+  }
   return (
     <>
       <div className="mob-header">
@@ -139,12 +255,12 @@ function StationPicker({
         <div className="mob-avatar">{tierInitial(tier)}</div>
       </div>
       <div className="mob-body">
-        <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Stations</div>
+        <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Station performance</div>
         {stations.length === 0 && (
           <p className="muted small">No stations yet — create them in Settings.</p>
         )}
         {stations.map((s) => (
-          <button className="mob-station" key={s.id} onClick={() => onPick(s)}>
+          <button className="mob-station" key={s.id} onClick={() => setStation(s)}>
             <span>{s.name}</span>
             <span className="mob-station-meta">
               {s.hourly_count ? `hourly · ${s.hourly_target ?? 6}/hr` : 'daily'} ›
@@ -154,14 +270,6 @@ function StationPicker({
       </div>
     </>
   )
-}
-
-/* ------------------------------------------------------------------ */
-/* Station record page: stamp card, camera, day-by-day records        */
-/* ------------------------------------------------------------------ */
-
-function dayISO(d: Date) {
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
 
 function StationScreen({
@@ -303,9 +411,9 @@ function StationScreen({
           )}
         </div>
 
-        {/* 2 — add record (camera), only for tiers with data-entry */}
+        {/* 2 — add photo (camera), only for tiers with data-entry */}
         <div className="mob-card">
-          <div className="mob-title">Add record</div>
+          <div className="mob-title">Add photo record</div>
           {!canEntry && (
             <div className="mob-sub">
               {tier ? `The ${tier.name} tier has no data entry permission.` : 'No data entry permission.'}
@@ -363,6 +471,542 @@ function StationScreen({
               </div>
             )
           })}
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* TAB 2 — RECORD: submit a work record → pending → verify → approve  */
+/* ------------------------------------------------------------------ */
+
+function RecordTab({
+  profileId,
+  myName,
+  tier,
+  grades,
+  stations,
+  jobs,
+  rateFor,
+  canEntry,
+  onError,
+}: {
+  profileId: string | null
+  myName: string
+  tier: Grade | null
+  grades: Grade[]
+  stations: Station[]
+  jobs: Job[]
+  rateFor: (jobId: string) => number
+  canEntry: boolean
+  onError: (m: string | null) => void
+}) {
+  const [entries, setEntries] = useState<ProductionEntry[]>([])
+  const [detail, setDetail] = useState<ProductionEntry | null>(null)
+  const [stationId, setStationId] = useState('')
+  const [jobId, setJobId] = useState('')
+  const [qty, setQty] = useState('')
+  const [photo, setPhoto] = useState<File | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  async function loadEntries() {
+    if (!profileId) return
+    const { data, error } = await supabase
+      .from('production_entries')
+      .select('*')
+      .eq('user_id', profileId)
+      .order('created_at', { ascending: false })
+      .limit(12)
+    if (error) onError(error.message)
+    else setEntries(data ?? [])
+  }
+  useEffect(() => {
+    loadEntries()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId])
+
+  // Jobs at the chosen station this TIER may record — own tier and below
+  // (a job with no tag is open to everyone).
+  const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
+  const stationJobs = jobs.filter(
+    (j) =>
+      j.station_id === stationId &&
+      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  )
+  const job = jobs.find((j) => j.id === jobId)
+  const rate = jobId ? rateFor(jobId) : 0
+  const amount = rate * (Number(qty) || 0)
+
+  async function submit() {
+    if (!profileId || !stationId || !jobId || !Number(qty)) return
+    setSubmitting(true)
+    onError(null)
+    try {
+      const { data, error } = await supabase
+        .from('production_entries')
+        .insert({
+          work_date: todayISO(),
+          station_id: stationId,
+          job_id: jobId,
+          user_id: profileId,
+          quantity: Number(qty),
+          created_by: profileId,
+          approval_status: 'pending',
+        })
+        .select()
+        .single()
+      if (error) throw new Error(error.message)
+      if (photo && data) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const path = `${stationId}/entry-${stamp}.jpg`
+        const { error: upErr } = await supabase.storage.from('records').upload(path, photo)
+        if (!upErr) {
+          await supabase
+            .from('photo_records')
+            .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
+        }
+      }
+      setJobId('')
+      setQty('')
+      setPhoto(null)
+      await loadEntries()
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (detail) {
+    return (
+      <EntryDetail
+        entry={detail}
+        myName={myName}
+        tier={tier}
+        stations={stations}
+        jobs={jobs}
+        rateFor={rateFor}
+        onBack={() => setDetail(null)}
+      />
+    )
+  }
+
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
+
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+        <div className="mob-avatar">{tierInitial(tier)}</div>
+      </div>
+
+      <div className="mob-body">
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Record work</div>
+
+        {!canEntry ? (
+          <div className="mob-card">
+            <div className="mob-sub">
+              {tier ? `The ${tier.name} tier has no data entry permission.` : 'No data entry permission.'}
+            </div>
+          </div>
+        ) : (
+          <div className="mob-card">
+            <div className="mob-field-label">Station</div>
+            <select
+              className="mob-select"
+              value={stationId}
+              onChange={(e) => {
+                setStationId(e.target.value)
+                setJobId('')
+              }}
+            >
+              <option value="">Choose station…</option>
+              {stations.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+
+            <div className="mob-field-label">Job</div>
+            <select
+              className="mob-select"
+              value={jobId}
+              onChange={(e) => setJobId(e.target.value)}
+              disabled={!stationId}
+            >
+              <option value="">{stationId ? 'Choose job…' : 'Pick a station first'}</option>
+              {stationJobs.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.name} · {RM(rateFor(j.id))}{j.unit}
+                </option>
+              ))}
+            </select>
+
+            <div className="mob-field-label">Quantity{job ? ` (${job.unit.replace('/', '')})` : ''}</div>
+            <input
+              className="mob-input"
+              type="number"
+              min="0"
+              step="any"
+              placeholder="0"
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+            />
+
+            {job && Number(qty) > 0 && (
+              <div className="mob-breakrow total">
+                <span>{qty} × {RM(rate)}{job.unit}</span>
+                <span>{RM(amount)}</span>
+              </div>
+            )}
+
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: 'none' }}
+              onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+            />
+            <button className="mob-btn ghost" onClick={() => fileRef.current?.click()}>
+              {photo ? '✓ Photo attached' : '📷 Attach photo evidence'}
+            </button>
+
+            <button
+              className="mob-btn"
+              disabled={submitting || !stationId || !jobId || !Number(qty)}
+              onClick={submit}
+            >
+              {submitting ? 'Submitting…' : 'Submit for approval'}
+            </button>
+          </div>
+        )}
+
+        {/* My submitted records */}
+        <div className="mob-card">
+          <div className="mob-title">My records</div>
+          {entries.length === 0 && <div className="mob-sub">Nothing submitted yet.</div>}
+          {entries.map((e) => (
+            <button className="mob-entry" key={e.id} onClick={() => setDetail(e)}>
+              <span className="mob-entry-main">
+                <span className="mob-entry-name">{jobName(e.job_id)}</span>
+                <span className="mob-station-meta">
+                  {stationName(e.station_id)} · {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                </span>
+              </span>
+              <span className="mob-entry-side">
+                <span className="mob-entry-amt">{(rateFor(e.job_id) * e.quantity).toFixed(2)}</span>
+                {statusChip(e.approval_status)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* Entry detail — parameters, photo evidence, earnings, approval flow. */
+function EntryDetail({
+  entry,
+  myName,
+  tier,
+  stations,
+  jobs,
+  rateFor,
+  onBack,
+}: {
+  entry: ProductionEntry
+  myName: string
+  tier: Grade | null
+  stations: Station[]
+  jobs: Job[]
+  rateFor: (jobId: string) => number
+  onBack: () => void
+}) {
+  const [photos, setPhotos] = useState<PhotoRecord[]>([])
+  useEffect(() => {
+    supabase
+      .from('photo_records')
+      .select('*')
+      .eq('entry_id', entry.id)
+      .then(({ data }) => setPhotos(data ?? []))
+  }, [entry.id])
+
+  const job = jobs.find((j) => j.id === entry.job_id)
+  const station = stations.find((s) => s.id === entry.station_id)
+  const rate = rateFor(entry.job_id)
+  const total = rate * entry.quantity
+  const status = entry.approval_status ?? 'approved'
+  const photoUrl = (path: string | null) =>
+    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
+
+  const submittedAt = new Date(entry.created_at)
+  const verified = Boolean(entry.verified_by) || status === 'approved'
+  const approved = status === 'approved'
+
+  return (
+    <>
+      <div className="mob-header">
+        <button className="mob-back" onClick={onBack}>‹ Records</button>
+        <span className="mob-brand">MJM</span>
+        <div className="mob-avatar">{tierInitial(tier)}</div>
+      </div>
+
+      <div className="mob-body">
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Entry detail</div>
+
+        <div className="mob-card">
+          <div className="mob-row">
+            <span>
+              <div className="mob-entry-name">{job?.name ?? 'Work'} · {station?.name ?? '?'}</div>
+              <div className="mob-station-meta">
+                {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+                  day: 'numeric', month: 'long', year: 'numeric',
+                })} · {myName}
+              </div>
+            </span>
+            <span className="mob-detail-amt">{RM(total)}</span>
+          </div>
+          {statusChip(status)}
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">Submitted parameters</div>
+          <div className="mob-grid2">
+            <div>
+              <div className="mob-field-label">Quantity</div>
+              <div className="mob-param">{entry.quantity} {job ? job.unit.replace('/', '') : ''}</div>
+            </div>
+            <div>
+              <div className="mob-field-label">Rate</div>
+              <div className="mob-param">{RM(rate)}{job?.unit ?? ''}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">
+            Photo evidence{' '}
+            <span className="mob-chip">{photos.length} photo{photos.length === 1 ? '' : 's'}</span>
+          </div>
+          {photos.length === 0 && <div className="mob-sub">No photos attached.</div>}
+          <div className="mob-photo-grid">
+            {photos.map((p) => {
+              const url = photoUrl(p.photo_path)
+              return url ? (
+                <a key={p.id} href={url} target="_blank" rel="noreferrer">
+                  <img className="mob-photo" src={url} alt="evidence" />
+                </a>
+              ) : (
+                <span key={p.id} className="mob-chip">no photo</span>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">Earnings breakdown</div>
+          <div className="mob-breakrow">
+            <span>Base ({entry.quantity} × {RM(rate)}{job?.unit ?? ''})</span>
+            <span>{total.toFixed(2)}</span>
+          </div>
+          <div className="mob-breakrow total">
+            <span>Total</span>
+            <span>{RM(total)}</span>
+          </div>
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">Approval flow</div>
+          <div className="mob-flow">
+            <div className="mob-step">
+              <span className="mob-step-dot done" />
+              <span>
+                <div className="mob-step-name">Submitted</div>
+                <div className="mob-station-meta">
+                  {submittedAt.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}{' '}
+                  {submittedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {myName}
+                </div>
+              </span>
+            </div>
+            <div className="mob-step">
+              <span className={`mob-step-dot ${verified ? 'done' : ''}`} />
+              <span>
+                <div className="mob-step-name">Verification</div>
+                <div className="mob-station-meta">
+                  {entry.verified_by ? entry.verified_by : status === 'rejected' ? 'Rejected' : verified ? 'Done' : 'Pending · verify tier'}
+                </div>
+              </span>
+            </div>
+            <div className="mob-step">
+              <span className={`mob-step-dot ${approved ? 'done' : ''}`} />
+              <span>
+                <div className="mob-step-name">Final approval</div>
+                <div className="mob-station-meta">
+                  {entry.approved_by ? entry.approved_by : approved ? 'Done' : 'Waiting · approve tier'}
+                </div>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* TAB 3 — PROFILE: the user's profile & earnings dashboard           */
+/* ------------------------------------------------------------------ */
+
+function ProfileTab({
+  profileId,
+  myName,
+  tier,
+  stations,
+  jobs,
+  rateFor,
+  onRecord,
+}: {
+  profileId: string | null
+  myName: string
+  tier: Grade | null
+  stations: Station[]
+  jobs: Job[]
+  rateFor: (jobId: string) => number
+  onRecord: () => void
+}) {
+  const [entries, setEntries] = useState<ProductionEntry[]>([])
+
+  useEffect(() => {
+    if (!profileId) return
+    const from = new Date()
+    from.setDate(from.getDate() - 40) // covers this month + this week
+    supabase
+      .from('production_entries')
+      .select('*')
+      .eq('user_id', profileId)
+      .gte('work_date', dayISO(from))
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setEntries(data ?? []))
+  }, [profileId])
+
+  const amountOf = (e: ProductionEntry) => rateFor(e.job_id) * e.quantity
+  const monthStart = todayISO().slice(0, 8) + '01'
+  const monthEntries = entries.filter(
+    (e) => e.work_date >= monthStart && e.approval_status !== 'rejected',
+  )
+  const total = monthEntries.reduce((s, e) => s + amountOf(e), 0)
+  const days = new Set(monthEntries.map((e) => e.work_date)).size
+  const avg = days > 0 ? total / days : 0
+  const needsFix = entries.filter((e) => e.approval_status === 'rejected').length
+
+  // This week's daily quantity (Mon–Sun).
+  const week: { label: string; iso: string; qty: number }[] = []
+  const today = new Date()
+  const monday = new Date(today)
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7))
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday)
+    d.setDate(monday.getDate() + i)
+    week.push({
+      label: d.toLocaleDateString(undefined, { weekday: 'short' }),
+      iso: dayISO(d),
+      qty: 0,
+    })
+  }
+  for (const e of entries) {
+    const slot = week.find((w) => w.iso === e.work_date)
+    if (slot) slot.qty += e.quantity
+  }
+  const maxQty = Math.max(1, ...week.map((w) => w.qty))
+  const bestIso = week.reduce((a, b) => (b.qty > a.qty ? b : a), week[0])?.iso
+
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
+  const initials = myName.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+        <div className="mob-avatar">{tierInitial(tier)}</div>
+      </div>
+
+      <div className="mob-body">
+        <div style={{ padding: '0 0.2rem' }}>
+          <div className="mob-role">{myName}</div>
+          <div className="mob-sub">{tier?.name ?? '—'}</div>
+        </div>
+
+        {/* This month */}
+        <div className="mob-card mob-highlight">
+          <div className="mob-field-label" style={{ color: '#aeb8c4' }}>This month so far</div>
+          <div className="mob-big">{RM(total)}</div>
+          <div className="mob-sub">{monthEntries.length} records · pending amounts included</div>
+        </div>
+
+        <div className="mob-grid2">
+          <div className="mob-card">
+            <div className="mob-field-label">Days worked</div>
+            <div className="mob-stat">{days}</div>
+          </div>
+          <div className="mob-card">
+            <div className="mob-field-label">Avg / day</div>
+            <div className="mob-stat">{RM(avg)}</div>
+          </div>
+        </div>
+
+        {needsFix > 0 && (
+          <button className="mob-alert" onClick={onRecord}>
+            ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
+          </button>
+        )}
+
+        <button className="mob-btn" onClick={onRecord}>✎ Enter today's work record</button>
+
+        {/* Weekly productivity */}
+        <div className="mob-card">
+          <div className="mob-title">Daily quantity — this week</div>
+          <div className="mob-bars">
+            {week.map((w) => (
+              <div className="mob-barrow" key={w.iso}>
+                <span className="lbl">{w.label}</span>
+                <span className="mob-bartrack">
+                  <div
+                    className={w.iso === bestIso && w.qty > 0 ? 'best' : ''}
+                    style={{ width: `${(w.qty / maxQty) * 100}%` }}
+                  />
+                </span>
+                <span className="val">{w.qty > 0 ? w.qty : '·'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Recent records */}
+        <div className="mob-card">
+          <div className="mob-title">Recent records</div>
+          {entries.length === 0 && <div className="mob-sub">No records yet.</div>}
+          {entries.slice(0, 5).map((e) => (
+            <div className="mob-entry static" key={e.id}>
+              <span className="mob-entry-main">
+                <span className="mob-recent-avatar">{initials}</span>
+                <span>
+                  <span className="mob-entry-name">{jobName(e.job_id)}</span>
+                  <span className="mob-station-meta" style={{ display: 'block' }}>
+                    {stationName(e.station_id)} · {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                  </span>
+                </span>
+              </span>
+              <span className="mob-entry-side">
+                <span className="mob-entry-amt">{amountOf(e).toFixed(2)}</span>
+                {statusChip(e.approval_status)}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
     </>
