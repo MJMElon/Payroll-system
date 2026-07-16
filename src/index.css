@@ -495,18 +495,27 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   appearance: none; background: none; border: none; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   font-size: 0.6rem; font-weight: 700; color: var(--muted); width: 86px;
+  padding: 0.35rem 0 0.3rem; border-radius: 12px;
+  transition: color 0.15s, background 0.15s;
 }
-.mob-tab.active { color: var(--accent-strong); }
+/* Current page lights up gold — same accent as the done stamps. */
+.mob-tab.active {
+  color: #a16207;
+  background: linear-gradient(180deg, #fdf4e3, #fbeccb);
+}
 .mob-tab-main {
   appearance: none; border: 4px solid #f1f5f3; cursor: pointer;
   width: 58px; height: 58px; border-radius: 50%; margin-top: -30px;
   background: linear-gradient(180deg, #566270, #333c47); color: #fff;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 8px 18px rgba(35, 45, 58, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 .mob-tab-main.active {
-  background: linear-gradient(180deg, #6b7787, #454f5c);
-  box-shadow: 0 0 0 2px var(--accent), 0 8px 18px rgba(35, 45, 58, 0.35);
+  background: linear-gradient(180deg, #fde68a 5%, #f5b93f 55%, #d98f06);
+  color: #6b4703;
+  box-shadow: 0 0 0 2px #eab308, 0 8px 18px rgba(150, 100, 10, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 /* Record form fields */
