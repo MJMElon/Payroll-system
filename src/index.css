@@ -615,10 +615,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-role { font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif; }
 .mob-sub { color: var(--muted); font-size: 0.75rem; }
-.mob-avatar {
-  width: 34px; height: 34px; border-radius: 50%;
+/* Top-bar tier badge — the user's tag spelled out in full. */
+.mob-tier {
   background: linear-gradient(135deg, #566270, #8d959f); color: #fff;
-  display: flex; align-items: center; justify-content: center; font-weight: 700;
+  border-radius: 999px; padding: 0.3rem 0.7rem;
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.02em;
+  max-width: 42%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mob-body { flex: 1; overflow-y: auto; padding: 0 0.9rem 0.9rem; display: flex; flex-direction: column; gap: 0.7rem; }
 .mob-card {
@@ -705,6 +707,22 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   color: #0369a1;
   box-shadow: inset 0 0 0 3px rgba(3, 105, 161, 0.22), 0 0 10px rgba(125, 211, 252, 0.8);
 }
+/* Overflow marker when the hour beats its target: a smaller "+N" stamp. */
+.stamp.extra {
+  width: 36px; height: 42px; align-self: center;
+  background: rgba(253, 230, 138, 0.18); color: #fde68a;
+  font-size: 0.85rem; transform: rotate(8deg);
+}
+.stamp.extra.reward { background: rgba(125, 211, 252, 0.18); color: #bae6fd; }
+
+/* Hour-zone headers inside the day's record list */
+.mob-hour-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.72rem; font-weight: 700; color: var(--muted);
+  letter-spacing: 0.04em; padding: 0.45rem 0 0.15rem;
+  border-top: 1px solid var(--border); margin-top: 0.25rem;
+}
+.mob-daynav + div > .mob-hour-head { border-top: none; margin-top: 0; padding-top: 0.15rem; }
 
 .mob-nav {
   display: flex; justify-content: space-around; align-items: center;
