@@ -46,6 +46,7 @@ async function compressImage(file: File): Promise<Blob> {
 export default function DemoMobile() {
   const { profile } = useAuth()
   const [canEntry, setCanEntry] = useState(true)
+  const [tierName, setTierName] = useState<string | null>(null)
   const [stations, setStations] = useState<Station[]>([])
   const [station, setStation] = useState<Station | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -62,16 +63,26 @@ export default function DemoMobile() {
   }, [])
 
   // Only tags with the data-entry capability may add records (admins always).
+  // The same grade row also gives the tier name shown in the top bar.
   useEffect(() => {
     async function check() {
-      if (profile?.role === 'admin' || profile?.role === 'manager') return setCanEntry(true)
-      if (!profile?.grade_id) return setCanEntry(false)
+      if (!profile) return
+      const isBoss = profile.role === 'admin' || profile.role === 'manager'
+      if (isBoss) setCanEntry(true)
+      if (!profile.grade_id) {
+        if (!isBoss) setCanEntry(false)
+        setTierName(isBoss ? profile.role[0].toUpperCase() + profile.role.slice(1) : null)
+        return
+      }
       const { data } = await supabase
         .from('grades')
-        .select('capabilities')
+        .select('name, capabilities')
         .eq('id', profile.grade_id)
         .maybeSingle()
-      setCanEntry(((data?.capabilities as string[] | undefined) ?? []).includes('data-entry'))
+      setTierName(data?.name ?? null)
+      if (!isBoss) {
+        setCanEntry(((data?.capabilities as string[] | undefined) ?? []).includes('data-entry'))
+      }
     }
     check()
   }, [profile])
@@ -100,9 +111,9 @@ export default function DemoMobile() {
             {loading ? (
               <div className="mob-body"><p className="muted small">Loading…</p></div>
             ) : station ? (
-              <StationScreen station={station} canEntry={canEntry} onBack={() => setStation(null)} onError={setError} />
+              <StationScreen station={station} canEntry={canEntry} tier={tierName} onBack={() => setStation(null)} onError={setError} />
             ) : (
-              <StationPicker stations={stations} onPick={setStation} />
+              <StationPicker stations={stations} tier={tierName} onPick={setStation} />
             )}
           </div>
         </div>
@@ -118,18 +129,25 @@ export default function DemoMobile() {
 /* Landing: choose your station                                       */
 /* ------------------------------------------------------------------ */
 
+// Top-bar badge: the signed-in user's tier (tag) spelled out in full.
+function TierBadge({ tier }: { tier: string | null }) {
+  return <span className="mob-tier">{tier ?? '—'}</span>
+}
+
 function StationPicker({
   stations,
+  tier,
   onPick,
 }: {
   stations: Station[]
+  tier: string | null
   onPick: (s: Station) => void
 }) {
   return (
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <div className="mob-avatar">A</div>
+        <TierBadge tier={tier} />
       </div>
       <div className="mob-body">
         <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Stations</div>
@@ -199,11 +217,13 @@ function RecordRow({ record, url }: { record: PhotoRecord; url: string | null })
 function StationScreen({
   station,
   canEntry,
+  tier,
   onBack,
   onError,
 }: {
   station: Station
   canEntry: boolean
+  tier: string | null
   onBack: () => void
   onError: (m: string | null) => void
 }) {
@@ -300,11 +320,10 @@ function StationScreen({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Stations</button>
         <span className="mob-brand">MJM</span>
-        <div className="mob-avatar">A</div>
+        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>{station.name}</div>
         {/* 1 — status stamp card */}
         <div className="mob-card mob-highlight">
           {station.hourly_count ? (
