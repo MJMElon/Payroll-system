@@ -495,18 +495,27 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   appearance: none; background: none; border: none; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   font-size: 0.6rem; font-weight: 700; color: var(--muted); width: 86px;
+  padding: 0.35rem 0 0.3rem; border-radius: 12px;
+  transition: color 0.15s, background 0.15s;
 }
-.mob-tab.active { color: var(--accent-strong); }
+/* Current page lights up gold — same accent as the done stamps. */
+.mob-tab.active {
+  color: #a16207;
+  background: linear-gradient(180deg, #fdf4e3, #fbeccb);
+}
 .mob-tab-main {
   appearance: none; border: 4px solid #f1f5f3; cursor: pointer;
   width: 58px; height: 58px; border-radius: 50%; margin-top: -30px;
   background: linear-gradient(180deg, #566270, #333c47); color: #fff;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 8px 18px rgba(35, 45, 58, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 .mob-tab-main.active {
-  background: linear-gradient(180deg, #6b7787, #454f5c);
-  box-shadow: 0 0 0 2px var(--accent), 0 8px 18px rgba(35, 45, 58, 0.35);
+  background: linear-gradient(180deg, #fde68a 5%, #f5b93f 55%, #d98f06);
+  color: #6b4703;
+  box-shadow: 0 0 0 2px #eab308, 0 8px 18px rgba(150, 100, 10, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 /* Record form fields */
@@ -632,10 +641,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-role { font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif; }
 .mob-sub { color: var(--muted); font-size: 0.75rem; }
-.mob-avatar {
-  width: 34px; height: 34px; border-radius: 50%;
+/* Top-bar tier badge — the user's tag spelled out in full. */
+.mob-tier {
   background: linear-gradient(135deg, #566270, #8d959f); color: #fff;
-  display: flex; align-items: center; justify-content: center; font-weight: 700;
+  border-radius: 999px; padding: 0.3rem 0.7rem;
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.02em;
+  max-width: 42%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mob-body { flex: 1; overflow-y: auto; padding: 0 0.9rem 0.9rem; display: flex; flex-direction: column; gap: 0.7rem; }
 .mob-card {
@@ -722,6 +733,22 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   color: #0369a1;
   box-shadow: inset 0 0 0 3px rgba(3, 105, 161, 0.22), 0 0 10px rgba(125, 211, 252, 0.8);
 }
+/* Overflow marker when the hour beats its target: a smaller "+N" stamp. */
+.stamp.extra {
+  width: 36px; height: 42px; align-self: center;
+  background: rgba(253, 230, 138, 0.18); color: #fde68a;
+  font-size: 0.85rem; transform: rotate(8deg);
+}
+.stamp.extra.reward { background: rgba(125, 211, 252, 0.18); color: #bae6fd; }
+
+/* Hour-zone headers inside the day's record list */
+.mob-hour-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.72rem; font-weight: 700; color: var(--muted);
+  letter-spacing: 0.04em; padding: 0.45rem 0 0.15rem;
+  border-top: 1px solid var(--border); margin-top: 0.25rem;
+}
+.mob-daynav + div > .mob-hour-head { border-top: none; margin-top: 0; padding-top: 0.15rem; }
 
 .mob-nav {
   display: flex; justify-content: space-around; align-items: center;
