@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Link, Outlet } from 'react-router-dom'
+import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 
 export default function Layout() {
   const { profile, session, signOut } = useAuth()
+  const { pathname } = useLocation()
+  // The pivoted Piece Rate tables need more breathing room than the
+  // standard page width gives every other page.
+  const isWide = pathname.startsWith('/piece-rate')
   const role = profile?.role
   // Settings is for admins/managers, plus anyone at least one tier above the
   // bottom (they confirm new signups there).
@@ -50,7 +54,7 @@ export default function Layout() {
           </button>
         </div>
       </header>
-      <main className="content">
+      <main className={`content ${isWide ? 'content-wide' : ''}`}>
         <Outlet />
       </main>
     </div>
