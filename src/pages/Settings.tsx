@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -259,6 +259,17 @@ function StationMultiSelect({
   onChange: (ids: string[]) => void
 }) {
   const [open, setOpen] = useState(false)
+  const boxRef = useRef<HTMLDivElement>(null)
+
+  // Close on a click outside the panel (moving the mouse out keeps it open).
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
   const label =
     value.length === 0
       ? 'All stations'
@@ -271,12 +282,12 @@ function StationMultiSelect({
   }
 
   return (
-    <div className="multi-select">
+    <div className="multi-select" ref={boxRef}>
       <button type="button" className="btn ghost multi-toggle" onClick={() => setOpen((v) => !v)}>
         {label} ▾
       </button>
       {open && (
-        <div className="multi-panel" onMouseLeave={() => setOpen(false)}>
+        <div className="multi-panel">
           <label className="checkbox small" style={{ margin: 0 }}>
             <input
               type="checkbox"
