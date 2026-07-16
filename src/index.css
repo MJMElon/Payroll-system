@@ -182,13 +182,20 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
   border-right: 1px solid var(--border); padding-right: 1rem;
 }
 .sidebar-link {
+  display: flex; align-items: center; gap: 0.6rem;
   appearance: none; background: none; border: none; cursor: pointer;
   text-align: left; padding: 0.6rem 0.7rem; border-radius: 10px;
   font-size: 0.92rem; color: var(--muted);
 }
+.sidebar-link svg { flex-shrink: 0; }
+.sidebar-link .count-badge.static { margin-left: auto; }
 .sidebar-link:hover { color: var(--text); background: var(--accent-soft); }
 .sidebar-link.active { color: var(--accent-strong); background: var(--accent-soft); font-weight: 600; }
 .sidebar-content { flex: 1; min-width: 0; }
+
+/* Wide pivoted tables (Piece Rate Master / History) scroll instead of
+   squeezing columns or overflowing the page. */
+.table-scroll { overflow-x: auto; }
 
 @media (max-width: 720px) {
   .sidebar-layout { flex-direction: column; }
