@@ -1,19 +1,20 @@
 // ---------------------------------------------------------------------------
 // DEMO MOBILE VIEW — one mobile app for every station (will move to its own
-// repo later). Landing = station selection; tapping a station opens its
-// record-taking page: a stamp-card status block (photos this hour vs the
-// station's hourly target, minutes left), an Add record camera button, and a
-// day-by-day list of photo records. Photos upload to the 'records' storage
-// bucket; rows land in photo_records.
+// repo later). A tier rail on the left lists every tier tag straight from
+// the database (new tiers appear, removed ones disappear); picking one
+// previews the phone UI AS that tier, so each tier's version can be
+// designed separately. Landing = station selection; tapping a station opens
+// its record-taking page: a stamp-card status block, an Add record camera
+// button, and a day-by-day list of photo records. Photos upload to the
+// 'records' storage bucket; rows land in photo_records.
 // ---------------------------------------------------------------------------
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
-import { supabase, type PhotoRecord, type Station } from '../lib/supabase'
+import { supabase, type Grade, type PhotoRecord, type Station } from '../lib/supabase'
 
 export default function DemoMobile() {
-  const { profile } = useAuth()
-  const [canEntry, setCanEntry] = useState(true)
+  const [grades, setGrades] = useState<Grade[]>([])
+  const [tier, setTier] = useState<Grade | null>(null)
   const [stations, setStations] = useState<Station[]>([])
   const [station, setStation] = useState<Station | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -21,28 +22,23 @@ export default function DemoMobile() {
 
   useEffect(() => {
     async function load() {
-      const { data, error } = await supabase.from('stations').select('*').order('sort_order')
-      if (error) setError(error.message)
-      setStations(data ?? [])
+      const [g, s] = await Promise.all([
+        supabase.from('grades').select('*').order('sort_order'),
+        supabase.from('stations').select('*').order('sort_order'),
+      ])
+      const err = g.error || s.error
+      if (err) setError(err.message)
+      setGrades(g.data ?? [])
+      setStations(s.data ?? [])
+      if (g.data && g.data.length > 0) setTier((prev) => prev ?? g.data[0])
       setLoading(false)
     }
     load()
   }, [])
 
-  // Only tags with the data-entry capability may add records (admins always).
-  useEffect(() => {
-    async function check() {
-      if (profile?.role === 'admin' || profile?.role === 'manager') return setCanEntry(true)
-      if (!profile?.grade_id) return setCanEntry(false)
-      const { data } = await supabase
-        .from('grades')
-        .select('capabilities')
-        .eq('id', profile.grade_id)
-        .maybeSingle()
-      setCanEntry(((data?.capabilities as string[] | undefined) ?? []).includes('data-entry'))
-    }
-    check()
-  }, [profile])
+  // The preview obeys the SELECTED tier's capabilities — only tiers with
+  // the data-entry capability get the camera button.
+  const canEntry = (tier?.capabilities ?? []).includes('data-entry')
 
   return (
     <div className="stack">
@@ -50,36 +46,77 @@ export default function DemoMobile() {
         <Link to="/" className="small muted backlink">← Back to main page</Link>
         <h1>Demo Mobile View</h1>
         <p className="muted">
-          One app for all stations — pick a station, collect stamps, snap records.
+          Pick a tier on the left to preview that tier's version of the app.
           Station requirements are preset in Settings → Tags management.
         </p>
       </div>
 
       {error && <div className="error">{error}</div>}
 
-      <div className="phone-wrap">
-        <div className="phone">
-          <div className="phone-screen">
-            <div className="mob-status">
-              <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              <span>▮▮▮</span>
-            </div>
-
-            {loading ? (
-              <div className="mob-body"><p className="muted small">Loading…</p></div>
-            ) : station ? (
-              <StationScreen station={station} canEntry={canEntry} onBack={() => setStation(null)} onError={setError} />
-            ) : (
-              <StationPicker stations={stations} onPick={setStation} />
+      <div className="demo-layout">
+        {/* Tier rail — mirrors the tier tags in Tags management. */}
+        <div className="card tier-rail">
+          <h3>Tier version</h3>
+          <p className="muted small">Loaded from Tags management — new tiers show up here automatically.</p>
+          <div className="tag-list">
+            {grades.map((g) => (
+              <button
+                key={g.id}
+                className={`tag-row ${tier?.id === g.id ? 'active' : ''}`}
+                onClick={() => setTier(g)}
+              >
+                <span className={`tag-dot dot-${g.color}`} />
+                <span>{g.sort_order}. {g.name}</span>
+              </button>
+            ))}
+            {!loading && grades.length === 0 && (
+              <p className="muted small">No tier tags yet — create them in Settings.</p>
             )}
           </div>
         </div>
-        <p className="muted small">
-          Live demo — photos really upload. On a phone the camera opens directly.
-        </p>
+
+        <div className="phone-wrap">
+          <div className="phone">
+            <div className="phone-screen">
+              <div className="mob-status">
+                <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span>▮▮▮</span>
+              </div>
+
+              {tier && (
+                <div className="mob-tier-ribbon">
+                  <span className={`tag-dot dot-${tier.color}`} />
+                  <span>{tier.name} view</span>
+                </div>
+              )}
+
+              {loading ? (
+                <div className="mob-body"><p className="muted small">Loading…</p></div>
+              ) : station ? (
+                <StationScreen
+                  station={station}
+                  tier={tier}
+                  canEntry={canEntry}
+                  onBack={() => setStation(null)}
+                  onError={setError}
+                />
+              ) : (
+                <StationPicker stations={stations} tier={tier} onPick={setStation} />
+              )}
+            </div>
+          </div>
+          <p className="muted small">
+            Live demo — photos really upload. On a phone the camera opens directly.
+          </p>
+        </div>
       </div>
     </div>
   )
+}
+
+/** Avatar initial for the tier being previewed. */
+function tierInitial(tier: Grade | null) {
+  return (tier?.name ?? 'A').trim().charAt(0).toUpperCase() || 'A'
 }
 
 /* ------------------------------------------------------------------ */
@@ -88,16 +125,18 @@ export default function DemoMobile() {
 
 function StationPicker({
   stations,
+  tier,
   onPick,
 }: {
   stations: Station[]
+  tier: Grade | null
   onPick: (s: Station) => void
 }) {
   return (
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <div className="mob-avatar">A</div>
+        <div className="mob-avatar">{tierInitial(tier)}</div>
       </div>
       <div className="mob-body">
         <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Stations</div>
@@ -127,11 +166,13 @@ function dayISO(d: Date) {
 
 function StationScreen({
   station,
+  tier,
   canEntry,
   onBack,
   onError,
 }: {
   station: Station
+  tier: Grade | null
   canEntry: boolean
   onBack: () => void
   onError: (m: string | null) => void
@@ -229,7 +270,7 @@ function StationScreen({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Stations</button>
         <span className="mob-brand">MJM</span>
-        <div className="mob-avatar">A</div>
+        <div className="mob-avatar">{tierInitial(tier)}</div>
       </div>
 
       <div className="mob-body">
@@ -262,11 +303,13 @@ function StationScreen({
           )}
         </div>
 
-        {/* 2 — add record (camera), only for data-entry tags */}
+        {/* 2 — add record (camera), only for tiers with data-entry */}
         <div className="mob-card">
           <div className="mob-title">Add record</div>
           {!canEntry && (
-            <div className="mob-sub">Your tag has no data entry permission.</div>
+            <div className="mob-sub">
+              {tier ? `The ${tier.name} tier has no data entry permission.` : 'No data entry permission.'}
+            </div>
           )}
           <input
             ref={fileRef}

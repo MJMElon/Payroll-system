@@ -465,6 +465,25 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.85rem;
 }
 
+/* Demo mobile view — tier rail beside the phone frame */
+.demo-layout {
+  display: flex; align-items: flex-start; justify-content: center;
+  gap: 1.4rem; flex-wrap: wrap;
+}
+.tier-rail { flex: 0 1 240px; min-width: 200px; position: sticky; top: 1rem; }
+.tag-row.active {
+  background: var(--accent-soft); color: var(--accent-strong); font-weight: 700;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.mob-tier-ribbon {
+  display: flex; align-items: center; justify-content: center; gap: 0.45rem;
+  margin: 0 0.9rem 0.15rem; padding: 0.28rem 0.6rem;
+  background: rgba(76, 88, 102, 0.10); border-radius: 999px;
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted);
+}
+.mob-tier-ribbon .tag-dot { width: 10px; height: 10px; border-radius: 4px; }
+
 /* Demo mobile view — phone frame and mock screens */
 .phone-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.8rem; }
 .phone {
