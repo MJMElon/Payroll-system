@@ -2,9 +2,12 @@
 // PIECE RATE MODULE — fully self-contained in this one file.
 //
 // A piece-rate contract is the mix-and-match of STATION × TAG (grade) × WORK
-// DESCRIPTION, each with its own unit and rate. New contracts wait in the
-// "New piece rate approval" section until a user with the per-user approval
-// permission (Settings → User access) or an admin approves them. Everyone can
+// DESCRIPTION, each with its own unit and rate. Every new contract — admin
+// submissions included — waits in the Approvals queue until a 'verify'
+// capability holder checks it, then an 'approve' capability holder (or an
+// admin, who can do either step) signs off. The page is split into two
+// sidebar sections: Piece Rate Entry (create + track submissions of any
+// status) and Piece Rate Listing (approved contracts only). Everyone can
 // open the listing, but non-managers only see rates for their own grade tier
 // and below (tier = the tag's order in Settings). Station and Tag column
 // headers are themselves dropdown filters.
@@ -36,6 +39,7 @@ export default function PieceRate() {
   const isAdmin = profile?.role === 'admin'
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
   const [showApprovals, setShowApprovals] = useState(false)
+  const [tab, setTab] = useState<'entry' | 'listing'>('entry')
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -130,39 +134,66 @@ export default function PieceRate() {
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
-      <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-        {isApprover && (
-          <button className="btn ghost badge-holder" onClick={() => setShowApprovals(true)}>
-            Approvals
-            {openApprovals.length > 0 && (
-              <span className="count-badge">{openApprovals.length}</span>
-            )}
+      <div className="sidebar-layout">
+        <nav className="sidebar-nav">
+          <button
+            type="button"
+            className={`sidebar-link ${tab === 'entry' ? 'active' : ''}`}
+            onClick={() => setTab('entry')}
+          >
+            Piece Rate Entry
           </button>
-        )}
-        {canManage && (
-          <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
-        )}
+          <button
+            type="button"
+            className={`sidebar-link ${tab === 'listing' ? 'active' : ''}`}
+            onClick={() => setTab('listing')}
+          >
+            Piece Rate Listing
+          </button>
+        </nav>
+
+        <div className="sidebar-content stack">
+          {tab === 'entry' ? (
+            <>
+              <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+                {isApprover && (
+                  <button className="btn ghost badge-holder" onClick={() => setShowApprovals(true)}>
+                    Approvals
+                    {openApprovals.length > 0 && (
+                      <span className="count-badge">{openApprovals.length}</span>
+                    )}
+                  </button>
+                )}
+                {canManage && (
+                  <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
+                )}
+              </div>
+
+              {canManage || isApprover ? (
+                <SubmissionsList
+                  stations={stations}
+                  grades={grades}
+                  jobs={jobs}
+                  currentRate={currentRate}
+                />
+              ) : (
+                <p className="muted">You don't have access to submit or review piece rates.</p>
+              )}
+            </>
+          ) : (
+            <RatesList
+              stations={stations}
+              grades={grades}
+              jobs={jobs.filter((j) => j.approval_status === 'approved' && visibleTo(j))}
+              currentRate={currentRate}
+              canManage={canManage}
+              onEdit={(j) => setModal(j)}
+              onChanged={load}
+              onError={setError}
+            />
+          )}
+        </div>
       </div>
-
-      {(canManage || isApprover) && (
-        <SubmissionsList
-          stations={stations}
-          grades={grades}
-          jobs={jobs}
-          currentRate={currentRate}
-        />
-      )}
-
-      <RatesList
-        stations={stations}
-        grades={grades}
-        jobs={jobs.filter((j) => j.approval_status === 'approved' && visibleTo(j))}
-        currentRate={currentRate}
-        canManage={canManage}
-        onEdit={(j) => setModal(j)}
-        onChanged={load}
-        onError={setError}
-      />
 
       {showApprovals && (
         <ApprovalModal
@@ -185,7 +216,6 @@ export default function PieceRate() {
           grades={grades}
           job={modal === 'create' ? null : modal}
           currentRate={modal === 'create' ? null : currentRate.get(modal.id) ?? null}
-          autoApprove={isAdmin}
           onClose={() => setModal('closed')}
           onSaved={(submitted) => {
             setModal('closed')
@@ -541,7 +571,6 @@ function ContractModal({
   grades,
   job,
   currentRate,
-  autoApprove,
   onClose,
   onSaved,
 }: {
@@ -549,7 +578,6 @@ function ContractModal({
   grades: Grade[]
   job: Job | null
   currentRate: Rate | null
-  autoApprove: boolean
   onClose: () => void
   onSaved: (submittedForApproval: boolean) => void
 }) {
@@ -582,12 +610,11 @@ function ContractModal({
         const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
         if (error) throw new Error(error.message)
       } else {
-        // New contracts by approvers go live immediately; others wait.
-        const approval_status = autoApprove ? 'approved' : 'pending'
-        submitted = !autoApprove
+        // Every new contract waits for verify + approve, admins included.
+        submitted = true
         const { data, error } = await supabase
           .from('jobs')
-          .insert({ ...fields, approval_status })
+          .insert({ ...fields, approval_status: 'pending' })
           .select()
           .single()
         if (error) throw new Error(error.message)
@@ -620,7 +647,7 @@ function ContractModal({
         </div>
 
         {error && <div className="error">{error}</div>}
-        {!job && !autoApprove && (
+        {!job && (
           <p className="muted small">
             New piece rates are submitted for approval before they appear in the list.
           </p>
@@ -687,7 +714,7 @@ function ContractModal({
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : job ? 'Save changes' : autoApprove ? 'Create piece rate' : 'Submit for approval'}
+            {saving ? 'Saving…' : job ? 'Save changes' : 'Submit for approval'}
           </button>
         </div>
       </form>
