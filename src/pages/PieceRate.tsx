@@ -170,7 +170,7 @@ export default function PieceRate() {
             onClick={() => setTab('master')}
           >
             <IconMaster />
-            <span>Piece Rate Master</span>
+            <span>Piece Rate Masterlist</span>
           </button>
           <button
             type="button"
