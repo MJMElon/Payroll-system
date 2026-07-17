@@ -8,6 +8,7 @@ export function tagClass(color: string | undefined | null) {
 // Module keys a tag can be allowed to see on the web.
 export const MODULE_OPTIONS = [
   { key: 'station-status', label: 'Station status board' },
+  { key: 'daily-job-record', label: 'Daily Job Record' },
   { key: 'piece-rate', label: 'Piece Rate module' },
   { key: 'payroll', label: 'Payroll module' },
   { key: 'demo-mobile', label: 'Demo Mobile View' },
