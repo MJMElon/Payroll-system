@@ -71,6 +71,24 @@ export default function DemoMobile() {
   const [tab, setTab] = useState<Tab>('performance')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // photo_records.job_id only exists once the hourly piece-work migration has
+  // been run — probe once so the mobile view can fall back to the plain
+  // stamp card (no job/rate) instead of erroring when it hasn't been applied.
+  const [jobColumnReady, setJobColumnReady] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    supabase
+      .from('photo_records')
+      .select('job_id')
+      .limit(1)
+      .then(({ error: probeErr }) => {
+        if (!cancelled) setJobColumnReady(!probeErr)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     async function load() {
@@ -178,6 +196,7 @@ export default function DemoMobile() {
                     jobs={jobs}
                     rateFor={rateFor}
                     profileId={profile?.id ?? null}
+                    jobColumnReady={jobColumnReady}
                     onError={setError}
                   />
                 ) : tab === 'record' ? (
@@ -333,6 +352,7 @@ function PerformanceTab({
   jobs,
   rateFor,
   profileId,
+  jobColumnReady,
   onError,
 }: {
   stations: Station[]
@@ -342,6 +362,7 @@ function PerformanceTab({
   jobs: Job[]
   rateFor: (jobId: string) => number
   profileId: string | null
+  jobColumnReady: boolean
   onError: (m: string | null) => void
 }) {
   const [station, setStation] = useState<Station | null>(null)
@@ -370,6 +391,7 @@ function PerformanceTab({
         jobs={jobs}
         rateFor={rateFor}
         profileId={profileId}
+        jobColumnReady={jobColumnReady}
         canEntry={canEntry}
         onBack={() => setStation(null)}
         onError={onError}
@@ -458,6 +480,7 @@ function StationScreen({
   jobs,
   rateFor,
   profileId,
+  jobColumnReady,
   canEntry,
   onBack,
   onError,
@@ -468,6 +491,7 @@ function StationScreen({
   jobs: Job[]
   rateFor: (jobId: string) => number
   profileId: string | null
+  jobColumnReady: boolean
   canEntry: boolean
   onBack: () => void
   onError: (m: string | null) => void
@@ -480,8 +504,14 @@ function StationScreen({
   const [, forceTick] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // The piece-rate photo flow (job picker, 8/hour cap, auto-conversion to a
+  // production entry) only applies once the job_id column migration has run;
+  // until then this behaves as the plain compliance-only stamp card.
+  const hourlyPieceWork = station.hourly_count && jobColumnReady
   const isToday = dayISO(viewDate) === dayISO(new Date())
-  const target = Math.min(station.hourly_target ?? 6, HOURLY_PHOTO_CAP)
+  const target = hourlyPieceWork
+    ? Math.min(station.hourly_target ?? 6, HOURLY_PHOTO_CAP)
+    : station.hourly_target ?? 6
 
   // Jobs this tier may record at this station, priced at an APPROVED rate only.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
@@ -494,21 +524,25 @@ function StationScreen({
 
   // Auto-pick the job when there's only one option; otherwise wait for a choice.
   useEffect(() => {
+    if (!hourlyPieceWork) return
     setJobId((prev) =>
       approvedJobs.length === 1
         ? approvedJobs[0].id
         : approvedJobs.some((j) => j.id === prev) ? prev : '',
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [station.id, approvedJobs.length])
+  }, [station.id, hourlyPieceWork, approvedJobs.length])
 
   async function loadRecords() {
     const start = new Date(viewDate)
     start.setHours(0, 0, 0, 0)
     const end = new Date(start.getTime() + 24 * 3_600_000)
+    const cols: string = jobColumnReady
+      ? 'id, station_id, photo_path, taken_at, job_id, entry_id'
+      : 'id, station_id, photo_path, taken_at, entry_id'
     const { data, error } = await supabase
       .from('photo_records')
-      .select('id, station_id, photo_path, taken_at, job_id, entry_id')
+      .select<string, PhotoRecord>(cols)
       .eq('station_id', station.id)
       .gte('taken_at', start.toISOString())
       .lt('taken_at', end.toISOString())
@@ -516,7 +550,7 @@ function StationScreen({
     if (error) onError(error.message)
     else setRecords(data ?? [])
 
-    if (station.hourly_count) {
+    if (hourlyPieceWork) {
       const { data: entryRows, error: entryErr } = await supabase
         .from('production_entries')
         .select('*')
@@ -531,7 +565,7 @@ function StationScreen({
   // production entry (quantity = photo count, priced via rateFor at read
   // time from the approved piece rate) — never the still-running hour.
   async function autoSubmitElapsedHours() {
-    if (!station.hourly_count || !profileId) return
+    if (!hourlyPieceWork || !profileId) return
     const { data, error } = await supabase
       .from('photo_records')
       .select('id, taken_at, job_id')
@@ -587,7 +621,7 @@ function StationScreen({
     }, 30_000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [station.id, viewDate])
+  }, [station.id, viewDate, jobColumnReady])
 
   const now = new Date()
   const stampsThisHour = records.filter((r) => {
@@ -609,7 +643,7 @@ function StationScreen({
 
   async function handleFile(file: File | undefined) {
     if (!file) return
-    if (station.hourly_count && (!jobId || stampsThisHour >= HOURLY_PHOTO_CAP)) return
+    if (hourlyPieceWork && (!jobId || stampsThisHour >= HOURLY_PHOTO_CAP)) return
     setUploading(true)
     onError(null)
     try {
@@ -625,7 +659,7 @@ function StationScreen({
         .insert({
           station_id: station.id,
           photo_path: path,
-          ...(station.hourly_count ? { job_id: jobId } : {}),
+          ...(hourlyPieceWork ? { job_id: jobId } : {}),
         })
       if (insErr) throw new Error(insErr.message)
       setViewDate(new Date())
@@ -661,7 +695,13 @@ function StationScreen({
         <div className="mob-card mob-highlight">
           {station.hourly_count ? (
             <>
-              {canEntry && (
+              {!jobColumnReady && (
+                <div className="mob-sub">
+                  Piece-rate photo entries need a pending database update — ask your admin to
+                  apply it. Photos are recording normally for now.
+                </div>
+              )}
+              {hourlyPieceWork && canEntry && (
                 approvedJobs.length === 0 ? (
                   <div className="mob-sub">
                     {tier
@@ -711,7 +751,7 @@ function StationScreen({
                     : `${minPrev - stampsThisHour} more this hour to make ${hourLabel(now.getHours() + 1)} a bonus hour`}
                 </div>
               )}
-              {jobId && (
+              {hourlyPieceWork && jobId && (
                 <div className="mob-sub">
                   {stampsThisHour} photo{stampsThisHour === 1 ? '' : 's'} × {RM(rateFor(jobId))} ={' '}
                   <strong>{RM(rateFor(jobId) * stampsThisHour)}</strong> so far this hour · pending approval
@@ -742,15 +782,15 @@ function StationScreen({
             style={{ display: 'none' }}
             onChange={(e) => handleFile(e.target.files?.[0])}
           />
-          {canEntry && (!station.hourly_count || jobId) && (
+          {canEntry && (!hourlyPieceWork || jobId) && (
             <button
               className="mob-btn"
-              disabled={uploading || (station.hourly_count && stampsThisHour >= HOURLY_PHOTO_CAP)}
+              disabled={uploading || (hourlyPieceWork && stampsThisHour >= HOURLY_PHOTO_CAP)}
               onClick={() => fileRef.current?.click()}
             >
               {uploading
                 ? 'Uploading…'
-                : station.hourly_count && stampsThisHour >= HOURLY_PHOTO_CAP
+                : hourlyPieceWork && stampsThisHour >= HOURLY_PHOTO_CAP
                   ? `Max ${HOURLY_PHOTO_CAP} reached this hour`
                   : '📷 Take photo'}
             </button>
