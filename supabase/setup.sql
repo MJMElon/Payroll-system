@@ -274,6 +274,14 @@ drop policy if exists "admin manager delete photo records" on public.photo_recor
 create policy "admin manager delete photo records" on public.photo_records
   for delete using (public.my_role() in ('admin', 'manager'));
 
+-- Needed so an elapsed hour's photos can be linked to the production entry
+-- auto-created from their count (sets entry_id after the fact).
+drop policy if exists "owner links photo records to entry" on public.photo_records;
+create policy "owner links photo records to entry" on public.photo_records
+  for update using (
+    created_by = auth.uid() or public.my_role() in ('admin', 'manager')
+  );
+
 -- Storage bucket for the photos (public so thumbnails render directly).
 insert into storage.buckets (id, name, public)
 values ('records', 'records', true)
@@ -560,6 +568,11 @@ alter table public.production_entries add column if not exists verified_at times
 alter table public.production_entries add column if not exists approved_by text;
 alter table public.production_entries add column if not exists approved_at timestamptz;
 alter table public.photo_records add column if not exists entry_id uuid references public.production_entries (id) on delete set null;
+
+-- Hourly piece-work photos (mobile view): each photo is tagged with the job
+-- it's being counted against, so an elapsed hour's photo count can convert
+-- into a production entry priced at that job's approved rate.
+alter table public.photo_records add column if not exists job_id uuid references public.jobs (id);
 
 -- Tiers holding the verify/approve capability may update entries below them.
 drop policy if exists "verifiers update production" on public.production_entries;

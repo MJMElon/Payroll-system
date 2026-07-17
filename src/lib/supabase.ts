@@ -55,6 +55,7 @@ export interface PhotoRecord {
   photo_path: string | null
   taken_at: string
   entry_id?: string | null
+  job_id?: string | null
 }
 
 export interface Worker {
