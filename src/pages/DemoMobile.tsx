@@ -174,6 +174,10 @@ export default function DemoMobile() {
                     stations={scopedStations}
                     scoped={scopedStations.length !== stations.length}
                     tier={tier}
+                    grades={grades}
+                    jobs={jobs}
+                    rateFor={rateFor}
+                    profileId={profile?.id ?? null}
                     onError={setError}
                   />
                 ) : tab === 'record' ? (
@@ -273,14 +277,16 @@ function hourLabel(h: number) {
   return `${h12}${h24 >= 12 ? 'PM' : 'AM'}`
 }
 
-// Records arrive newest-first; keep that order and bucket them per hour zone.
-function groupByHour(records: PhotoRecord[]): Array<[number, PhotoRecord[]]> {
-  const groups: Array<[number, PhotoRecord[]]> = []
+// Records arrive newest-first; keep that order and bucket them per hour zone
+// (and per job, so switching jobs mid-hour never merges two jobs' counts).
+function groupByHour(records: PhotoRecord[]): Array<[number, string | null, PhotoRecord[]]> {
+  const groups: Array<[number, string | null, PhotoRecord[]]> = []
   for (const r of records) {
     const h = new Date(r.taken_at).getHours()
+    const jid = r.job_id ?? null
     const last = groups[groups.length - 1]
-    if (last && last[0] === h) last[1].push(r)
-    else groups.push([h, [r]])
+    if (last && last[0] === h && last[1] === jid) last[2].push(r)
+    else groups.push([h, jid, [r]])
   }
   return groups
 }
@@ -323,11 +329,19 @@ function PerformanceTab({
   stations,
   scoped,
   tier,
+  grades,
+  jobs,
+  rateFor,
+  profileId,
   onError,
 }: {
   stations: Station[]
   scoped: boolean
   tier: Grade | null
+  grades: Grade[]
+  jobs: Job[]
+  rateFor: (jobId: string) => number
+  profileId: string | null
   onError: (m: string | null) => void
 }) {
   const [station, setStation] = useState<Station | null>(null)
@@ -352,6 +366,10 @@ function PerformanceTab({
       <StationScreen
         station={station}
         tier={tier}
+        grades={grades}
+        jobs={jobs}
+        rateFor={rateFor}
+        profileId={profileId}
         canEntry={canEntry}
         onBack={() => setStation(null)}
         onError={onError}
@@ -429,27 +447,60 @@ function PerformanceTab({
   )
 }
 
+// Hard cap on hourly piece-work photos — a station's hourly_target is a
+// visual goal and may be lower, but no more than this converts to pay.
+const HOURLY_PHOTO_CAP = 8
+
 function StationScreen({
   station,
   tier,
+  grades,
+  jobs,
+  rateFor,
+  profileId,
   canEntry,
   onBack,
   onError,
 }: {
   station: Station
   tier: Grade | null
+  grades: Grade[]
+  jobs: Job[]
+  rateFor: (jobId: string) => number
+  profileId: string | null
   canEntry: boolean
   onBack: () => void
   onError: (m: string | null) => void
 }) {
   const [viewDate, setViewDate] = useState(() => new Date())
   const [records, setRecords] = useState<PhotoRecord[]>([])
+  const [stationEntries, setStationEntries] = useState<ProductionEntry[]>([])
   const [uploading, setUploading] = useState(false)
+  const [jobId, setJobId] = useState('')
   const [, forceTick] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const isToday = dayISO(viewDate) === dayISO(new Date())
-  const target = station.hourly_target ?? 6
+  const target = Math.min(station.hourly_target ?? 6, HOURLY_PHOTO_CAP)
+
+  // Jobs this tier may record at this station, priced at an APPROVED rate only.
+  const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
+  const approvedJobs = jobs.filter(
+    (j) =>
+      j.station_id === station.id &&
+      j.approval_status === 'approved' &&
+      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  )
+
+  // Auto-pick the job when there's only one option; otherwise wait for a choice.
+  useEffect(() => {
+    setJobId((prev) =>
+      approvedJobs.length === 1
+        ? approvedJobs[0].id
+        : approvedJobs.some((j) => j.id === prev) ? prev : '',
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [station.id, approvedJobs.length])
 
   async function loadRecords() {
     const start = new Date(viewDate)
@@ -457,19 +508,81 @@ function StationScreen({
     const end = new Date(start.getTime() + 24 * 3_600_000)
     const { data, error } = await supabase
       .from('photo_records')
-      .select('id, station_id, photo_path, taken_at')
+      .select('id, station_id, photo_path, taken_at, job_id, entry_id')
       .eq('station_id', station.id)
       .gte('taken_at', start.toISOString())
       .lt('taken_at', end.toISOString())
       .order('taken_at', { ascending: false })
     if (error) onError(error.message)
     else setRecords(data ?? [])
+
+    if (station.hourly_count) {
+      const { data: entryRows, error: entryErr } = await supabase
+        .from('production_entries')
+        .select('*')
+        .eq('station_id', station.id)
+        .eq('work_date', dayISO(viewDate))
+      if (entryErr) onError(entryErr.message)
+      else setStationEntries(entryRows ?? [])
+    }
+  }
+
+  // Once an hour has fully elapsed, its photo count converts into a pending
+  // production entry (quantity = photo count, priced via rateFor at read
+  // time from the approved piece rate) — never the still-running hour.
+  async function autoSubmitElapsedHours() {
+    if (!station.hourly_count || !profileId) return
+    const { data, error } = await supabase
+      .from('photo_records')
+      .select('id, taken_at, job_id')
+      .eq('station_id', station.id)
+      .eq('created_by', profileId)
+      .is('entry_id', null)
+      .not('job_id', 'is', null)
+      .order('taken_at', { ascending: true })
+    if (error || !data || data.length === 0) return
+
+    const currentHourStart = new Date()
+    currentHourStart.setMinutes(0, 0, 0)
+
+    const groups = new Map<string, { jobId: string; workDate: string; ids: string[] }>()
+    for (const r of data) {
+      const bucketStart = new Date(r.taken_at)
+      bucketStart.setMinutes(0, 0, 0)
+      if (bucketStart >= currentHourStart || !r.job_id) continue // still live — leave it
+      const key = `${r.job_id}-${bucketStart.toISOString()}`
+      const g = groups.get(key)
+      if (g) g.ids.push(r.id)
+      else groups.set(key, { jobId: r.job_id, workDate: dayISO(bucketStart), ids: [r.id] })
+    }
+    if (groups.size === 0) return
+
+    for (const { jobId: jid, workDate, ids } of groups.values()) {
+      const { data: entry, error: insErr } = await supabase
+        .from('production_entries')
+        .insert({
+          work_date: workDate,
+          station_id: station.id,
+          job_id: jid,
+          user_id: profileId,
+          created_by: profileId,
+          quantity: ids.length,
+          approval_status: 'pending',
+        })
+        .select()
+        .single()
+      if (insErr || !entry) continue
+      await supabase.from('photo_records').update({ entry_id: entry.id }).in('id', ids)
+    }
+    await loadRecords()
   }
 
   useEffect(() => {
     loadRecords()
+    autoSubmitElapsedHours()
     const t = setInterval(() => {
       forceTick((x) => x + 1) // refresh the minutes-left countdown
+      autoSubmitElapsedHours()
       if (dayISO(viewDate) === dayISO(new Date())) loadRecords()
     }, 30_000)
     return () => clearInterval(t)
@@ -496,6 +609,7 @@ function StationScreen({
 
   async function handleFile(file: File | undefined) {
     if (!file) return
+    if (station.hourly_count && (!jobId || stampsThisHour >= HOURLY_PHOTO_CAP)) return
     setUploading(true)
     onError(null)
     try {
@@ -508,7 +622,11 @@ function StationScreen({
       if (upErr) throw new Error(upErr.message)
       const { error: insErr } = await supabase
         .from('photo_records')
-        .insert({ station_id: station.id, photo_path: path })
+        .insert({
+          station_id: station.id,
+          photo_path: path,
+          ...(station.hourly_count ? { job_id: jobId } : {}),
+        })
       if (insErr) throw new Error(insErr.message)
       setViewDate(new Date())
       await loadRecords()
@@ -543,6 +661,29 @@ function StationScreen({
         <div className="mob-card mob-highlight">
           {station.hourly_count ? (
             <>
+              {canEntry && (
+                approvedJobs.length === 0 ? (
+                  <div className="mob-sub">
+                    {tier
+                      ? `No approved piece rate for the ${tier.name} tier at this station yet.`
+                      : 'No approved piece rate at this station yet.'}
+                  </div>
+                ) : approvedJobs.length === 1 ? (
+                  <div className="mob-field-label">
+                    Job: {approvedJobs[0].name} · {RM(rateFor(approvedJobs[0].id))}{approvedJobs[0].unit}
+                  </div>
+                ) : (
+                  <>
+                    <div className="mob-field-label">Job</div>
+                    <select className="mob-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
+                      <option value="">Choose job…</option>
+                      {approvedJobs.map((j) => (
+                        <option key={j.id} value={j.id}>{j.name} · {RM(rateFor(j.id))}{j.unit}</option>
+                      ))}
+                    </select>
+                  </>
+                )
+              )}
               <div className="mob-title mob-zone-title">{hourZone}</div>
               <div className="stamp-row">
                 {Array.from({ length: target }, (_, i) => (
@@ -570,6 +711,12 @@ function StationScreen({
                     : `${minPrev - stampsThisHour} more this hour to make ${hourLabel(now.getHours() + 1)} a bonus hour`}
                 </div>
               )}
+              {jobId && (
+                <div className="mob-sub">
+                  {stampsThisHour} photo{stampsThisHour === 1 ? '' : 's'} × {RM(rateFor(jobId))} ={' '}
+                  <strong>{RM(rateFor(jobId) * stampsThisHour)}</strong> so far this hour · pending approval
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -595,13 +742,17 @@ function StationScreen({
             style={{ display: 'none' }}
             onChange={(e) => handleFile(e.target.files?.[0])}
           />
-          {canEntry && (
+          {canEntry && (!station.hourly_count || jobId) && (
             <button
               className="mob-btn"
-              disabled={uploading}
+              disabled={uploading || (station.hourly_count && stampsThisHour >= HOURLY_PHOTO_CAP)}
               onClick={() => fileRef.current?.click()}
             >
-              {uploading ? 'Uploading…' : '📷 Take photo'}
+              {uploading
+                ? 'Uploading…'
+                : station.hourly_count && stampsThisHour >= HOURLY_PHOTO_CAP
+                  ? `Max ${HOURLY_PHOTO_CAP} reached this hour`
+                  : '📷 Take photo'}
             </button>
           )}
         </div>
@@ -619,19 +770,33 @@ function StationScreen({
           </div>
           {records.length === 0 && <div className="mob-sub">No records this day.</div>}
           {station.hourly_count ? (
-            groupByHour(records).map(([hour, rows]) => (
-              <div key={hour}>
-                <div className="mob-hour-head">
-                  <span>{hourLabel(hour)} – {hourLabel(hour + 1)}</span>
-                  <span className={`mob-chip ${rows.length >= target ? 'ok' : ''}`}>
-                    {rows.length >= target ? `${rows.length} of ${target} ✓` : `${rows.length} of ${target}`}
-                  </span>
+            groupByHour(records).map(([hour, jid, rows]) => {
+              const entryId = rows[0]?.entry_id
+              const entry = entryId ? stationEntries.find((e) => e.id === entryId) : undefined
+              const jobName = jid ? jobs.find((j) => j.id === jid)?.name : undefined
+              return (
+                <div key={`${hour}-${jid ?? 'x'}`}>
+                  <div className="mob-hour-head">
+                    <span>
+                      {hourLabel(hour)} – {hourLabel(hour + 1)}{jobName ? ` · ${jobName}` : ''}
+                    </span>
+                    {entry ? (
+                      <span className="mob-entry-side">
+                        <span className="mob-entry-amt">{RM(rateFor(entry.job_id) * entry.quantity)}</span>
+                        {statusChip(entry.approval_status)}
+                      </span>
+                    ) : (
+                      <span className={`mob-chip ${rows.length >= target ? 'ok' : ''}`}>
+                        {rows.length >= target ? `${rows.length} of ${target} ✓` : `${rows.length} of ${target}`}
+                      </span>
+                    )}
+                  </div>
+                  {rows.map((r) => (
+                    <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />
+                  ))}
                 </div>
-                {rows.map((r) => (
-                  <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />
-                ))}
-              </div>
-            ))
+              )
+            })
           ) : (
             records.map((r) => <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />)
           )}
