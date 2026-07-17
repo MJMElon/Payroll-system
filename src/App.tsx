@@ -3,6 +3,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import DailyJobRecord from './pages/DailyJobRecord'
 import StationDetail from './pages/StationDetail'
 import DemoMobile from './pages/DemoMobile'
 import Payroll from './pages/Payroll'
@@ -19,6 +20,7 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/daily-job-record" element={<DailyJobRecord />} />
           <Route path="/station/:stationId" element={<StationDetail />} />
           <Route path="/demo-mobile" element={<DemoMobile />} />
           <Route path="/piece-rate" element={<PieceRate />} />

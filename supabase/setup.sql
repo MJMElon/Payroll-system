@@ -333,6 +333,11 @@ update public.grades set modules = '{station-status,piece-rate,payroll,demo-mobi
   where name in ('Management', 'Manager', 'Engineer')
     and modules = '{station-status,piece-rate}';
 
+-- Daily Job Record: for the tags that actually record production entries.
+update public.grades set modules = array_append(modules, 'daily-job-record')
+  where name in ('Operator', 'Assistant Station Head', 'Station Head', 'General Worker')
+    and not ('daily-job-record' = any(modules));
+
 
 update public.workers set grade_id = null
   where grade_id in (select id from public.grades where name = 'Piece rate approval');
