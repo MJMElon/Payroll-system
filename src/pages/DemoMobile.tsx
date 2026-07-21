@@ -691,7 +691,7 @@ function StationScreen({
       </div>
 
       <div className="mob-body">
-        {!canEntry ? (
+        {tier?.name === 'Management' ? (
           <div className="mob-card">
             <div className="mob-sub">We can't work under {station.name}.</div>
           </div>
