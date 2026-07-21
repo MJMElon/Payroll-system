@@ -1731,6 +1731,8 @@ function ProfileTab({
   onRecord: () => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
+  const [pendingAmount, setPendingAmount] = useState(0)
+  const [pendingCount, setPendingCount] = useState(0)
 
   useEffect(() => {
     if (!profileId) return
@@ -1752,6 +1754,46 @@ function ProfileTab({
     const t = setInterval(load, 30_000)
     return () => clearInterval(t)
   }, [profileId])
+
+  // Live estimate for photos taken today that haven't converted into a
+  // production entry yet (the still-running hour, or one waiting on the
+  // next background pass) — grouped by job + hour, same tiered math as
+  // everywhere else, so the total isn't a surprise once it does convert.
+  useEffect(() => {
+    if (!profileId) return
+    function loadPending() {
+      const start = new Date()
+      start.setHours(0, 0, 0, 0)
+      supabase
+        .from('photo_records')
+        .select('id, job_id, taken_at')
+        .eq('created_by', profileId)
+        .is('entry_id', null)
+        .not('job_id', 'is', null)
+        .gte('taken_at', start.toISOString())
+        .then(({ data }) => {
+          const groups = new Map<string, { jobId: string; count: number }>()
+          for (const r of data ?? []) {
+            if (!r.job_id) continue
+            const key = `${r.job_id}::${new Date(r.taken_at).getHours()}`
+            const g = groups.get(key)
+            if (g) g.count += 1
+            else groups.set(key, { jobId: r.job_id, count: 1 })
+          }
+          let amt = 0
+          let cnt = 0
+          for (const { jobId, count } of groups.values()) {
+            amt += amountFor(jobId, count)
+            cnt += count
+          }
+          setPendingAmount(amt)
+          setPendingCount(cnt)
+        })
+    }
+    loadPending()
+    const t = setInterval(loadPending, 30_000)
+    return () => clearInterval(t)
+  }, [profileId, amountFor])
 
   const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
   const monthStart = todayISO().slice(0, 8) + '01'
@@ -1806,6 +1848,11 @@ function ProfileTab({
           <div className="mob-field-label" style={{ color: '#aeb8c4' }}>This month so far</div>
           <div className="mob-big">{RM(total)}</div>
           <div className="mob-sub">{monthEntries.length} records · pending amounts included</div>
+          {pendingCount > 0 && (
+            <div className="mob-sub">
+              + {RM(pendingAmount)} pending this hour ({pendingCount} photo{pendingCount === 1 ? '' : 's'} · not yet submitted)
+            </div>
+          )}
         </div>
 
         <div className="mob-grid2">
