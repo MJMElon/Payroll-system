@@ -198,8 +198,8 @@ function UserAccessTab() {
               <tr>
                 <th>Name</th>
                 <th>Email</th>
-                <th>Station tag</th>
                 <th>Tier tag</th>
+                <th>Station tag</th>
                 <th className="right">Confirm</th>
               </tr>
             </thead>
@@ -208,13 +208,6 @@ function UserAccessTab() {
                 <tr key={p.id}>
                   <td>{p.full_name ?? '—'} <span className="badge new">new</span></td>
                   <td className="muted small">{p.email}</td>
-                  <td>
-                    <StationMultiSelect
-                      stations={stations}
-                      value={p.station_ids ?? (p.station_id ? [p.station_id] : [])}
-                      onChange={(ids) => update(p, { station_ids: ids, station_id: ids[0] ?? null })}
-                    />
-                  </td>
                   <td>
                     <select
                       value={p.grade_id ?? ''}
@@ -225,6 +218,13 @@ function UserAccessTab() {
                         <option key={g.id} value={g.id}>{g.name}</option>
                       ))}
                     </select>
+                  </td>
+                  <td>
+                    <StationMultiSelect
+                      stations={stations}
+                      value={p.station_ids ?? (p.station_id ? [p.station_id] : [])}
+                      onChange={(ids) => update(p, { station_ids: ids, station_id: ids[0] ?? null })}
+                    />
                   </td>
                   <td className="right">
                     <button
@@ -561,12 +561,6 @@ function UserAccessModal({
         </div>
 
         <div className="tag-section">
-          <div className="tag-section-title">Station tag</div>
-          <StationMultiSelect stations={stations} value={stationIds} onChange={setStationIds} />
-          <p className="tag-section-hint">No station selected = sees all stations.</p>
-        </div>
-
-        <div className="tag-section">
           <div className="tag-section-title">Tier tag</div>
           <select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
             <option value="">—</option>
@@ -577,6 +571,12 @@ function UserAccessModal({
           <p className="tag-section-hint">
             What the tier can see and do is set in Settings → Tags management.
           </p>
+        </div>
+
+        <div className="tag-section">
+          <div className="tag-section-title">Station tag</div>
+          <StationMultiSelect stations={stations} value={stationIds} onChange={setStationIds} />
+          <p className="tag-section-hint">No station selected = sees all stations.</p>
         </div>
 
         <div className="tag-section">
