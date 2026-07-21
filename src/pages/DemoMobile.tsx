@@ -30,6 +30,35 @@ type Tab = 'performance' | 'record' | 'profile'
 
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
+// A tiered piece rate (e.g. cage tipping) pays Tier 1 for the first N units
+// done in an hour and Tier 2 for the rest — this is that threshold.
+const TIER1_UNIT_CAP = 4
+
+// "RM 3.20/cage" for a flat job, "RM 3.20 → 5.00/cage" for a tiered one.
+function rateLabelFor(
+  rateFor: (jobId: string) => number,
+  tier2RateFor: (jobId: string) => number | null,
+  jobId: string,
+) {
+  const tier2 = tier2RateFor(jobId)
+  return tier2 == null ? RM(rateFor(jobId)) : `${RM(rateFor(jobId))} → ${tier2.toFixed(2)}`
+}
+
+// "3 × RM3.20" for a flat job or a tiered one still within its first tier;
+// "4 × RM3.20 + 2 × RM5.00" once the count crosses into the second tier.
+function breakdownFor(
+  rateFor: (jobId: string) => number,
+  tier2RateFor: (jobId: string) => number | null,
+  jobId: string,
+  count: number,
+) {
+  const tier2 = tier2RateFor(jobId)
+  const rate = rateFor(jobId)
+  if (tier2 == null || count <= TIER1_UNIT_CAP) return `${count} × ${RM(rate)}`
+  const tier2Count = count - TIER1_UNIT_CAP
+  return `${TIER1_UNIT_CAP} × ${RM(rate)} + ${tier2Count} × ${RM(tier2)}`
+}
+
 // Status-bar clock that actually ticks (the page itself rarely re-renders).
 function StatusClock() {
   const [now, setNow] = useState(() => new Date())
@@ -111,8 +140,10 @@ export default function DemoMobile() {
     load()
   }, [])
 
-  // Latest rate in force per job (effective_from <= today).
-  const rateFor = useMemo(() => {
+  // Latest rate in force per job (effective_from <= today). A tiered rate
+  // (e.g. cage tipping) pays tier2Rate from the 5th unit onward, resetting
+  // every hour — amountFor is the one place that math happens.
+  const bestRate = useMemo(() => {
     const today = todayISO()
     const best = new Map<string, PieceRate>()
     for (const r of rates) {
@@ -120,8 +151,24 @@ export default function DemoMobile() {
       const cur = best.get(r.job_id)
       if (!cur || r.effective_from > cur.effective_from) best.set(r.job_id, r)
     }
-    return (jobId: string) => best.get(jobId)?.rate ?? 0
+    return best
   }, [rates])
+  const rateFor = useMemo(() => (jobId: string) => bestRate.get(jobId)?.rate ?? 0, [bestRate])
+  const tier2RateFor = useMemo(
+    () => (jobId: string) => bestRate.get(jobId)?.tier2_rate ?? null,
+    [bestRate],
+  )
+  const amountFor = useMemo(
+    () => (jobId: string, quantity: number) => {
+      const tier2 = tier2RateFor(jobId)
+      const rate = rateFor(jobId)
+      if (tier2 == null) return rate * quantity
+      const tier1Qty = Math.min(quantity, TIER1_UNIT_CAP)
+      const tier2Qty = Math.max(0, quantity - TIER1_UNIT_CAP)
+      return tier1Qty * rate + tier2Qty * tier2
+    },
+    [rateFor, tier2RateFor],
+  )
 
   // The preview obeys the SELECTED tier's capabilities — only tiers with
   // the data-entry capability may submit records. Tiers holding verify or
@@ -197,6 +244,8 @@ export default function DemoMobile() {
                     grades={grades}
                     jobs={jobs}
                     rateFor={rateFor}
+                    amountFor={amountFor}
+                    tier2RateFor={tier2RateFor}
                     profileId={profile?.id ?? null}
                     jobColumnReady={jobColumnReady}
                     onError={setError}
@@ -211,6 +260,8 @@ export default function DemoMobile() {
                     myStations={scopedStations}
                     jobs={jobs}
                     rateFor={rateFor}
+                    amountFor={amountFor}
+                    tier2RateFor={tier2RateFor}
                     canEntry={canEntry}
                     jobColumnReady={jobColumnReady}
                     onError={setError}
@@ -220,7 +271,7 @@ export default function DemoMobile() {
                     myName={profileName(profile)}
                     tier={tier}
                     stations={stations}
-                    rateFor={rateFor}
+                    amountFor={amountFor}
                     onError={setError}
                   />
                 ) : (
@@ -230,7 +281,7 @@ export default function DemoMobile() {
                     tier={tier}
                     stations={stations}
                     jobs={jobs}
-                    rateFor={rateFor}
+                    amountFor={amountFor}
                     onRecord={() => setTab('record')}
                   />
                 )}
@@ -355,6 +406,8 @@ function PerformanceTab({
   grades,
   jobs,
   rateFor,
+  amountFor,
+  tier2RateFor,
   profileId,
   jobColumnReady,
   onError,
@@ -365,6 +418,8 @@ function PerformanceTab({
   grades: Grade[]
   jobs: Job[]
   rateFor: (jobId: string) => number
+  amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
   profileId: string | null
   jobColumnReady: boolean
   onError: (m: string | null) => void
@@ -394,6 +449,8 @@ function PerformanceTab({
         grades={grades}
         jobs={jobs}
         rateFor={rateFor}
+        amountFor={amountFor}
+        tier2RateFor={tier2RateFor}
         profileId={profileId}
         jobColumnReady={jobColumnReady}
         canEntry={canEntry}
@@ -483,6 +540,8 @@ function StationScreen({
   grades,
   jobs,
   rateFor,
+  amountFor,
+  tier2RateFor,
   profileId,
   jobColumnReady,
   canEntry,
@@ -494,6 +553,8 @@ function StationScreen({
   grades: Grade[]
   jobs: Job[]
   rateFor: (jobId: string) => number
+  amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
   profileId: string | null
   jobColumnReady: boolean
   canEntry: boolean
@@ -520,6 +581,8 @@ function StationScreen({
             grades={grades}
             jobs={jobs}
             rateFor={rateFor}
+            amountFor={amountFor}
+            tier2RateFor={tier2RateFor}
             profileId={profileId}
             jobColumnReady={jobColumnReady}
             canEntry={canEntry}
@@ -540,6 +603,8 @@ function StationWorkPanel({
   grades,
   jobs,
   rateFor,
+  amountFor,
+  tier2RateFor,
   profileId,
   jobColumnReady,
   canEntry,
@@ -550,6 +615,8 @@ function StationWorkPanel({
   grades: Grade[]
   jobs: Job[]
   rateFor: (jobId: string) => number
+  amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
   profileId: string | null
   jobColumnReady: boolean
   canEntry: boolean
@@ -741,6 +808,9 @@ function StationWorkPanel({
   const photoUrl = (path: string | null) =>
     path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
 
+  const rateLabel = (jobId: string) => rateLabelFor(rateFor, tier2RateFor, jobId)
+  const hourBreakdown = (jobId: string, count: number) => breakdownFor(rateFor, tier2RateFor, jobId, count)
+
   return (
     <>
         {/* 1 — status stamp card */}
@@ -762,7 +832,7 @@ function StationWorkPanel({
                   </div>
                 ) : approvedJobs.length === 1 ? (
                   <div className="mob-field-label">
-                    Job: {approvedJobs[0].name} · {RM(rateFor(approvedJobs[0].id))}{approvedJobs[0].unit}
+                    Job: {approvedJobs[0].name} · {rateLabel(approvedJobs[0].id)}{approvedJobs[0].unit}
                   </div>
                 ) : (
                   <>
@@ -770,7 +840,7 @@ function StationWorkPanel({
                     <select className="mob-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
                       <option value="">Choose job…</option>
                       {approvedJobs.map((j) => (
-                        <option key={j.id} value={j.id}>{j.name} · {RM(rateFor(j.id))}{j.unit}</option>
+                        <option key={j.id} value={j.id}>{j.name} · {rateLabel(j.id)}{j.unit}</option>
                       ))}
                     </select>
                   </>
@@ -805,8 +875,8 @@ function StationWorkPanel({
               )}
               {hourlyPieceWork && jobId && (
                 <div className="mob-sub">
-                  {stampsThisHour} photo{stampsThisHour === 1 ? '' : 's'} × {RM(rateFor(jobId))} ={' '}
-                  <strong>{RM(rateFor(jobId) * stampsThisHour)}</strong> so far this hour · pending approval
+                  {hourBreakdown(jobId, stampsThisHour)} ={' '}
+                  <strong>{RM(amountFor(jobId, stampsThisHour))}</strong> so far this hour · pending approval
                 </div>
               )}
             </>
@@ -874,7 +944,7 @@ function StationWorkPanel({
                     </span>
                     {entry ? (
                       <span className="mob-entry-side">
-                        <span className="mob-entry-amt">{RM(rateFor(entry.job_id) * entry.quantity)}</span>
+                        <span className="mob-entry-amt">{RM(amountFor(entry.job_id, entry.quantity))}</span>
                         {statusChip(entry.approval_status)}
                       </span>
                     ) : (
@@ -910,6 +980,8 @@ function RecordTab({
   myStations,
   jobs,
   rateFor,
+  amountFor,
+  tier2RateFor,
   canEntry,
   jobColumnReady,
   onError,
@@ -922,6 +994,8 @@ function RecordTab({
   myStations: Station[]
   jobs: Job[]
   rateFor: (jobId: string) => number
+  amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
   canEntry: boolean
   jobColumnReady: boolean
   onError: (m: string | null) => void
@@ -962,7 +1036,8 @@ function RecordTab({
   )
   const job = jobs.find((j) => j.id === jobId)
   const rate = jobId ? rateFor(jobId) : 0
-  const amount = rate * (Number(qty) || 0)
+  const tier2Rate = jobId ? tier2RateFor(jobId) : null
+  const amount = jobId ? amountFor(jobId, Number(qty) || 0) : 0
 
   async function submit() {
     if (!profileId || !stationId || !jobId || !Number(qty)) return
@@ -1016,6 +1091,8 @@ function RecordTab({
         stations={stations}
         jobs={jobs}
         rateFor={rateFor}
+        amountFor={amountFor}
+        tier2RateFor={tier2RateFor}
         onBack={() => setDetail(null)}
       />
     )
@@ -1076,6 +1153,8 @@ function RecordTab({
                   grades={grades}
                   jobs={jobs}
                   rateFor={rateFor}
+                  amountFor={amountFor}
+                  tier2RateFor={tier2RateFor}
                   profileId={profileId}
                   jobColumnReady={jobColumnReady}
                   canEntry={canEntry}
@@ -1132,7 +1211,7 @@ function RecordTab({
               <option value="">{stationId ? 'Choose job…' : 'Pick a station first'}</option>
               {stationJobs.map((j) => (
                 <option key={j.id} value={j.id}>
-                  {j.name} · {RM(rateFor(j.id))}{j.unit}
+                  {j.name} · {rateLabelFor(rateFor, tier2RateFor, j.id)}{j.unit}
                 </option>
               ))}
             </select>
@@ -1150,7 +1229,11 @@ function RecordTab({
 
             {job && Number(qty) > 0 && (
               <div className="mob-breakrow total">
-                <span>{qty} × {RM(rate)}{job.unit}</span>
+                <span>
+                  {tier2Rate == null
+                    ? `${qty} × ${RM(rate)}${job.unit}`
+                    : breakdownFor(rateFor, tier2RateFor, jobId, Number(qty))}
+                </span>
                 <span>{RM(amount)}</span>
               </div>
             )}
@@ -1190,7 +1273,7 @@ function RecordTab({
                 </span>
               </span>
               <span className="mob-entry-side">
-                <span className="mob-entry-amt">{(rateFor(e.job_id) * e.quantity).toFixed(2)}</span>
+                <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
                 {statusChip(e.approval_status)}
               </span>
             </button>
@@ -1209,6 +1292,8 @@ function EntryDetail({
   stations,
   jobs,
   rateFor,
+  amountFor,
+  tier2RateFor,
   onBack,
 }: {
   entry: ProductionEntry
@@ -1217,6 +1302,8 @@ function EntryDetail({
   stations: Station[]
   jobs: Job[]
   rateFor: (jobId: string) => number
+  amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
   onBack: () => void
 }) {
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
@@ -1230,8 +1317,7 @@ function EntryDetail({
 
   const job = jobs.find((j) => j.id === entry.job_id)
   const station = stations.find((s) => s.id === entry.station_id)
-  const rate = rateFor(entry.job_id)
-  const total = rate * entry.quantity
+  const total = amountFor(entry.job_id, entry.quantity)
   const status = entry.approval_status ?? 'approved'
   const photoUrl = (path: string | null) =>
     path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
@@ -1275,7 +1361,7 @@ function EntryDetail({
             </div>
             <div>
               <div className="mob-field-label">Rate</div>
-              <div className="mob-param">{RM(rate)}{job?.unit ?? ''}</div>
+              <div className="mob-param">{rateLabelFor(rateFor, tier2RateFor, entry.job_id)}{job?.unit ?? ''}</div>
             </div>
           </div>
         </div>
@@ -1303,7 +1389,10 @@ function EntryDetail({
         <div className="mob-card">
           <div className="mob-title">Earnings breakdown</div>
           <div className="mob-breakrow">
-            <span>Base ({entry.quantity} × {RM(rate)}{job?.unit ?? ''})</span>
+            <span>
+              Base ({breakdownFor(rateFor, tier2RateFor, entry.job_id, entry.quantity)}
+              {job?.unit ?? ''})
+            </span>
             <span>{total.toFixed(2)}</span>
           </div>
           <div className="mob-breakrow total">
@@ -1360,13 +1449,13 @@ function ManagerProfileTab({
   myName,
   tier,
   stations,
-  rateFor,
+  amountFor,
   onError,
 }: {
   myName: string
   tier: Grade | null
   stations: Station[]
-  rateFor: (jobId: string) => number
+  amountFor: (jobId: string, quantity: number) => number
   onError: (m: string | null) => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
@@ -1388,7 +1477,7 @@ function ManagerProfileTab({
   }, [])
 
   const isApprover = effectiveCapabilities(tier).includes('approve')
-  const amountOf = (e: ProductionEntry) => rateFor(e.job_id) * e.quantity
+  const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
   const status = (e: ProductionEntry) => e.approval_status ?? 'approved'
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
 
@@ -1603,7 +1692,7 @@ function ProfileTab({
   tier,
   stations,
   jobs,
-  rateFor,
+  amountFor,
   onRecord,
 }: {
   profileId: string | null
@@ -1611,7 +1700,7 @@ function ProfileTab({
   tier: Grade | null
   stations: Station[]
   jobs: Job[]
-  rateFor: (jobId: string) => number
+  amountFor: (jobId: string, quantity: number) => number
   onRecord: () => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
@@ -1629,7 +1718,7 @@ function ProfileTab({
       .then(({ data }) => setEntries(data ?? []))
   }, [profileId])
 
-  const amountOf = (e: ProductionEntry) => rateFor(e.job_id) * e.quantity
+  const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
   const monthStart = todayISO().slice(0, 8) + '01'
   const monthEntries = entries.filter(
     (e) => e.work_date >= monthStart && e.approval_status !== 'rejected',

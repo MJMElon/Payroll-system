@@ -95,6 +95,10 @@ export interface PieceRate {
   job_id: string
   rate: number
   effective_from: string
+  // Tiered hourly rate (e.g. cage-tipping): tier1 = `rate`, applied to the
+  // first 4 units that hour; tier2_rate applies to the 5th unit onward,
+  // resetting every hour. Null/undefined means a flat rate — no tiering.
+  tier2_rate?: number | null
 }
 
 export interface ProductionEntry {

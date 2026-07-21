@@ -59,7 +59,7 @@ export default function PieceRate() {
         .order('name'),
       supabase
         .from('piece_rates')
-        .select('id, job_id, rate, effective_from')
+        .select('id, job_id, rate, effective_from, tier2_rate')
         .order('effective_from', { ascending: false }),
     ])
     const err = s.error || g.error || j.error || r.error
@@ -357,6 +357,21 @@ function addDays(dateStr: string, delta: number) {
   return d.toISOString().slice(0, 10)
 }
 
+/** A tiered rate shows both tiers stacked with a small tag; a flat rate
+ *  shows its single number, same as before. Used everywhere a rate cell
+ *  is rendered (Masterlist, Manage popout, History). */
+function RateCell({ rate }: { rate: Rate | undefined }) {
+  if (!rate) return <span className="muted">—</span>
+  if (rate.tier2_rate == null) return <strong>{Number(rate.rate).toFixed(2)}</strong>
+  return (
+    <span className="rate-tiered">
+      <span className="rate-tier-line"><span className="rate-tier-lbl">1st–4th</span>{Number(rate.rate).toFixed(2)}</span>
+      <span className="rate-tier-line"><span className="rate-tier-lbl">5th+</span>{Number(rate.tier2_rate).toFixed(2)}</span>
+      <span className="tagbadge tag-blue rate-tiered-pill">Tiered / hour</span>
+    </span>
+  )
+}
+
 /* ------------------------------------------------------------------ */
 /* Approvals pop-out — two-step flow: a 'verify' approver checks the   */
 /* proposal, then an 'approve' approver (management) makes it final.   */
@@ -425,7 +440,7 @@ function ApprovalModal({
                     {tag && <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span>}
                     <div className="muted small">
                       {stationName(j.station_id)} · {j.unit} · proposed rate{' '}
-                      <strong>{rate ? Number(rate.rate).toFixed(2) : '—'}</strong>
+                      <RateCell rate={rate} />
                       {rate && <> · effective {rate.effective_from}</>}
                     </div>
                     <div className="small approval-trail">
@@ -571,7 +586,7 @@ function SubmissionsList({
                   <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
                   <td className="muted">{j.unit}</td>
                   <td className="right">
-                    {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="badge off">no rate</span>}
+                    {rate ? <RateCell rate={rate} /> : <span className="badge off">no rate</span>}
                   </td>
                   <td className="muted">{rate ? rate.effective_from : '—'}</td>
                   <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
@@ -698,7 +713,7 @@ function RatesList({
                     const rate = j ? currentRate.get(j.id) : undefined
                     return (
                       <td key={c.key} className="right">
-                        {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="muted">—</span>}
+                        <RateCell rate={rate} />
                       </td>
                     )
                   })}
@@ -789,7 +804,7 @@ function GroupManageModal({
                     <strong>{gradeName(j.grade_id)}</strong>{' '}
                     {!j.active && <span className="badge off">inactive</span>}
                     <div className="muted small">
-                      {j.unit} · rate <strong>{rate ? Number(rate.rate).toFixed(2) : '—'}</strong>
+                      {j.unit} · rate <RateCell rate={rate} />
                       {rate && <> · effective {rate.effective_from}</>}
                     </div>
                   </div>
@@ -951,7 +966,7 @@ function HistoryList({
                     const rate = row.rateByKey.get(c.key)
                     return (
                       <td key={c.key} className="right">
-                        {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="muted">—</span>}
+                        <RateCell rate={rate} />
                       </td>
                     )
                   })}
@@ -995,6 +1010,10 @@ function ContractModal({
   const [description, setDescription] = useState(job?.name ?? '')
   const [unit, setUnit] = useState(job?.unit ?? '')
   const [rate, setRate] = useState(currentRate ? String(Number(currentRate.rate)) : '')
+  const [tiered, setTiered] = useState(currentRate?.tier2_rate != null)
+  const [tier2, setTier2] = useState(
+    currentRate?.tier2_rate != null ? String(Number(currentRate.tier2_rate)) : '',
+  )
   const [effectiveFrom, setEffectiveFrom] = useState(currentRate?.effective_from ?? todayISO())
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -1005,6 +1024,10 @@ function ContractModal({
     const rateValue = Number(rate)
     if (rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
       return setError('Enter a valid non-negative rate.')
+    }
+    const tier2Value = tiered ? Number(tier2) : null
+    if (tiered && (tier2.trim() === '' || Number.isNaN(tier2Value) || (tier2Value as number) < 0)) {
+      return setError('Enter a valid non-negative Tier 2 rate.')
     }
     if (!effectiveFrom) {
       return setError('Pick an effective date.')
@@ -1034,12 +1057,15 @@ function ContractModal({
         jobId = data.id
       }
       const unchanged =
-        job && currentRate && Number(currentRate.rate) === rateValue && currentRate.effective_from === effectiveFrom
+        job && currentRate &&
+        Number(currentRate.rate) === rateValue &&
+        (currentRate.tier2_rate ?? null) === tier2Value &&
+        currentRate.effective_from === effectiveFrom
       if (jobId && !unchanged) {
         const { error } = await supabase
           .from('piece_rates')
           .upsert(
-            { job_id: jobId, rate: rateValue, effective_from: effectiveFrom },
+            { job_id: jobId, rate: rateValue, tier2_rate: tier2Value, effective_from: effectiveFrom },
             { onConflict: 'job_id,effective_from' },
           )
         if (error) throw new Error(error.message)
@@ -1114,16 +1140,56 @@ function ContractModal({
           </datalist>
         </label>
 
-        <label className="field">
-          <span>Rate</span>
-          <input
-            inputMode="decimal"
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-            placeholder="0.00"
-            required
-          />
-        </label>
+        <div className="tiered-toggle">
+          <button type="button" className={!tiered ? 'active' : ''} onClick={() => setTiered(false)}>
+            Flat rate
+          </button>
+          <button type="button" className={tiered ? 'active' : ''} onClick={() => setTiered(true)}>
+            Tiered by hour
+          </button>
+        </div>
+
+        {tiered ? (
+          <div className="row-form">
+            <label className="field inline grow">
+              <span>Tier 1 — 1st to 4th /hr</span>
+              <input
+                inputMode="decimal"
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+                placeholder="0.00"
+                required
+              />
+            </label>
+            <label className="field inline grow">
+              <span>Tier 2 — 5th onward /hr</span>
+              <input
+                inputMode="decimal"
+                value={tier2}
+                onChange={(e) => setTier2(e.target.value)}
+                placeholder="0.00"
+                required
+              />
+            </label>
+          </div>
+        ) : (
+          <label className="field">
+            <span>Rate</span>
+            <input
+              inputMode="decimal"
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              placeholder="0.00"
+              required
+            />
+          </label>
+        )}
+        {tiered && (
+          <p className="small muted" style={{ margin: 0 }}>
+            Every hour resets: the first 4 units done pay Tier 1, the 5th unit
+            onward that same hour pays Tier 2 — then it starts over next hour.
+          </p>
+        )}
 
         <label className="field">
           <span>Effective date</span>

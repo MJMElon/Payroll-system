@@ -708,3 +708,76 @@ alter table public.production_entries add constraint production_entries_shift_ch
 alter table public.access_profiles add column if not exists employee_code text;
 create unique index if not exists access_profiles_employee_code_idx
   on public.access_profiles (employee_code) where employee_code is not null;
+
+-- ---------------------------------------------------------------------------
+-- Tiered hourly piece rates (e.g. cage tipping): a job's rate can pay one
+-- rate for the first 4 units done in an hour and a second, higher rate for
+-- the 5th unit onward that same hour — resetting every hour. `rate` stays
+-- Tier 1; `tier2_rate` is null for an ordinary flat-rate job.
+-- ---------------------------------------------------------------------------
+alter table public.piece_rates add column if not exists tier2_rate numeric(12,4);
+
+-- One-time consolidation for the Sterilizer & Tippler Station cage-tipping
+-- rates: the Operator tag priced this as two separately-named jobs (a
+-- workaround for not having real tiering); fold them into one tiered job
+-- named plainly "FFB Cages Tipped" so it lines up with the Assistant Station
+-- Head / Station Head rows of the same name. Idempotent — a second run finds
+-- nothing left to rename.
+do $$
+declare
+  ffb_station uuid;
+  op_grade uuid;
+  ash_grade uuid;
+  sh_grade uuid;
+  first4_job uuid;
+  fifth_job uuid;
+  plain_job uuid;
+  fifth_rate numeric;
+begin
+  select id into ffb_station from public.stations where name = 'Sterilizer & Tippler Station';
+  if ffb_station is null then return; end if;
+
+  select id into op_grade from public.grades where name = 'Operator';
+  select id into ash_grade from public.grades where name = 'Assistant Station Head';
+  select id into sh_grade from public.grades where name = 'Station Head';
+
+  select id into first4_job from public.jobs
+    where station_id = ffb_station and grade_id = op_grade
+      and name = 'FFB Cages Tipped (First to Fourth Cages of the hour)';
+  select id into fifth_job from public.jobs
+    where station_id = ffb_station and grade_id = op_grade
+      and name = 'FFB Cages Tipped (Fifth Cages onward of the hour)';
+
+  if first4_job is not null and fifth_job is not null then
+    select rate into fifth_rate from public.piece_rates
+      where job_id = fifth_job order by effective_from desc limit 1;
+
+    update public.piece_rates set tier2_rate = fifth_rate
+      where job_id = first4_job
+        and effective_from = (
+          select max(effective_from) from public.piece_rates where job_id = first4_job
+        );
+
+    update public.jobs set name = 'FFB Cages Tipped' where id = first4_job;
+    -- Retired, not deleted — existing production_entries/photo_records still
+    -- reference it, and its piece_rates history stays intact for their payout.
+    update public.jobs set active = false where id = fifth_job;
+  end if;
+
+  -- Roll tiering out to Assistant Station Head / Station Head too. Their
+  -- existing flat rate becomes Tier 1; Tier 2 is unset until someone fills
+  -- it in, so the job needs re-approval before it's usable again.
+  select id into plain_job from public.jobs
+    where station_id = ffb_station and grade_id = ash_grade and name = 'FFB Cages Tipped';
+  if plain_job is not null then
+    update public.jobs set approval_status = 'pending'
+      where id = plain_job and approval_status = 'approved';
+  end if;
+
+  select id into plain_job from public.jobs
+    where station_id = ffb_station and grade_id = sh_grade and name = 'FFB Cages Tipped';
+  if plain_job is not null then
+    update public.jobs set approval_status = 'pending'
+      where id = plain_job and approval_status = 'approved';
+  end if;
+end $$;

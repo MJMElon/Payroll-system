@@ -423,6 +423,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .rate-set { display: inline-flex; gap: 0.4rem; align-items: center; }
 .rate-input { width: 90px; padding: 0.35rem 0.5rem; font-size: 0.85rem; }
 
+/* Tiered hourly rate display (e.g. cage tipping: 1st-4th vs 5th+ per hour) */
+.rate-tiered { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 0.1rem; }
+.rate-tier-line { font-weight: 700; white-space: nowrap; font-size: 0.85rem; }
+.rate-tier-lbl { font-weight: 500; color: var(--muted); font-size: 0.68rem; margin-right: 0.3rem; }
+.rate-tiered-pill { margin-top: 0.1rem; font-size: 0.62rem; padding: 0.05rem 0.4rem; }
+.tiered-toggle { display: flex; gap: 0.4rem; background: var(--bg); border-radius: 10px; padding: 0.25rem; }
+.tiered-toggle button {
+  flex: 1; appearance: none; border: none; cursor: pointer; padding: 0.5rem; border-radius: 8px;
+  font-size: 0.82rem; font-weight: 600; color: var(--muted); background: transparent;
+}
+.tiered-toggle button.active { background: var(--surface); color: var(--accent-strong); box-shadow: var(--shadow); }
+
 /* Station status hour board */
 .board-scroll { overflow-x: auto; margin: 0.6rem 0 0.4rem; }
 .board { border-collapse: collapse; font-size: 0.78rem; width: 100%; }
