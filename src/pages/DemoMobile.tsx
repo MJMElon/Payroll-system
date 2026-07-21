@@ -691,6 +691,12 @@ function StationScreen({
       </div>
 
       <div className="mob-body">
+        {!canEntry ? (
+          <div className="mob-card">
+            <div className="mob-sub">We can't work under {station.name}.</div>
+          </div>
+        ) : (
+        <>
         {/* 1 — status stamp card */}
         <div className="mob-card mob-highlight">
           {station.hourly_count ? (
@@ -841,6 +847,8 @@ function StationScreen({
             records.map((r) => <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />)
           )}
         </div>
+        </>
+        )}
       </div>
     </>
   )
