@@ -1037,6 +1037,16 @@ function RecordTab({
   const [submitting, setSubmitting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // Assistant Station Head is paid on the shift's actual output, not a
+  // manually typed quantity: pick the date + shift they supervised, and the
+  // cage count comes straight from the Operators' Daily Job Record entries
+  // for that station/date/shift.
+  const isASH = tier?.name === 'Assistant Station Head'
+  const [dutyDate, setDutyDate] = useState(todayISO())
+  const [dutyShift, setDutyShift] = useState('')
+  const [pulledQty, setPulledQty] = useState(0)
+  const [pulling, setPulling] = useState(false)
+
   async function loadEntries() {
     if (!profileId) return
     const { data, error } = await supabase
@@ -1066,19 +1076,59 @@ function RecordTab({
   const tier2Rate = jobId ? tier2RateFor(jobId) : null
   const amount = jobId ? amountFor(jobId, Number(qty) || 0) : 0
 
+  // The Operator-tagged sibling job with the same name at the same station —
+  // that's whose Daily Job Record entries actually represent cages tipped.
+  const operatorJob = job
+    ? jobs.find(
+        (j) =>
+          j.station_id === job.station_id &&
+          j.name === job.name &&
+          grades.find((g) => g.id === j.grade_id)?.name === 'Operator',
+      )
+    : undefined
+  const ashAmount = isASH && jobId ? amountFor(jobId, pulledQty) : 0
+
+  useEffect(() => {
+    if (!isASH || !operatorJob || !dutyDate || !dutyShift) {
+      setPulledQty(0)
+      return
+    }
+    setPulling(true)
+    supabase
+      .from('production_entries')
+      .select('quantity, approval_status')
+      .eq('job_id', operatorJob.id)
+      .eq('work_date', dutyDate)
+      .eq('shift', dutyShift)
+      .then(({ data, error }) => {
+        setPulling(false)
+        if (error) return onError(error.message)
+        const total = (data ?? [])
+          .filter((e) => e.approval_status !== 'rejected')
+          .reduce((s, e) => s + Number(e.quantity), 0)
+        setPulledQty(total)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isASH, operatorJob?.id, dutyDate, dutyShift])
+
   async function submit() {
-    if (!profileId || !stationId || !jobId || !Number(qty)) return
+    if (isASH) {
+      if (!profileId || !stationId || !jobId || !dutyDate || !dutyShift || !pulledQty) return
+    } else if (!profileId || !stationId || !jobId || !Number(qty)) {
+      return
+    }
     setSubmitting(true)
     onError(null)
     try {
       const { data, error } = await supabase
         .from('production_entries')
         .insert({
-          work_date: todayISO(),
+          work_date: isASH ? dutyDate : todayISO(),
           station_id: stationId,
           job_id: jobId,
           user_id: profileId,
-          quantity: Number(qty),
+          quantity: isASH ? pulledQty : Number(qty),
+          shift: isASH ? dutyShift : null,
           created_by: profileId,
           approval_status: 'pending',
         })
@@ -1100,6 +1150,7 @@ function RecordTab({
       }
       setJobId('')
       setQty('')
+      setDutyShift('')
       setPhoto(null)
       await loadEntries()
     } catch (err) {
@@ -1243,26 +1294,68 @@ function RecordTab({
               ))}
             </select>
 
-            <div className="mob-field-label">Quantity{job ? ` (${job.unit.replace('/', '')})` : ''}</div>
-            <input
-              className="mob-input"
-              type="number"
-              min="0"
-              step="any"
-              placeholder="0"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-            />
+            {isASH ? (
+              <>
+                <div className="mob-field-label">Date on duty</div>
+                <input
+                  className="mob-input"
+                  type="date"
+                  value={dutyDate}
+                  onChange={(e) => setDutyDate(e.target.value)}
+                />
 
-            {job && Number(qty) > 0 && (
-              <div className="mob-breakrow total">
-                <span>
-                  {tier2Rate == null
-                    ? `${qty} × ${RM(rate)}${job.unit}`
-                    : breakdownFor(rateFor, tier2RateFor, jobId, Number(qty))}
-                </span>
-                <span>{RM(amount)}</span>
-              </div>
+                <div className="mob-field-label">Shift</div>
+                <select className="mob-select" value={dutyShift} onChange={(e) => setDutyShift(e.target.value)}>
+                  <option value="">Choose shift…</option>
+                  <option value="a">Shift A</option>
+                  <option value="b">Shift B</option>
+                </select>
+
+                {jobId && dutyDate && dutyShift && (
+                  <div className="mob-sub">
+                    {pulling
+                      ? 'Pulling cages tipped from Daily Job Record…'
+                      : !operatorJob
+                        ? 'No matching Operator job found at this station.'
+                        : `${pulledQty} cage${pulledQty === 1 ? '' : 's'} tipped (from Daily Job Record)`}
+                  </div>
+                )}
+
+                {job && pulledQty > 0 && (
+                  <div className="mob-breakrow total">
+                    <span>
+                      {tier2Rate == null
+                        ? `${pulledQty} × ${RM(rate)}${job.unit}`
+                        : breakdownFor(rateFor, tier2RateFor, jobId, pulledQty)}
+                    </span>
+                    <span>{RM(ashAmount)}</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="mob-field-label">Quantity{job ? ` (${job.unit.replace('/', '')})` : ''}</div>
+                <input
+                  className="mob-input"
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="0"
+                  value={qty}
+                  onChange={(e) => setQty(e.target.value)}
+                />
+
+                {job && Number(qty) > 0 && (
+                  <div className="mob-breakrow total">
+                    <span>
+                      {tier2Rate == null
+                        ? `${qty} × ${RM(rate)}${job.unit}`
+                        : breakdownFor(rateFor, tier2RateFor, jobId, Number(qty))}
+                    </span>
+                    <span>{RM(amount)}</span>
+                  </div>
+                )}
+              </>
             )}
 
             <input
@@ -1279,7 +1372,12 @@ function RecordTab({
 
             <button
               className="mob-btn"
-              disabled={submitting || !stationId || !jobId || !Number(qty)}
+              disabled={
+                submitting ||
+                !stationId ||
+                !jobId ||
+                (isASH ? !dutyDate || !dutyShift || !pulledQty : !Number(qty))
+              }
               onClick={submit}
             >
               {submitting ? 'Submitting…' : 'Submit for approval'}
