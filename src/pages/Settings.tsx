@@ -9,7 +9,18 @@ import {
   type Role,
   type Station,
 } from '../lib/supabase'
-import { CAPABILITY_OPTIONS, DEFAULT_MODULES, MODULE_OPTIONS, TAG_COLORS, capabilityLabel, tagClass } from '../lib/tags'
+import {
+  ALL_CAPABILITIES,
+  CAPABILITY_GROUPS,
+  CAPABILITY_OPTIONS,
+  DEFAULT_MODULES,
+  MODULE_OPTIONS,
+  TAG_COLORS,
+  capabilityLabel,
+  effectiveCapabilities,
+  sortCapabilities,
+  tagClass,
+} from '../lib/tags'
 
 type Tab = 'access' | 'tags'
 
@@ -115,9 +126,9 @@ function UserAccessTab() {
 
   const label = (p: Profile) => profileName(p)
   const capsOf = (p: Profile) =>
-    (p.grade_id ? grades.find((g) => g.id === p.grade_id)?.capabilities : null) ?? []
-  const approvalUsers = profiles.filter((p) => capsOf(p).includes('approve'))
-  const verifyUsers = profiles.filter((p) => capsOf(p).includes('verify'))
+    effectiveCapabilities(p.grade_id ? grades.find((g) => g.id === p.grade_id) : null)
+  const approvalUsers = profiles.filter((p) => capsOf(p).includes('rate-approve'))
+  const verifyUsers = profiles.filter((p) => capsOf(p).includes('rate-verify'))
   const stationLabel = (p: Profile) => {
     const ids = p.station_ids && p.station_ids.length > 0
       ? p.station_ids
@@ -540,21 +551,31 @@ function TagsTab() {
     load()
   }, [])
 
-  // Only admins or tier-1 (Management) users may reorder, add, edit or
-  // delete tags — the database enforces the same rule.
-  const myTier = profile?.grade_id
-    ? grades.find((g) => g.id === profile.grade_id)?.sort_order ?? null
-    : null
-  const canEditTags = profile?.role === 'admin' || myTier === 1
-  const canManageStations = profile?.role === 'admin' || profile?.role === 'manager'
+  // Tag editing belongs to admins, tier 1 (the super admin) and any tier
+  // that tier 1 has granted the "Edit tags management" capability. Station
+  // management likewise follows the "Create & edit stations" capability.
+  const myGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
+  const myTier = myGrade?.sort_order ?? null
+  const myCaps = effectiveCapabilities(myGrade)
+  const canEditTags = profile?.role === 'admin' || myTier === 1 || myCaps.includes('tag-edit')
+  const canManageStations =
+    profile?.role === 'admin' || profile?.role === 'manager' ||
+    myTier === 1 || myCaps.includes('station-create')
 
   // Drop a dragged tag onto another: reorder locally, then renumber every
   // tier 1..n so tier numbers always run top-down with no gaps.
   async function dropOnTag(targetId: string) {
     if (!dragId || dragId === targetId) return
+    const dragged = grades.find((g) => g.id === dragId)!
+    const target = grades.find((g) => g.id === targetId)
+    // The tier-1 tag is the super admin — pinned at #1: it can't be moved
+    // and nothing can be dropped above it.
+    if (dragged.sort_order === 1 || target?.sort_order === 1) {
+      setDragId(null)
+      return
+    }
     const movingDown = grades.findIndex((g) => g.id === dragId) < grades.findIndex((g) => g.id === targetId)
     const next = grades.filter((g) => g.id !== dragId)
-    const dragged = grades.find((g) => g.id === dragId)!
     next.splice(next.findIndex((g) => g.id === targetId) + (movingDown ? 1 : 0), 0, dragged)
     setDragId(null)
     setGrades(next.map((g, i) => ({ ...g, sort_order: i + 1 })))
@@ -640,47 +661,63 @@ function TagsTab() {
             {grades.length === 0 && (
               <tr><td colSpan={6} className="muted">No tags yet.</td></tr>
             )}
-            {grades.map((g) => (
-              <tr
-                key={g.id}
-                className={`${canEditTags ? 'drag-row' : ''} ${dragId === g.id ? 'dragging' : ''}`}
-                draggable={canEditTags}
-                onDragStart={() => canEditTags && setDragId(g.id)}
-                onDragEnd={() => setDragId(null)}
-                onDragOver={(e) => canEditTags && e.preventDefault()}
-                onDrop={(e) => {
-                  if (!canEditTags) return
-                  e.preventDefault()
-                  dropOnTag(g.id)
-                }}
-                title={canEditTags ? 'Drag to change tier' : undefined}
-              >
-                {canEditTags && <td className="drag-handle" aria-hidden="true">⠿</td>}
-                <td className="muted">{g.sort_order}</td>
-                <td><span className={tagClass(g.color)}>{g.name}</span></td>
-                <td className="muted small">
-                  {(g.capabilities ?? []).length
-                    ? (g.capabilities ?? []).map((c) => (
+            {grades.map((g) => {
+              const isSuper = g.sort_order === 1
+              const movable = canEditTags && !isSuper
+              return (
+                <tr
+                  key={g.id}
+                  className={`${movable ? 'drag-row' : ''} ${dragId === g.id ? 'dragging' : ''}`}
+                  draggable={movable}
+                  onDragStart={() => movable && setDragId(g.id)}
+                  onDragEnd={() => setDragId(null)}
+                  onDragOver={(e) => canEditTags && e.preventDefault()}
+                  onDrop={(e) => {
+                    if (!canEditTags) return
+                    e.preventDefault()
+                    dropOnTag(g.id)
+                  }}
+                  title={isSuper ? 'Super admin — always tier 1' : movable ? 'Drag to change tier' : undefined}
+                >
+                  {canEditTags && (
+                    <td className="drag-handle" aria-hidden="true">{isSuper ? '📌' : '⠿'}</td>
+                  )}
+                  <td className="muted">{g.sort_order}</td>
+                  <td><span className={tagClass(g.color)}>{g.name}</span></td>
+                  <td className="muted small">
+                    {isSuper ? (
+                      <span className="badge off">Super admin — every ability</span>
+                    ) : sortCapabilities(g.capabilities ?? []).length > 0 ? (
+                      sortCapabilities(g.capabilities ?? []).map((c) => (
                         <span key={c} className="badge off" style={{ marginRight: '0.3rem' }}>
                           {capabilityLabel(c)}
                         </span>
                       ))
-                    : '—'}
-                </td>
-                {canEditTags && (
-                  <td className="right">
-                    <button className="linkbtn" onClick={() => setEditor(g)}>Edit</button>{' '}
-                    <button className="linkbtn danger" onClick={() => removeTag(g)}>Delete</button>
+                    ) : (
+                      '—'
+                    )}
                   </td>
-                )}
-              </tr>
-            ))}
+                  {canEditTags && (
+                    <td className="right">
+                      <button className="linkbtn" onClick={() => setEditor(g)}>Edit</button>
+                      {!isSuper && (
+                        <>
+                          {' '}
+                          <button className="linkbtn danger" onClick={() => removeTag(g)}>Delete</button>
+                        </>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
         <p className="muted small">
-          Tier 1 is the highest. {canEditTags
-            ? 'Drag rows up or down to change tiers — each tag sees its own tier and every tier below it.'
-            : 'Only Management (tier 1) or admins can change tags.'}
+          Tier 1 is the highest and is the super admin — pinned at #1 with every ability.
+          {canEditTags
+            ? ' Drag the other rows up or down to change tiers — each tag sees its own tier and every tier below it.'
+            : ' Only the super admin, admins, or tiers granted "Edit tags management" can change tags.'}
         </p>
       </div>
 
@@ -938,15 +975,21 @@ function TagEditModal({
   onClose: () => void
   onSaved: () => void
 }) {
+  // Tier 1 is the super admin: every ability, always — the checkboxes are
+  // shown ticked and locked.
+  const isSuper = grade?.sort_order === 1
   const [name, setName] = useState(grade?.name ?? '')
   const [color, setColor] = useState(grade?.color ?? 'blue')
   const modules = grade?.modules ?? [...DEFAULT_MODULES]
-  const [capabilities, setCapabilities] = useState<string[]>(grade?.capabilities ?? ['data-entry'])
+  const [capabilities, setCapabilities] = useState<string[]>(
+    isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade?.capabilities ?? ['data-entry']),
+  )
   const ability = grade?.ability ?? ''
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   function toggleCapability(key: string) {
+    if (isSuper) return
     setCapabilities((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]))
   }
 
@@ -954,7 +997,10 @@ function TagEditModal({
     e.preventDefault()
     setError(null)
     setSaving(true)
-    const fields = { name: name.trim(), color, modules, capabilities, ability: ability || null }
+    // Saved in the standardized order so "Can do" always reads the same,
+    // no matter what sequence the boxes were ticked in.
+    const caps = isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(capabilities)
+    const fields = { name: name.trim(), color, modules, capabilities: caps, ability: ability || null }
     const { error } = grade
       ? await supabase.from('grades').update(fields).eq('id', grade.id)
       : await supabase.from('grades').insert({ ...fields, sort_order: nextTier })
@@ -1004,18 +1050,27 @@ function TagEditModal({
 
         <div className="field">
           <span>Can do (standardized)</span>
-          <div className="stack" style={{ gap: '0.3rem' }}>
-            {CAPABILITY_OPTIONS.map((c) => (
-              <label key={c.key} className="checkbox small" style={{ margin: 0 }}>
-                <input
-                  type="checkbox"
-                  checked={capabilities.includes(c.key)}
-                  onChange={() => toggleCapability(c.key)}
-                />{' '}
-                {c.label}
-              </label>
-            ))}
-          </div>
+          {isSuper && (
+            <p className="muted small" style={{ margin: 0 }}>
+              This tag is the super admin — it always has every ability and stays at tier 1.
+            </p>
+          )}
+          {CAPABILITY_GROUPS.map((group) => (
+            <div key={group} className="cap-group">
+              <div className="cap-group-title">{group}</div>
+              {CAPABILITY_OPTIONS.filter((c) => c.group === group).map((c) => (
+                <label key={c.key} className="checkbox small" style={{ margin: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={capabilities.includes(c.key)}
+                    disabled={isSuper}
+                    onChange={() => toggleCapability(c.key)}
+                  />{' '}
+                  {c.label}
+                </label>
+              ))}
+            </div>
+          ))}
         </div>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>

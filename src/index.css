@@ -611,6 +611,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .perf-bar-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.7rem; }
 .perf-bar-row .val { width: 36px; text-align: right; font-weight: 700; color: var(--muted); flex: none; }
 
+/* Grouped capability checkboxes in the tag editor */
+.cap-group { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.35rem; }
+.cap-group-title {
+  font-size: 0.68rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.07em;
+}
+
 /* Exception flag cards (manager dashboard) */
 .mob-flag {
   border-radius: 12px; padding: 0.55rem 0.75rem; font-size: 0.75rem;

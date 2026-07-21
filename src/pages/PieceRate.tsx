@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { tagClass } from '../lib/tags'
+import { effectiveCapabilities, tagClass } from '../lib/tags'
 import {
   supabase,
   todayISO,
@@ -70,13 +70,15 @@ export default function PieceRate() {
     load()
   }, [])
 
-  // Approval rights follow the tag's standardized capabilities (Settings →
-  // Tags management). Admins can do both.
-  const myCaps = (profile?.grade_id
-    ? grades.find((g) => g.id === profile.grade_id)?.capabilities
-    : null) ?? []
-  const canVerify = isAdmin || myCaps.includes('verify')
-  const canFinal = isAdmin || myCaps.includes('approve')
+  // Piece-rate rights follow the tag's standardized capabilities (Settings
+  // → Tags management): rate-create / rate-verify / rate-approve. Tier 1 is
+  // the super admin and has all of them; admins can do everything too.
+  const myCaps = effectiveCapabilities(
+    profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) : null,
+  )
+  const canCreate = canManage || myCaps.includes('rate-create')
+  const canVerify = isAdmin || myCaps.includes('rate-verify')
+  const canFinal = isAdmin || myCaps.includes('rate-approve')
   const isApprover = isAdmin || canVerify || canFinal
 
   // Tier comes from the signed-in account's grade tag.
@@ -175,12 +177,12 @@ export default function PieceRate() {
                     )}
                   </button>
                 )}
-                {canManage && (
+                {canCreate && (
                   <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
                 )}
               </div>
 
-              {canManage || isApprover ? (
+              {canCreate || isApprover ? (
                 <SubmissionsList
                   stations={stations}
                   grades={grades}

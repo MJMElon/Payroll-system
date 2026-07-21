@@ -630,3 +630,43 @@ update public.grades set color = 'gold',
 update public.grades set color = 'diamond',
   ability = 'Final approval of each new piece rate; sees everything'
   where name = 'Management' and color = 'grey';
+
+-- ---------------------------------------------------------------------------
+-- Standardized capabilities v2. Piece-rate rights get their own keys
+-- (rate-create / rate-verify / rate-approve), station and tag management
+-- become grantable capabilities, and seeing the report module (dashboards)
+-- is a capability too. Backfill from the old verify/approve flags so
+-- existing tags keep working after the split.
+-- ---------------------------------------------------------------------------
+update public.grades set capabilities = capabilities || '{rate-verify}'
+  where 'verify' = any(capabilities) and not 'rate-verify' = any(capabilities);
+update public.grades set capabilities = capabilities || '{rate-approve}'
+  where 'approve' = any(capabilities) and not 'rate-approve' = any(capabilities);
+update public.grades set capabilities = capabilities || '{report-view}'
+  where ('verify' = any(capabilities) or 'approve' = any(capabilities))
+    and not 'report-view' = any(capabilities);
+
+-- Tier 1 (Management) is the SUPER ADMIN: pinned at #1 and always holding
+-- every ability. Re-asserted on every run so it can never drift.
+update public.grades set capabilities =
+  '{data-entry,verify,approve,rate-create,rate-verify,rate-approve,station-create,tag-edit,report-view}'
+  where sort_order = 1;
+
+-- Tag editing and station management follow the granted capabilities, not
+-- only the admin/manager roles — so the super admin can open the "edit
+-- tags" / "create stations" functions to chosen tiers.
+drop policy if exists "management tier manages grades" on public.grades;
+create policy "management tier manages grades" on public.grades
+  for all using (
+    public.my_role() = 'admin'
+    or public.my_tag_tier() = 1
+    or 'tag-edit' = any(public.my_capabilities())
+  );
+
+drop policy if exists "admin manager manage stations" on public.stations;
+create policy "admin manager manage stations" on public.stations
+  for all using (
+    public.my_role() in ('admin', 'manager')
+    or public.my_tag_tier() = 1
+    or 'station-create' = any(public.my_capabilities())
+  );

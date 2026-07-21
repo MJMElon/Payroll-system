@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { effectiveCapabilities } from '../lib/tags'
 import {
   profileName,
   supabase,
@@ -108,8 +109,9 @@ export default function DemoMobile() {
   // the data-entry capability may submit records. Tiers holding verify or
   // approve (Engineer / Manager / Management) get the management dashboards
   // and see ALL stations; lower tiers see only their own station tags.
-  const canEntry = (tier?.capabilities ?? []).includes('data-entry')
-  const isUpper = (tier?.capabilities ?? []).some((c) => c === 'verify' || c === 'approve')
+  const tierCaps = effectiveCapabilities(tier)
+  const canEntry = tierCaps.includes('data-entry')
+  const isUpper = tierCaps.includes('report-view')
   const myStationIds = profile?.station_ids ?? []
   const scopedStations =
     isUpper || myStationIds.length === 0
@@ -332,7 +334,7 @@ function PerformanceTab({
 }) {
   const [station, setStation] = useState<Station | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
-  const canEntry = (tier?.capabilities ?? []).includes('data-entry')
+  const canEntry = effectiveCapabilities(tier).includes('data-entry')
   const monthStart = todayISO().slice(0, 8) + '01'
 
   useEffect(() => {
@@ -1061,7 +1063,7 @@ function ManagerProfileTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const isApprover = (tier?.capabilities ?? []).includes('approve')
+  const isApprover = effectiveCapabilities(tier).includes('approve')
   const amountOf = (e: ProductionEntry) => rateFor(e.job_id) * e.quantity
   const status = (e: ProductionEntry) => e.approval_status ?? 'approved'
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
