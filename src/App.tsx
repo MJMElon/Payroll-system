@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import DailyJobRecord from './pages/DailyJobRecord'
+import AddJobRecord from './pages/AddJobRecord'
 import StationDetail from './pages/StationDetail'
 import DemoMobile from './pages/DemoMobile'
 import Payroll from './pages/Payroll'
@@ -21,6 +22,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/daily-job-record" element={<DailyJobRecord />} />
+          <Route path="/daily-job-record/add" element={<AddJobRecord />} />
           <Route path="/station/:stationId" element={<StationDetail />} />
           <Route path="/demo-mobile" element={<DemoMobile />} />
           <Route path="/piece-rate" element={<PieceRate />} />

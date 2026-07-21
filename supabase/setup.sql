@@ -648,3 +648,17 @@ update public.grades set color = 'gold',
 update public.grades set color = 'diamond',
   ability = 'Final approval of each new piece rate; sees everything'
   where name = 'Management' and color = 'grey';
+
+-- ---------------------------------------------------------------------------
+-- Daily Job Record form: shift worked + an optional employee code shown
+-- next to the name in the employee picker (e.g. "Ali Bin Ahmad (EMP001)").
+-- ---------------------------------------------------------------------------
+
+alter table public.production_entries add column if not exists shift text;
+alter table public.production_entries drop constraint if exists production_entries_shift_check;
+alter table public.production_entries add constraint production_entries_shift_check
+  check (shift is null or shift in ('morning', 'afternoon', 'night'));
+
+alter table public.access_profiles add column if not exists employee_code text;
+create unique index if not exists access_profiles_employee_code_idx
+  on public.access_profiles (employee_code) where employee_code is not null;
