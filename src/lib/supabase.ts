@@ -118,7 +118,9 @@ export interface ProductionEntry {
   // Mobile work-entry approval flow (older queries don't select these).
   approval_status?: 'pending' | 'verified' | 'approved' | 'rejected'
   verified_by?: string | null
+  verified_at?: string | null
   approved_by?: string | null
+  approved_at?: string | null
 }
 
 export interface PayrollRun {

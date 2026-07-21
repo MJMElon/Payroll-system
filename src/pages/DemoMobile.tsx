@@ -337,9 +337,13 @@ export default function DemoMobile() {
                 ) : isUpper ? (
                   <ManagerProfileTab
                     myName={profileName(profile)}
+                    myEmail={profile?.email ?? 'unknown'}
                     tier={tier}
                     stations={stations}
+                    jobs={jobs}
+                    rateFor={rateFor}
                     amountFor={amountFor}
+                    tier2RateFor={tier2RateFor}
                     onError={setError}
                   />
                 ) : (
@@ -1572,22 +1576,31 @@ function EntryDetail({
 
 function ManagerProfileTab({
   myName,
+  myEmail,
   tier,
   stations,
+  jobs,
+  rateFor,
   amountFor,
+  tier2RateFor,
   onError,
 }: {
   myName: string
+  myEmail: string
   tier: Grade | null
   stations: Station[]
+  jobs: Job[]
+  rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
   onError: (m: string | null) => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
+  const [showApprovals, setShowApprovals] = useState(false)
 
-  useEffect(() => {
-    // Six months of entries feed the trend chart; everything else derives
-    // from the same rows client-side.
+  // Six months of entries feed the trend chart; everything else (including
+  // the approvals list) derives from the same rows client-side.
+  function loadEntries() {
     const now = new Date()
     const from = new Date(now.getFullYear(), now.getMonth() - 5, 1)
     supabase
@@ -1598,10 +1611,15 @@ function ManagerProfileTab({
         if (error) onError(error.message)
         else setEntries(data ?? [])
       })
+  }
+  useEffect(() => {
+    loadEntries()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const isApprover = effectiveCapabilities(tier).includes('approve')
+  const canVerify = effectiveCapabilities(tier).includes('verify')
+  const canFinal = isApprover
   const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
   const status = (e: ProductionEntry) => e.approval_status ?? 'approved'
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
@@ -1617,7 +1635,13 @@ function ManagerProfileTab({
   const cost = payable.reduce((s, e) => s + amountOf(e), 0)
   const workers = new Set(payable.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
   const activeStations = new Set(payable.map((e) => e.station_id)).size
-  const awaiting = mtd.filter((e) => (isApprover ? status(e) === 'verified' : status(e) === 'pending'))
+  const awaiting = mtd.filter(
+    (e) => (canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'),
+  )
+  // Unscoped by month — an aging entry from further back still needs action.
+  const awaitingAll = entries.filter(
+    (e) => (canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'),
+  )
   const rejectedWk = entries.filter((e) => status(e) === 'rejected' && e.work_date >= weekStart)
   const compliance = mtd.length > 0
     ? Math.round((mtd.filter((e) => status(e) === 'approved').length / mtd.length) * 100)
@@ -1696,6 +1720,25 @@ function ManagerProfileTab({
   const activeToday = new Set(todayRows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
   const coveredToday = new Set(todayRows.map((e) => e.station_id)).size
 
+  if (showApprovals) {
+    return (
+      <ApprovalsScreen
+        items={awaitingAll}
+        jobs={jobs}
+        stations={stations}
+        rateFor={rateFor}
+        amountFor={amountFor}
+        tier2RateFor={tier2RateFor}
+        myEmail={myEmail}
+        canVerify={canVerify}
+        canFinal={canFinal}
+        onBack={() => setShowApprovals(false)}
+        onChanged={loadEntries}
+        onError={onError}
+      />
+    )
+  }
+
   return (
     <>
       <div className="mob-header">
@@ -1739,9 +1782,9 @@ function ManagerProfileTab({
         </div>
 
         {awaiting.length > 0 && (
-          <div className="mob-alert">
-            ⚠ {awaiting.length} record{awaiting.length === 1 ? '' : 's'} awaiting {isApprover ? 'final approval' : 'verification'} — approvals screen coming next →
-          </div>
+          <button className="mob-alert" onClick={() => setShowApprovals(true)}>
+            ⚠ {awaiting.length} record{awaiting.length === 1 ? '' : 's'} awaiting {isApprover ? 'final approval' : 'verification'} — tap to review →
+          </button>
         )}
 
         {stationPct.length > 0 && (
@@ -1802,6 +1845,134 @@ function ManagerProfileTab({
             <span className="mob-entry-amt">{coveredToday} / {stations.length}</span>
           </div>
         </div>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Approvals — verify/approve pending work entries (Record work,      */
+/* Daily Job Record, etc.). A tier can hold verify, approve, or both;  */
+/* each section only shows if this tier holds that capability.        */
+/* ------------------------------------------------------------------ */
+
+function ApprovalsScreen({
+  items,
+  jobs,
+  stations,
+  rateFor,
+  amountFor,
+  tier2RateFor,
+  myEmail,
+  canVerify,
+  canFinal,
+  onBack,
+  onChanged,
+  onError,
+}: {
+  items: ProductionEntry[]
+  jobs: Job[]
+  stations: Station[]
+  rateFor: (jobId: string) => number
+  amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
+  myEmail: string
+  canVerify: boolean
+  canFinal: boolean
+  onBack: () => void
+  onChanged: () => void
+  onError: (m: string | null) => void
+}) {
+  const [names, setNames] = useState<Map<string, string>>(new Map())
+
+  useEffect(() => {
+    const ids = [...new Set(items.map((e) => e.user_id).filter((id): id is string => Boolean(id)))]
+    if (ids.length === 0) return
+    supabase
+      .from('access_profiles')
+      .select('id, full_name, email')
+      .in('id', ids)
+      .then(({ data }) => {
+        const m = new Map<string, string>()
+        for (const p of data ?? []) m.set(p.id, p.full_name || p.email || 'Unknown')
+        setNames(m)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map((e) => e.id).join(',')])
+
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
+  const jobUnit = (id: string) => jobs.find((j) => j.id === id)?.unit ?? ''
+
+  async function act(entry: ProductionEntry, fields: Partial<ProductionEntry>) {
+    const { error } = await supabase.from('production_entries').update(fields).eq('id', entry.id)
+    if (error) onError(error.message)
+    else onChanged()
+  }
+  const verify = (e: ProductionEntry) =>
+    act(e, { approval_status: 'verified', verified_by: myEmail, verified_at: new Date().toISOString() })
+  const approve = (e: ProductionEntry) =>
+    act(e, { approval_status: 'approved', approved_by: myEmail, approved_at: new Date().toISOString() })
+  const reject = (e: ProductionEntry) => act(e, { approval_status: 'rejected' })
+
+  const pendingItems = items.filter((e) => (e.approval_status ?? 'approved') === 'pending')
+  const verifiedItems = items.filter((e) => (e.approval_status ?? 'approved') === 'verified')
+
+  function Row({ entry, actionLabel, onAction }: { entry: ProductionEntry; actionLabel: string; onAction: () => void }) {
+    return (
+      <div className="approval-item">
+        <div className="mob-entry-name">{jobName(entry.job_id)}</div>
+        <div className="mob-station-meta">
+          {stationName(entry.station_id)} ·{' '}
+          {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+          {entry.shift ? ` · Shift ${entry.shift.toUpperCase()}` : ''} ·{' '}
+          {names.get(entry.user_id ?? '') ?? 'Unknown'}
+        </div>
+        <div className="mob-breakrow total">
+          <span>{breakdownFor(rateFor, tier2RateFor, entry.job_id, entry.quantity)}{jobUnit(entry.job_id)}</span>
+          <span>{RM(amountFor(entry.job_id, entry.quantity))}</span>
+        </div>
+        <div className="row-form" style={{ marginTop: '0.4rem' }}>
+          <button className="mob-btn" style={{ flex: 1 }} onClick={onAction}>{actionLabel}</button>
+          <button className="mob-btn ghost" style={{ flex: 1 }} onClick={() => reject(entry)}>Reject</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className="mob-header">
+        <button className="mob-back" onClick={onBack}>‹ Profile</button>
+        <span className="mob-brand">MJM</span>
+      </div>
+
+      <div className="mob-body">
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Approvals</div>
+
+        {items.length === 0 && (
+          <div className="mob-card">
+            <div className="mob-sub">Nothing waiting for you right now.</div>
+          </div>
+        )}
+
+        {canVerify && pendingItems.length > 0 && (
+          <div className="mob-card">
+            <div className="mob-title">Waiting for verification ({pendingItems.length})</div>
+            {pendingItems.map((e) => (
+              <Row key={e.id} entry={e} actionLabel="Verify" onAction={() => verify(e)} />
+            ))}
+          </div>
+        )}
+
+        {canFinal && verifiedItems.length > 0 && (
+          <div className="mob-card">
+            <div className="mob-title">Waiting for final approval ({verifiedItems.length})</div>
+            {verifiedItems.map((e) => (
+              <Row key={e.id} entry={e} actionLabel="Approve" onAction={() => approve(e)} />
+            ))}
+          </div>
+        )}
       </div>
     </>
   )
