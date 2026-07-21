@@ -134,7 +134,7 @@ export default function AddJobRecord() {
       if (!jobId) return setRate(null)
       const { data } = await supabase
         .from('piece_rates')
-        .select('id, job_id, rate, effective_from')
+        .select('id, job_id, rate, effective_from, tier2_rate')
         .eq('job_id', jobId)
         .order('effective_from', { ascending: false })
       const today = todayISO()
@@ -143,7 +143,15 @@ export default function AddJobRecord() {
     loadRate()
   }, [jobId])
 
-  const amount = rate ? Number(rate.rate) * (Number(quantity) || 0) : 0
+  // A tiered rate (e.g. cage tipping) pays Tier 1 for the first 4 units done
+  // in an hour and Tier 2 for the 5th unit onward — same rule as the mobile
+  // hourly photo flow (see TIER1_UNIT_CAP in DemoMobile.tsx).
+  const qtyNum = Number(quantity) || 0
+  const amount = !rate
+    ? 0
+    : rate.tier2_rate == null
+      ? Number(rate.rate) * qtyNum
+      : Math.min(qtyNum, 4) * Number(rate.rate) + Math.max(0, qtyNum - 4) * Number(rate.tier2_rate)
 
   function resetForm() {
     setWorkDate(todayISO())
@@ -341,7 +349,16 @@ export default function AddJobRecord() {
             <div className="info-row">
               <label className="field">
                 <span>Rate (RM)</span>
-                <input value={rate ? Number(rate.rate).toFixed(2) : '—'} readOnly />
+                <input
+                  value={
+                    rate
+                      ? rate.tier2_rate == null
+                        ? Number(rate.rate).toFixed(2)
+                        : `${Number(rate.rate).toFixed(2)} → ${Number(rate.tier2_rate).toFixed(2)}`
+                      : '—'
+                  }
+                  readOnly
+                />
               </label>
               <label className="field">
                 <span>Per Unit</span>
@@ -354,22 +371,45 @@ export default function AddJobRecord() {
 
         <div className="card stack form-section">
           <h3>4. Calculation (Auto)</h3>
-          <div className="calc-row">
-            <label className="field">
-              <span>Rate (RM)</span>
-              <input value={rate ? Number(rate.rate).toFixed(2) : '0.00'} readOnly />
-            </label>
-            <span className="calc-op">×</span>
-            <label className="field">
-              <span>Quantity</span>
-              <input value={quantity || '0.00'} readOnly />
-            </label>
-            <span className="calc-op">=</span>
-            <label className="field">
-              <span>Amount (RM)</span>
-              <input className="calc-amount" value={amount.toFixed(2)} readOnly />
-            </label>
-          </div>
+          {rate?.tier2_rate == null ? (
+            <div className="calc-row">
+              <label className="field">
+                <span>Rate (RM)</span>
+                <input value={rate ? Number(rate.rate).toFixed(2) : '0.00'} readOnly />
+              </label>
+              <span className="calc-op">×</span>
+              <label className="field">
+                <span>Quantity</span>
+                <input value={quantity || '0.00'} readOnly />
+              </label>
+              <span className="calc-op">=</span>
+              <label className="field">
+                <span>Amount (RM)</span>
+                <input className="calc-amount" value={amount.toFixed(2)} readOnly />
+              </label>
+            </div>
+          ) : (
+            <>
+              <p className="small muted" style={{ margin: 0 }}>
+                Tiered rate — first 4 units this hour at RM {Number(rate.rate).toFixed(2)}, the 5th
+                unit onward at RM {Number(rate.tier2_rate).toFixed(2)} (resets every hour).
+              </p>
+              <div className="calc-row">
+                <label className="field grow">
+                  <span>Breakdown</span>
+                  <input
+                    value={`min(${qtyNum}, 4) × ${Number(rate.rate).toFixed(2)} + max(0, ${qtyNum} − 4) × ${Number(rate.tier2_rate).toFixed(2)}`}
+                    readOnly
+                  />
+                </label>
+                <span className="calc-op">=</span>
+                <label className="field">
+                  <span>Amount (RM)</span>
+                  <input className="calc-amount" value={amount.toFixed(2)} readOnly />
+                </label>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="card stack form-section">
