@@ -106,7 +106,7 @@ export interface ProductionEntry {
   user_id: string | null
   quantity: number
   notes: string | null
-  shift: 'morning' | 'afternoon' | 'night' | null
+  shift: 'a' | 'b' | null
   created_by: string | null
   created_at: string
   // Mobile work-entry approval flow (older queries don't select these).

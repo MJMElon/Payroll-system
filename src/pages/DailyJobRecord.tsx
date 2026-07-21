@@ -13,9 +13,8 @@ import {
 } from '../lib/supabase'
 
 const SHIFT_LABEL: Record<string, string> = {
-  morning: 'Morning',
-  afternoon: 'Afternoon',
-  night: 'Night',
+  a: 'Shift A',
+  b: 'Shift B',
 }
 
 // Landing page for the "Daily Job Record" module tile — Operators, Assistant
