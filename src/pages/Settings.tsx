@@ -70,9 +70,9 @@ function UserAccessTab() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
-  const [tagInfo, setTagInfo] = useState<Grade | null>(null)
   const [accessUser, setAccessUser] = useState<Profile | null>(null)
   const [openTiers, setOpenTiers] = useState<Record<string, boolean>>({})
+  const [panelView, setPanelView] = useState<'structure' | 'tier'>('structure')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -168,33 +168,19 @@ function UserAccessTab() {
       {error && <div className="error">{error}</div>}
 
       {canManageUsers && (
-        <div className="grid-2">
-          <div className="card stack compact approval-card">
-            <h3>Piece rate approval</h3>
-            <div className="field">
-              <span>Verify by</span>
-              {verifyUsers.length === 0
-                ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the verify capability.</p>
-                : verifyUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
-            </div>
-            <div className="field">
-              <span>Approval by</span>
-              {approvalUsers.length === 0
-                ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the approve capability.</p>
-                : approvalUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
-            </div>
+        <div className="card stack compact approval-card">
+          <h3>Piece rate approval</h3>
+          <div className="field">
+            <span>Verify by</span>
+            {verifyUsers.length === 0
+              ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the verify capability.</p>
+              : verifyUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
           </div>
-
-          <div className="card stack compact">
-            <h3>Tags</h3>
-            <div className="tag-list">
-              {grades.map((g) => (
-                <button className="tag-row" key={g.id} onClick={() => setTagInfo(g)}>
-                  <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
-                  <span>{g.name}</span>
-                </button>
-              ))}
-            </div>
+          <div className="field">
+            <span>Approval by</span>
+            {approvalUsers.length === 0
+              ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the approve capability.</p>
+              : approvalUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
           </div>
         </div>
       )}
@@ -261,12 +247,41 @@ function UserAccessTab() {
         </p>
       </div>
 
-      {/* 2 — confirmed users, grouped by tier (expand a tier to see its list) */}
+      {/* 2 — confirmed users: team-structure tree or tier groups */}
       {canManageUsers && (
         <div className="card stack">
-          <h3>User access control panel</h3>
+          <div className="row-form spread">
+            <h3>User access control panel</h3>
+            <div className="view-toggle">
+              <button
+                type="button"
+                className={panelView === 'structure' ? 'active' : ''}
+                onClick={() => setPanelView('structure')}
+              >
+                Team structure
+              </button>
+              <button
+                type="button"
+                className={panelView === 'tier' ? 'active' : ''}
+                onClick={() => setPanelView('tier')}
+              >
+                By tier
+              </button>
+            </div>
+          </div>
           {confirmed.length === 0 && <p className="muted small">No confirmed users yet.</p>}
-          {[
+
+          {panelView === 'structure' && confirmed.length > 0 && (
+            <StructureTree
+              users={confirmed}
+              grades={grades}
+              stationLabel={stationLabel}
+              userEditable={userEditable}
+              onEdit={setAccessUser}
+            />
+          )}
+
+          {panelView === 'tier' && [
             ...grades.map((g) => ({
               key: g.id,
               grade: g as Grade | null,
@@ -352,6 +367,8 @@ function UserAccessTab() {
           user={accessUser}
           stations={stations}
           grades={isAdmin || myTier === 1 ? grades : assignableGrades}
+          allGrades={grades}
+          profiles={profiles.filter((p) => p.tags_confirmed)}
           onClose={() => setAccessUser(null)}
           onSaved={() => {
             setAccessUser(null)
@@ -360,24 +377,88 @@ function UserAccessTab() {
         />
       )}
 
-      {tagInfo && (
-        <div className="modal-overlay" onClick={() => setTagInfo(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="row-form spread">
-              <h2><span className={tagClass(tagInfo.color)}>{tagInfo.name}</span></h2>
-              <button type="button" className="modal-close" onClick={() => setTagInfo(null)} aria-label="Close">×</button>
-            </div>
-            <p className="muted small">Tier {tagInfo.sort_order} (1 is highest) — sees its own tier and every tier below it.</p>
-            <div className="field">
-              <span>Can do</span>
-              <p style={{ margin: 0 }}>
-                {(tagInfo.capabilities ?? []).length
-                  ? (tagInfo.capabilities ?? []).map(capabilityLabel).join(' · ')
-                  : tagInfo.ability ?? 'Nothing set yet — edit it in Tags management.'}
-              </p>
-            </div>
-          </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Team structure tree: everyone hangs under the direct upper they    */
+/* report to ("Reports to" in Manage access) — so it's obvious who    */
+/* verifies/approves whose work. Users without an upper sit at the    */
+/* root, sorted by tier.                                              */
+/* ------------------------------------------------------------------ */
+
+function StructureTree({
+  users,
+  grades,
+  stationLabel,
+  userEditable,
+  onEdit,
+}: {
+  users: Profile[]
+  grades: Grade[]
+  stationLabel: (p: Profile) => string
+  userEditable: (p: Profile) => boolean
+  onEdit: (p: Profile) => void
+}) {
+  const gradeOf = (p: Profile) => grades.find((g) => g.id === p.grade_id)
+  const tierOf = (p: Profile) => gradeOf(p)?.sort_order ?? 99
+  const byTierName = (a: Profile, b: Profile) =>
+    tierOf(a) - tierOf(b) || profileName(a).localeCompare(profileName(b))
+
+  const childrenOf = (id: string) =>
+    users.filter((p) => p.supervisor_id === id).sort(byTierName)
+  // Roots: no supervisor, or the supervisor isn't in the confirmed list.
+  const roots = users
+    .filter((p) => !p.supervisor_id || !users.some((x) => x.id === p.supervisor_id))
+    .sort(byTierName)
+  const unlinked = users.filter((p) => !p.supervisor_id).length
+
+  const renderNode = (p: Profile, depth: number): JSX.Element => {
+    const g = gradeOf(p)
+    const kids = childrenOf(p.id)
+    return (
+      <div key={p.id}>
+        <div className="tree-row" style={{ marginLeft: depth * 26 }}>
+          {depth > 0 && <span className="tree-elbow" aria-hidden="true">└</span>}
+          <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
+          <span className="tree-name">{p.full_name ?? p.email ?? '—'}</span>
+          {g && <span className={tagClass(g.color)}>{g.name}</span>}
+          <span className="tree-meta">
+            {p.employee_code ? `${p.employee_code} · ` : ''}{stationLabel(p)}
+            {kids.length > 0 && ` · ${kids.length} under`}
+          </span>
+          {userEditable(p) && (
+            <button
+              className="icon-btn sm tree-gear"
+              title="Manage access"
+              aria-label={`Set access for ${profileName(p)}`}
+              onClick={() => onEdit(p)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M4 21v-1a7 7 0 0 1 10.6-6" />
+                <circle cx="18" cy="18" r="3" />
+                <path d="M18 14.5v1M18 20.5v1M21.5 18h-1M15.5 18h-1" />
+              </svg>
+            </button>
+          )}
         </div>
+        {kids.map((c) => renderNode(c, depth + 1))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="stack" style={{ gap: '0.1rem' }}>
+      {roots.map((p) => renderNode(p, 0))}
+      {unlinked > 1 && (
+        <p className="muted small" style={{ marginTop: '0.6rem' }}>
+          Set each user's "Reports to" in Manage access to hang them under
+          their direct upper — e.g. operators under an assistant head,
+          assistant heads under the station head.
+        </p>
       )}
     </div>
   )
@@ -393,12 +474,16 @@ function UserAccessModal({
   user,
   stations,
   grades,
+  allGrades,
+  profiles,
   onClose,
   onSaved,
 }: {
   user: Profile
   stations: Station[]
   grades: Grade[]
+  allGrades: Grade[]
+  profiles: Profile[]
   onClose: () => void
   onSaved: () => void
 }) {
@@ -407,19 +492,37 @@ function UserAccessModal({
     user.station_ids ?? (user.station_id ? [user.station_id] : []),
   )
   const [gradeId, setGradeId] = useState(user.grade_id ?? '')
+  const [supervisorId, setSupervisorId] = useState(user.supervisor_id ?? '')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  // "Reports to" candidates: confirmed accounts of a STRICTLY higher tier
+  // than this user's (selected) tier — which keeps the chain loop-free.
+  const tierOfP = (p: Profile) =>
+    p.grade_id ? allGrades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
+  const selTier = gradeId ? allGrades.find((g) => g.id === gradeId)?.sort_order ?? null : null
+  const supervisors = profiles
+    .filter((p) => {
+      if (p.id === user.id) return false
+      const t = tierOfP(p)
+      return t !== null && (selTier === null || t < selTier)
+    })
+    .sort((a, b) => (tierOfP(a)! - tierOfP(b)!) || profileName(a).localeCompare(profileName(b)))
+  const supGradeName = (p: Profile) =>
+    allGrades.find((g) => g.id === p.grade_id)?.name ?? '—'
 
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
     setSaving(true)
     const g = grades.find((x) => x.id === gradeId)
+    const validSupervisor = supervisors.some((p) => p.id === supervisorId)
     const fields: Partial<Profile> = {
       employee_code: employeeCode.trim() || null,
       station_ids: stationIds,
       station_id: stationIds[0] ?? null,
       grade_id: gradeId || null,
+      supervisor_id: validSupervisor ? supervisorId : null,
     }
     if (user.role !== 'admin') fields.role = roleForTier(g?.sort_order ?? null, g?.name)
     const { error } = await supabase.from('access_profiles').update(fields).eq('id', user.id)
@@ -473,6 +576,23 @@ function UserAccessModal({
           </select>
           <p className="tag-section-hint">
             What the tier can see and do is set in Settings → Tags management.
+          </p>
+        </div>
+
+        <div className="tag-section">
+          <div className="tag-section-title">Reports to (direct upper)</div>
+          <select value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)}>
+            <option value="">— no one yet —</option>
+            {supervisors.map((p) => (
+              <option key={p.id} value={p.id}>
+                {profileName(p)} · {supGradeName(p)}
+              </option>
+            ))}
+          </select>
+          <p className="tag-section-hint">
+            Only higher tiers can be chosen. This builds the team structure tree
+            — e.g. 4 operators under 1 assistant head, 2 assistant heads under 1
+            station head.
           </p>
         </div>
 

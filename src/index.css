@@ -716,6 +716,33 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .user-id-code { flex: none; width: 120px; }
 .user-id-code input { padding: 0.4rem 0.5rem; font-size: 0.85rem; }
 
+/* User access — panel view toggle + team structure tree */
+.view-toggle {
+  display: flex; gap: 0.2rem; background: var(--bg);
+  border-radius: 10px; padding: 0.2rem;
+}
+.view-toggle button {
+  appearance: none; border: none; cursor: pointer; background: none;
+  padding: 0.35rem 0.7rem; border-radius: 8px;
+  font-size: 0.8rem; font-weight: 600; color: var(--muted);
+}
+.view-toggle button.active {
+  background: var(--surface); color: var(--accent-strong);
+  box-shadow: 0 1px 3px rgba(25, 35, 50, 0.15);
+}
+.tree-row {
+  display: flex; align-items: center; gap: 0.55rem;
+  background: var(--bg); border-radius: 10px;
+  padding: 0.42rem 0.65rem; margin-bottom: 0.3rem; font-size: 0.85rem;
+}
+.tree-row .tree-name { font-weight: 700; white-space: nowrap; }
+.tree-row .tree-meta {
+  color: var(--muted); font-size: 0.75rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tree-row .tree-gear { margin-left: auto; flex: none; }
+.tree-elbow { color: var(--muted); font-size: 0.8rem; margin-right: -0.1rem; }
+
 /* User access — tier groups (expand to see that tier's users) */
 .tier-group { display: flex; flex-direction: column; gap: 0.3rem; }
 .tier-group-header {

@@ -812,3 +812,12 @@ begin
       where id = plain_job and approval_status = 'approved';
   end if;
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- Team structure: each user can point at the direct upper they report to
+-- (an account of a strictly HIGHER tier — enforced in the UI, which is what
+-- makes the reporting chain loop-free). Drawn as the tree in Settings →
+-- User access, and the basis for who verifies/approves whose work.
+-- ---------------------------------------------------------------------------
+alter table public.access_profiles add column if not exists supervisor_id uuid
+  references public.access_profiles (id) on delete set null;
