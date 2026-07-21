@@ -28,9 +28,12 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   { key: 'rate-create', label: 'Create piece rate', group: 'Piece rates' },
   { key: 'rate-verify', label: 'Verify piece rate', group: 'Piece rates' },
   { key: 'rate-approve', label: 'Approve piece rate', group: 'Piece rates' },
-  // System administration
+  // System administration — each one grantable per tier on its own
+  { key: 'tag-add', label: 'Add new tag', group: 'System' },
+  { key: 'tag-move', label: 'Move tag tiers', group: 'System' },
+  { key: 'tag-edit', label: "Edit tags' settings", group: 'System' },
+  { key: 'user-access', label: "Change other users' settings", group: 'System' },
   { key: 'station-create', label: 'Create & edit stations', group: 'System' },
-  { key: 'tag-edit', label: 'Edit tags management', group: 'System' },
   { key: 'report-view', label: 'See report module (dashboards)', group: 'System' },
 ]
 

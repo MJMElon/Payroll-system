@@ -664,10 +664,17 @@ update public.grades set capabilities = capabilities || '{report-view}'
   where ('verify' = any(capabilities) or 'approve' = any(capabilities))
     and not 'report-view' = any(capabilities);
 
+-- Tag admin split: "tag-edit" used to cover everything, so tiers holding it
+-- also get the new separate add/move keys.
+update public.grades set capabilities = capabilities || '{tag-add}'
+  where 'tag-edit' = any(capabilities) and not 'tag-add' = any(capabilities);
+update public.grades set capabilities = capabilities || '{tag-move}'
+  where 'tag-edit' = any(capabilities) and not 'tag-move' = any(capabilities);
+
 -- Tier 1 (Management) is the SUPER ADMIN: pinned at #1 and always holding
 -- every ability. Re-asserted on every run so it can never drift.
 update public.grades set capabilities =
-  '{data-entry,verify,approve,rate-create,rate-verify,rate-approve,station-create,tag-edit,report-view}'
+  '{data-entry,verify,approve,rate-create,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,station-create,report-view}'
   where sort_order = 1;
 
 -- Tag editing and station management follow the granted capabilities, not
@@ -687,6 +694,30 @@ create policy "admin manager manage stations" on public.stations
     public.my_role() in ('admin', 'manager')
     or public.my_tag_tier() = 1
     or 'station-create' = any(public.my_capabilities())
+  );
+
+-- Changing other users' settings is grantable too: tiers holding
+-- "user-access" may update profiles of LOWER tiers (never their own tier
+-- or above). Upper tiers keep their signup-confirmation rights.
+drop policy if exists "upper tier manages lower signups" on public.access_profiles;
+create policy "upper tier manages lower signups" on public.access_profiles
+  for update using (
+    public.my_tag_tier() = 1
+    or (
+      'user-access' = any(public.my_capabilities())
+      and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
+    )
+    or (
+      public.my_tag_tier() is not null
+      and public.my_tag_tier() < public.bottom_tier()
+      and not tags_confirmed
+      and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
+    )
+  )
+  with check (
+    public.my_tag_tier() = 1
+    or grade_id is null
+    or public.grade_tier(grade_id) > public.my_tag_tier()
   );
 
 -- ---------------------------------------------------------------------------
