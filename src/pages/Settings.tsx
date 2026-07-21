@@ -114,6 +114,15 @@ function UserAccessTab() {
   const assignableGrades = isAdmin
     ? grades
     : grades.filter((g) => myTier !== null && g.sort_order > myTier)
+  // The full control panel opens for admins, tier 1, and tiers granted the
+  // "Change other users' settings" capability — who may only edit users of
+  // a LOWER tier than their own.
+  const myCaps = effectiveCapabilities(
+    profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) : null,
+  )
+  const canManageUsers = isAdmin || myTier === 1 || myCaps.includes('user-access')
+  const userEditable = (p: Profile) =>
+    isAdmin || myTier === 1 || (myTier !== null && (tierOf(p) === null || tierOf(p)! > myTier))
 
   if (!canConfirm) {
     return (
@@ -159,7 +168,7 @@ function UserAccessTab() {
     <div className="stack">
       {error && <div className="error">{error}</div>}
 
-      {isAdmin && (
+      {canManageUsers && (
         <div className="grid-2">
           <div className="card stack compact approval-card">
             <h3>Piece rate approval</h3>
@@ -254,7 +263,7 @@ function UserAccessTab() {
       </div>
 
       {/* 2 — confirmed users */}
-      {isAdmin && (
+      {canManageUsers && (
         <div className="card stack">
           <h3>User access control panel</h3>
           <table className="table">
@@ -280,6 +289,7 @@ function UserAccessTab() {
                     <td className="muted small">{stationLabel(p)}</td>
                     <td>{g ? <span className={tagClass(g.color)}>{g.name}</span> : '—'}</td>
                     <td className="right">
+                      {userEditable(p) && (
                       <button
                         className="icon-btn sm"
                         title="Setting user access"
@@ -294,6 +304,7 @@ function UserAccessTab() {
                           <path d="M18 14.5v1M18 20.5v1M21.5 18h-1M15.5 18h-1" />
                         </svg>
                       </button>
+                      )}
                     </td>
                   </tr>
                 )
@@ -307,7 +318,7 @@ function UserAccessTab() {
         <UserAccessModal
           user={accessUser}
           stations={stations}
-          grades={grades}
+          grades={isAdmin || myTier === 1 ? grades : assignableGrades}
           onClose={() => setAccessUser(null)}
           onSaved={() => {
             setAccessUser(null)
@@ -563,13 +574,20 @@ function TagsTab() {
     load()
   }, [])
 
-  // Tag editing belongs to admins, tier 1 (the super admin) and any tier
-  // that tier 1 has granted the "Edit tags management" capability. Station
-  // management likewise follows the "Create & edit stations" capability.
+  // Each admin function is granted separately per tier by the super admin
+  // (tier 1): add new tag, move tag tiers, edit tags' settings, manage
+  // stations. Admins and tier 1 always have everything.
   const myGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
   const myTier = myGrade?.sort_order ?? null
   const myCaps = effectiveCapabilities(myGrade)
-  const canEditTags = profile?.role === 'admin' || myTier === 1 || myCaps.includes('tag-edit')
+  const isSuperUser = profile?.role === 'admin' || myTier === 1
+  const canAddTag = isSuperUser || myCaps.includes('tag-add')
+  const canMoveTags = isSuperUser || myCaps.includes('tag-move')
+  const canEditTags = isSuperUser || myCaps.includes('tag-edit')
+  // A granted (non-super) user may only touch tags BELOW their own tier —
+  // they can never promote themselves or change their superiors.
+  const rowEditable = (g: Grade) =>
+    g.sort_order !== 1 && (isSuperUser || (myTier !== null && g.sort_order > myTier))
   const canManageStations =
     profile?.role === 'admin' || profile?.role === 'manager' ||
     myTier === 1 || myCaps.includes('station-create')
@@ -581,8 +599,9 @@ function TagsTab() {
     const dragged = grades.find((g) => g.id === dragId)!
     const target = grades.find((g) => g.id === targetId)
     // The tier-1 tag is the super admin — pinned at #1: it can't be moved
-    // and nothing can be dropped above it.
-    if (dragged.sort_order === 1 || target?.sort_order === 1) {
+    // and nothing can be dropped above it. Granted users may only move
+    // tags below their own tier.
+    if (!target || !rowEditable(dragged) || !rowEditable(target)) {
       setDragId(null)
       return
     }
@@ -654,7 +673,7 @@ function TagsTab() {
       <div className="card stack">
         <div className="row-form spread">
           <h3>Tier tags</h3>
-          {canEditTags && (
+          {canAddTag && (
             <button className="btn" onClick={() => setEditor('new')}>+ Add tag</button>
           )}
         </div>
@@ -662,7 +681,7 @@ function TagsTab() {
         <table className="table">
           <thead>
             <tr>
-              {canEditTags && <th></th>}
+              {canMoveTags && <th></th>}
               <th>Tier</th>
               <th>Tag</th>
               <th>Can do</th>
@@ -675,7 +694,8 @@ function TagsTab() {
             )}
             {grades.map((g) => {
               const isSuper = g.sort_order === 1
-              const movable = canEditTags && !isSuper
+              const movable = canMoveTags && rowEditable(g)
+              const editable = canEditTags && (isSuper ? isSuperUser : rowEditable(g))
               return (
                 <tr
                   key={g.id}
@@ -683,16 +703,16 @@ function TagsTab() {
                   draggable={movable}
                   onDragStart={() => movable && setDragId(g.id)}
                   onDragEnd={() => setDragId(null)}
-                  onDragOver={(e) => canEditTags && e.preventDefault()}
+                  onDragOver={(e) => canMoveTags && e.preventDefault()}
                   onDrop={(e) => {
-                    if (!canEditTags) return
+                    if (!canMoveTags) return
                     e.preventDefault()
                     dropOnTag(g.id)
                   }}
                   title={isSuper ? 'Super admin — always tier 1' : movable ? 'Drag to change tier' : undefined}
                 >
-                  {canEditTags && (
-                    <td className="drag-handle" aria-hidden="true">{isSuper ? '📌' : '⠿'}</td>
+                  {canMoveTags && (
+                    <td className="drag-handle" aria-hidden="true">{isSuper ? '📌' : movable ? '⠿' : ''}</td>
                   )}
                   <td className="muted">{g.sort_order}</td>
                   <td><span className={tagClass(g.color)}>{g.name}</span></td>
@@ -711,11 +731,15 @@ function TagsTab() {
                   </td>
                   {canEditTags && (
                     <td className="right">
-                      <button className="linkbtn" onClick={() => setEditor(g)}>Edit</button>
-                      {!isSuper && (
+                      {editable && (
                         <>
-                          {' '}
-                          <button className="linkbtn danger" onClick={() => removeTag(g)}>Delete</button>
+                          <button className="linkbtn" onClick={() => setEditor(g)}>Edit</button>
+                          {!isSuper && (
+                            <>
+                              {' '}
+                              <button className="linkbtn danger" onClick={() => removeTag(g)}>Delete</button>
+                            </>
+                          )}
                         </>
                       )}
                     </td>
@@ -727,9 +751,9 @@ function TagsTab() {
         </table>
         <p className="muted small">
           Tier 1 is the highest and is the super admin — pinned at #1 with every ability.
-          {canEditTags
-            ? ' Drag the other rows up or down to change tiers — each tag sees its own tier and every tier below it.'
-            : ' Only the super admin, admins, or tiers granted "Edit tags management" can change tags.'}
+          {canMoveTags
+            ? ' Drag rows up or down to change tiers — each tag sees its own tier and every tier below it. Granted users can only touch tags below their own tier.'
+            : ' Adding, moving and editing tags are granted per tier by the super admin in each tag\'s "Can do" settings.'}
         </p>
       </div>
 
