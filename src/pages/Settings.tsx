@@ -451,6 +451,10 @@ function UserAccessModal({
 
         <div className="field">
           <span>Can see (modules on the web)</span>
+          <p className="muted small" style={{ margin: 0 }}>
+            The tier tag's modules (Tags management) are the maximum — these
+            boxes only narrow it further for this one user.
+          </p>
           <div className="stack" style={{ gap: '0.3rem' }}>
             {MODULE_OPTIONS.map((m) => (
               <label key={m.key} className="checkbox small" style={{ margin: 0 }}>
@@ -1016,7 +1020,11 @@ function TagEditModal({
   const isSuper = grade?.sort_order === 1
   const [name, setName] = useState(grade?.name ?? '')
   const [color, setColor] = useState(grade?.color ?? 'blue')
-  const modules = grade?.modules ?? [...DEFAULT_MODULES]
+  // Which web modules this TIER can see — the master switch. The per-user
+  // checkboxes in User access can only narrow it further for one person.
+  const [modules, setModules] = useState<string[]>(
+    isSuper ? MODULE_OPTIONS.map((m) => m.key) : grade?.modules ?? [...DEFAULT_MODULES],
+  )
   const [capabilities, setCapabilities] = useState<string[]>(
     isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade?.capabilities ?? ['data-entry']),
   )
@@ -1029,6 +1037,11 @@ function TagEditModal({
     setCapabilities((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]))
   }
 
+  function toggleModule(key: string) {
+    if (isSuper) return
+    setModules((m) => (m.includes(key) ? m.filter((k) => k !== key) : [...m, key]))
+  }
+
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
@@ -1036,7 +1049,10 @@ function TagEditModal({
     // Saved in the standardized order so "Can do" always reads the same,
     // no matter what sequence the boxes were ticked in.
     const caps = isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(capabilities)
-    const fields = { name: name.trim(), color, modules, capabilities: caps, ability: ability || null }
+    const mods = isSuper
+      ? MODULE_OPTIONS.map((m) => m.key)
+      : MODULE_OPTIONS.map((m) => m.key).filter((k) => modules.includes(k))
+    const fields = { name: name.trim(), color, modules: mods, capabilities: caps, ability: ability || null }
     const { error } = grade
       ? await supabase.from('grades').update(fields).eq('id', grade.id)
       : await supabase.from('grades').insert({ ...fields, sort_order: nextTier })
@@ -1082,6 +1098,28 @@ function TagEditModal({
             Piece rates of its own tier and every tier below. If the user also has
             station tags, only those stations' rates.
           </p>
+        </div>
+
+        <div className="field">
+          <span>Can see (modules)</span>
+          <p className="muted small" style={{ margin: 0 }}>
+            {isSuper
+              ? 'The super admin always sees every module.'
+              : "Which web modules this tier sees. Per-user checkboxes in User access can only narrow this further — never add beyond it."}
+          </p>
+          <div className="cap-group">
+            {MODULE_OPTIONS.map((m) => (
+              <label key={m.key} className="checkbox small" style={{ margin: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={modules.includes(m.key)}
+                  disabled={isSuper}
+                  onChange={() => toggleModule(m.key)}
+                />{' '}
+                {m.label}
+              </label>
+            ))}
+          </div>
         </div>
 
         <div className="field">

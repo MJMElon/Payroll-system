@@ -90,20 +90,29 @@ export default function Dashboard() {
   const { profile } = useAuth()
   const isManage = profile?.role === 'admin' || profile?.role === 'manager'
 
-  // What this USER can see — set per user in the access control panel.
-  // Falls back to the tag's modules for accounts saved before the change.
+  // What this USER can see. The TIER's modules (Settings → Tags management)
+  // are the master switch; the per-user checkboxes in User access can only
+  // narrow that list further, never extend it.
   const [allowed, setAllowed] = useState<string[] | null>(null)
   useEffect(() => {
     async function load() {
       if (isManage) return setAllowed(null) // null = everything
-      if (profile?.modules && profile.modules.length > 0) return setAllowed(profile.modules)
-      if (!profile?.grade_id) return setAllowed(DEFAULT_MODULES)
+      if (!profile?.grade_id) {
+        return setAllowed(
+          profile?.modules && profile.modules.length > 0 ? profile.modules : DEFAULT_MODULES,
+        )
+      }
       const { data } = await supabase
         .from('grades')
-        .select('modules')
+        .select('modules, sort_order')
         .eq('id', profile.grade_id)
         .maybeSingle()
-      setAllowed((data?.modules as string[] | undefined) ?? DEFAULT_MODULES)
+      if (data?.sort_order === 1) return setAllowed(null) // super admin sees everything
+      const tierMods = (data?.modules as string[] | undefined) ?? DEFAULT_MODULES
+      const userMods = profile?.modules
+      setAllowed(
+        userMods && userMods.length > 0 ? tierMods.filter((m) => userMods.includes(m)) : tierMods,
+      )
     }
     load()
   }, [profile, isManage])
