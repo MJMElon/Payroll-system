@@ -208,9 +208,11 @@ export default function DemoMobile() {
                     tier={tier}
                     grades={grades}
                     stations={stations}
+                    myStations={scopedStations}
                     jobs={jobs}
                     rateFor={rateFor}
                     canEntry={canEntry}
+                    jobColumnReady={jobColumnReady}
                     onError={setError}
                   />
                 ) : isUpper ? (
@@ -498,6 +500,61 @@ function StationScreen({
   onBack: () => void
   onError: (m: string | null) => void
 }) {
+  return (
+    <>
+      <div className="mob-header">
+        <button className="mob-back" onClick={onBack}>‹ Stations</button>
+        <span className="mob-brand">MJM</span>
+        <TierBadge tier={tier} />
+      </div>
+
+      <div className="mob-body">
+        {tier?.name === 'Management' ? (
+          <div className="mob-card">
+            <div className="mob-sub">We can't work under {station.name}.</div>
+          </div>
+        ) : (
+          <StationWorkPanel
+            station={station}
+            tier={tier}
+            grades={grades}
+            jobs={jobs}
+            rateFor={rateFor}
+            profileId={profileId}
+            jobColumnReady={jobColumnReady}
+            canEntry={canEntry}
+            onError={onError}
+          />
+        )}
+      </div>
+    </>
+  )
+}
+
+/* Job picker + stamp card + photo capture + hour-grouped records — shared
+   between the Performance tab's station drill-in and the Operator's merged
+   Record tab. */
+function StationWorkPanel({
+  station,
+  tier,
+  grades,
+  jobs,
+  rateFor,
+  profileId,
+  jobColumnReady,
+  canEntry,
+  onError,
+}: {
+  station: Station
+  tier: Grade | null
+  grades: Grade[]
+  jobs: Job[]
+  rateFor: (jobId: string) => number
+  profileId: string | null
+  jobColumnReady: boolean
+  canEntry: boolean
+  onError: (m: string | null) => void
+}) {
   const [viewDate, setViewDate] = useState(() => new Date())
   const [records, setRecords] = useState<PhotoRecord[]>([])
   const [stationEntries, setStationEntries] = useState<ProductionEntry[]>([])
@@ -686,19 +743,6 @@ function StationScreen({
 
   return (
     <>
-      <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Stations</button>
-        <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
-      </div>
-
-      <div className="mob-body">
-        {tier?.name === 'Management' ? (
-          <div className="mob-card">
-            <div className="mob-sub">We can't work under {station.name}.</div>
-          </div>
-        ) : (
-        <>
         {/* 1 — status stamp card */}
         <div className="mob-card mob-highlight">
           {station.hourly_count ? (
@@ -849,9 +893,6 @@ function StationScreen({
             records.map((r) => <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />)
           )}
         </div>
-        </>
-        )}
-      </div>
     </>
   )
 }
@@ -866,9 +907,11 @@ function RecordTab({
   tier,
   grades,
   stations,
+  myStations,
   jobs,
   rateFor,
   canEntry,
+  jobColumnReady,
   onError,
 }: {
   profileId: string | null
@@ -876,11 +919,14 @@ function RecordTab({
   tier: Grade | null
   grades: Grade[]
   stations: Station[]
+  myStations: Station[]
   jobs: Job[]
   rateFor: (jobId: string) => number
   canEntry: boolean
+  jobColumnReady: boolean
   onError: (m: string | null) => void
 }) {
+  const [myStationId, setMyStationId] = useState('')
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
   const [stationId, setStationId] = useState('')
@@ -977,6 +1023,71 @@ function RecordTab({
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
+
+  // Operators record work by taking photos at their own station, merged
+  // directly into this tab — no manual station/job/quantity form.
+  const isOperator = tier?.name === 'Operator'
+  const myStation = myStations.find((s) => s.id === myStationId) ?? myStations[0] ?? null
+
+  if (isOperator) {
+    return (
+      <>
+        <div className="mob-header">
+          <span className="mob-brand">MJM</span>
+          <TierBadge tier={tier} />
+        </div>
+
+        <div className="mob-body">
+          <div style={{ padding: '0 0.2rem' }}>
+            <div className="mob-role">Record work</div>
+            {myStation && <div className="mob-sub">{myStation.name}</div>}
+          </div>
+
+          {!canEntry ? (
+            <div className="mob-card">
+              <div className="mob-sub">
+                {tier ? `The ${tier.name} tier has no data entry permission.` : 'No data entry permission.'}
+              </div>
+            </div>
+          ) : myStations.length === 0 ? (
+            <div className="mob-card">
+              <div className="mob-sub">No station assigned yet — set your station tag in Settings.</div>
+            </div>
+          ) : (
+            <>
+              {myStations.length > 1 && (
+                <div className="mob-card">
+                  <div className="mob-field-label">Station</div>
+                  <select
+                    className="mob-select"
+                    value={myStation?.id ?? ''}
+                    onChange={(e) => setMyStationId(e.target.value)}
+                  >
+                    {myStations.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {myStation && (
+                <StationWorkPanel
+                  station={myStation}
+                  tier={tier}
+                  grades={grades}
+                  jobs={jobs}
+                  rateFor={rateFor}
+                  profileId={profileId}
+                  jobColumnReady={jobColumnReady}
+                  canEntry={canEntry}
+                  onError={onError}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
