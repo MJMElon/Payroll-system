@@ -5,12 +5,14 @@
 // DESCRIPTION, each with its own unit and rate. Every new contract — admin
 // submissions included — waits in the Approvals queue until a 'verify'
 // capability holder checks it, then an 'approve' capability holder (or an
-// admin, who can do either step) signs off. The page is split into two
-// sidebar sections: Piece Rate Entry (create + track submissions of any
-// status) and Piece Rate Listing (approved contracts only). Everyone can
-// open the listing, but non-managers only see rates for their own grade tier
-// and below (tier = the tag's order in Settings). Station and Tag column
-// headers are themselves dropdown filters.
+// admin, who can do either step) signs off. The page has three sidebar
+// sections: Pending Piece Rate Approval (submissions not yet approved),
+// Piece Rate Masterlist (approved contracts, pivoted so each tag/position
+// is its own column for a station + work description), and Piece Rate History
+// (past rate changes for approved contracts, derived from piece_rates rows
+// — no separate history table). Everyone can open the listing, but
+// non-managers only see rates for their own grade tier and below (tier =
+// the tag's order in Settings).
 // Tables used: stations, grades, jobs, piece_rates (see supabase/setup.sql).
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
@@ -28,6 +30,9 @@ import {
 
 const UNIT_SUGGESTIONS = ['/cage tipped', '/job done', '/tonne', '/bunch', '/trip', '/hour']
 
+// Bucket key for jobs with no tag, so the pivoted tables still give them a column.
+const NO_TAG = '__none__'
+
 export default function PieceRate() {
   const { profile } = useAuth()
   const [stations, setStations] = useState<Station[]>([])
@@ -39,7 +44,7 @@ export default function PieceRate() {
   const isAdmin = profile?.role === 'admin'
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
   const [showApprovals, setShowApprovals] = useState(false)
-  const [tab, setTab] = useState<'entry' | 'listing'>('entry')
+  const [tab, setTab] = useState<'approval' | 'master' | 'history'>('approval')
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -116,6 +121,7 @@ export default function PieceRate() {
   const openApprovals = jobs.filter(
     (j) => j.approval_status === 'pending' || j.approval_status === 'verified',
   )
+  const notYetApproved = jobs.filter((j) => j.approval_status !== 'approved')
 
   // Managers/admins see every contract. Others are scoped two ways:
   // 1. Station — a user with station tags only sees those stations.
@@ -151,22 +157,35 @@ export default function PieceRate() {
         <nav className="sidebar-nav">
           <button
             type="button"
-            className={`sidebar-link ${tab === 'entry' ? 'active' : ''}`}
-            onClick={() => setTab('entry')}
+            className={`sidebar-link ${tab === 'approval' ? 'active' : ''}`}
+            onClick={() => setTab('approval')}
           >
-            Piece Rate Entry
+            <IconApproval />
+            <span>Pending Approval</span>
+            {openApprovals.length > 0 && (
+              <span className="count-badge static">{openApprovals.length}</span>
+            )}
           </button>
           <button
             type="button"
-            className={`sidebar-link ${tab === 'listing' ? 'active' : ''}`}
-            onClick={() => setTab('listing')}
+            className={`sidebar-link ${tab === 'master' ? 'active' : ''}`}
+            onClick={() => setTab('master')}
           >
-            Piece Rate Listing
+            <IconMaster />
+            <span>Piece Rate Masterlist</span>
+          </button>
+          <button
+            type="button"
+            className={`sidebar-link ${tab === 'history' ? 'active' : ''}`}
+            onClick={() => setTab('history')}
+          >
+            <IconHistory />
+            <span>Piece Rate History</span>
           </button>
         </nav>
 
         <div className="sidebar-content stack">
-          {tab === 'entry' ? (
+          {tab === 'approval' ? (
             <>
               <div className="row-form" style={{ justifyContent: 'flex-end' }}>
                 {isApprover && (
@@ -186,7 +205,7 @@ export default function PieceRate() {
                 <SubmissionsList
                   stations={stations}
                   grades={grades}
-                  jobs={jobs}
+                  jobs={notYetApproved}
                   currentRate={latestRate}
                   pendingCount={openApprovals.length}
                   canManage={canManage}
@@ -198,7 +217,7 @@ export default function PieceRate() {
                 <p className="muted">You don't have access to submit or review piece rates.</p>
               )}
             </>
-          ) : (
+          ) : tab === 'master' ? (
             <RatesList
               stations={stations}
               grades={grades}
@@ -208,6 +227,13 @@ export default function PieceRate() {
               onEdit={(j) => setModal(j)}
               onChanged={load}
               onError={setError}
+            />
+          ) : (
+            <HistoryList
+              stations={stations}
+              grades={grades}
+              jobs={jobs.filter(visibleTo)}
+              rates={rates}
             />
           )}
         </div>
@@ -244,6 +270,91 @@ export default function PieceRate() {
       )}
     </div>
   )
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar icons                                                      */
+/* ------------------------------------------------------------------ */
+
+function IconApproval() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="6" y="3" width="12" height="18" rx="2" />
+      <path d="M9 3h6" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  )
+}
+
+function IconMaster() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 10h18" />
+      <path d="M9 4v16" />
+    </svg>
+  )
+}
+
+function IconHistory() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 3" />
+    </svg>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Grouping helpers — shared by Piece Rate Masterlist and History, which */
+/* both pivot rows by Station + Work description so each tag/position */
+/* gets its own column instead of one row per contract.               */
+/* ------------------------------------------------------------------ */
+
+interface JobGroup {
+  station_id: string
+  name: string
+  jobs: Job[]
+}
+
+function groupKey(g: { station_id: string; name: string }) {
+  return `${g.station_id}::${g.name}`
+}
+
+function groupJobs(jobs: Job[]): JobGroup[] {
+  const m = new Map<string, JobGroup>()
+  for (const j of jobs) {
+    const key = groupKey(j)
+    let g = m.get(key)
+    if (!g) {
+      g = { station_id: j.station_id, name: j.name, jobs: [] }
+      m.set(key, g)
+    }
+    g.jobs.push(j)
+  }
+  return [...m.values()]
+}
+
+// The Master/History pivot only ever shows these three positions, in this
+// order — other tags (e.g. Management, Manager, Engineer) are left out.
+const MASTER_TAG_ORDER = ['Operator', 'Assistant Station Head', 'Station Head']
+
+/** One pivoted column per tag in MASTER_TAG_ORDER that exists in `grades`. */
+function tagColumns(grades: Grade[]): { key: string; label: string }[] {
+  const byName = new Map(grades.map((g) => [g.name, g]))
+  return MASTER_TAG_ORDER
+    .map((name) => byName.get(name))
+    .filter((g): g is Grade => Boolean(g))
+    .map((g) => ({ key: g.id, label: g.name }))
+}
+
+function addDays(dateStr: string, delta: number) {
+  const d = new Date(`${dateStr}T00:00:00`)
+  d.setDate(d.getDate() + delta)
+  return d.toISOString().slice(0, 10)
 }
 
 /* ------------------------------------------------------------------ */
@@ -318,7 +429,8 @@ function ApprovalModal({
                       {rate && <> · effective {rate.effective_from}</>}
                     </div>
                     <div className="small approval-trail">
-                      {j.approval_status === 'pending' && <span className="badge off">waiting verification</span>}
+                      {j.approval_status === 'pending' && <span className="badge warn">waiting verification</span>}
+                      {j.approval_status === 'verified' && <span className="badge warn">waiting approval</span>}
                       {j.verified_by && (
                         <span className="badge ok">verified by {j.verified_by}</span>
                       )}
@@ -349,7 +461,7 @@ function ApprovalModal({
 }
 
 /* ------------------------------------------------------------------ */
-/* Submissions tracker — every piece rate regardless of status, so    */
+/* Pending Approval tracker — every piece rate not yet approved, so   */
 /* creators and approvers can see where a submission stands.          */
 /* ------------------------------------------------------------------ */
 
@@ -361,8 +473,8 @@ const STATUS_LABEL: Record<Job['approval_status'], string> = {
 }
 
 const STATUS_CLASS: Record<Job['approval_status'], string> = {
-  pending: 'badge off',
-  verified: 'badge off',
+  pending: 'badge warn',
+  verified: 'badge warn',
   approved: 'badge ok',
   rejected: 'badge new',
 }
@@ -418,7 +530,7 @@ function SubmissionsList({
           )}
         </h3>
         <select
-          className={`th-filter ${stationFilter ? 'active' : ''}`}
+          className="filter-select"
           value={stationFilter}
           onChange={(e) => setStationFilter(e.target.value)}
           title="Filter by station"
@@ -429,57 +541,60 @@ function SubmissionsList({
           ))}
         </select>
       </div>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Station</th>
-            <th>Work description</th>
-            <th>Tag</th>
-            <th>Unit</th>
-            <th className="right">Rate</th>
-            <th>Effective date</th>
-            <th>Status</th>
-            {canManage && <th className="right">Actions</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {list.length === 0 && (
+      <div className="table-scroll">
+        <table className="table">
+          <thead>
             <tr>
-              <td colSpan={canManage ? 8 : 7} className="muted">No submissions yet.</td>
+              <th>Station</th>
+              <th>Work description</th>
+              <th>Position</th>
+              <th>Unit</th>
+              <th className="right">Proposed rate</th>
+              <th>Effective date</th>
+              <th>Status</th>
+              {canManage && <th className="right">Actions</th>}
             </tr>
-          )}
-          {list.map((j) => {
-            const rate = currentRate.get(j.id)
-            const tag = gradeName(j.grade_id)
-            return (
-              <tr key={j.id}>
-                <td>{stationName(j.station_id)}</td>
-                <td>{j.name}</td>
-                <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
-                <td className="muted">{j.unit}</td>
-                <td className="right">
-                  {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="badge off">no rate</span>}
-                </td>
-                <td className="muted">{rate ? rate.effective_from : '—'}</td>
-                <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
-                {canManage && (
-                  <td className="right">
-                    <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
-                    <button className="linkbtn danger" onClick={() => remove(j)}>Delete</button>
-                  </td>
-                )}
+          </thead>
+          <tbody>
+            {list.length === 0 && (
+              <tr>
+                <td colSpan={canManage ? 8 : 7} className="muted">Nothing waiting for approval.</td>
               </tr>
-            )
-          })}
-        </tbody>
-      </table>
+            )}
+            {list.map((j) => {
+              const rate = currentRate.get(j.id)
+              const tag = gradeName(j.grade_id)
+              return (
+                <tr key={j.id}>
+                  <td>{stationName(j.station_id)}</td>
+                  <td>{j.name}</td>
+                  <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
+                  <td className="muted">{j.unit}</td>
+                  <td className="right">
+                    {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="badge off">no rate</span>}
+                  </td>
+                  <td className="muted">{rate ? rate.effective_from : '—'}</td>
+                  <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
+                  {canManage && (
+                    <td className="right">
+                      <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
+                      <button className="linkbtn danger" onClick={() => remove(j)}>Delete</button>
+                    </td>
+                  )}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
       <p className="muted small">{list.length} submission(s) shown.</p>
     </div>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/* Contract list — Station and Tag column headers are the filters.    */
+/* Piece Rate Masterlist — approved contracts, pivoted so each tag/    */
+/* position for a Station + Work description is its own column.       */
 /* ------------------------------------------------------------------ */
 
 function RatesList({
@@ -502,105 +617,106 @@ function RatesList({
   onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
-  const [gradeFilter, setGradeFilter] = useState('')
+  const [search, setSearch] = useState('')
   const [showInactive, setShowInactive] = useState(false)
+  const [manageGroup, setManageGroup] = useState<JobGroup | null>(null)
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
 
-  async function setActive(job: Job, active: boolean) {
-    const { error } = await supabase.from('jobs').update({ active }).eq('id', job.id)
-    if (error) onError(error.message)
-    else onChanged()
-  }
-
-  const list = jobs
+  const filtered = jobs
     .filter((j) => (showInactive ? true : j.active))
     .filter((j) => (stationFilter ? j.station_id === stationFilter : true))
-    .filter((j) => (gradeFilter ? j.grade_id === gradeFilter : true))
-    .sort(
-      (a, b) =>
-        stationName(a.station_id).localeCompare(stationName(b.station_id)) ||
-        a.name.localeCompare(b.name),
-    )
+    .filter((j) => (search.trim() ? j.name.toLowerCase().includes(search.trim().toLowerCase()) : true))
+
+  const groups = groupJobs(filtered).sort(
+    (a, b) => stationName(a.station_id).localeCompare(stationName(b.station_id)) || a.name.localeCompare(b.name),
+  )
+  const tagCols = tagColumns(grades)
+  const colCount = 3 + tagCols.length + 2 + (canManage ? 1 : 0)
 
   return (
     <div className="card stack">
-      <h3>Piece Rate Listing</h3>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>
-              <select
-                className={`th-filter ${stationFilter ? 'active' : ''}`}
-                value={stationFilter}
-                onChange={(e) => setStationFilter(e.target.value)}
-                title="Filter by station"
-              >
-                <option value="">Station ▾</option>
-                {stations.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </th>
-            <th>Work description</th>
-            <th>
-              <select
-                className={`th-filter ${gradeFilter ? 'active' : ''}`}
-                value={gradeFilter}
-                onChange={(e) => setGradeFilter(e.target.value)}
-                title="Filter by tag"
-              >
-                <option value="">Tag ▾</option>
-                {grades.map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-            </th>
-            <th>Unit</th>
-            <th className="right">Rate</th>
-            <th>Effective date</th>
-            {canManage && <th className="right">Actions</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {list.length === 0 && (
-            <tr>
-              <td colSpan={canManage ? 7 : 6} className="muted">
-                No piece rates here — click “Create new piece rate” to add one.
-              </td>
-            </tr>
-          )}
-          {list.map((j) => {
-            const rate = currentRate.get(j.id)
-            const tag = gradeName(j.grade_id)
-            return (
-              <tr key={j.id} className={j.active ? '' : 'muted'}>
-                <td>{stationName(j.station_id)}</td>
-                <td>{j.name}{!j.active && ' (inactive)'}</td>
-                <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
-                <td className="muted">{j.unit}</td>
-                <td className="right">
-                  {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="badge off">no rate</span>}
-                </td>
-                <td className="muted">{rate ? rate.effective_from : '—'}</td>
-                {canManage && (
-                  <td className="right">
-                    <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
-                    {j.active ? (
-                      <button className="linkbtn danger" onClick={() => setActive(j, false)}>Deactivate</button>
-                    ) : (
-                      <button className="linkbtn" onClick={() => setActive(j, true)}>Reactivate</button>
-                    )}
-                  </td>
-                )}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
       <div className="row-form spread">
-        <p className="muted small">{list.length} contract(s) shown.</p>
+        <h3>Piece Rate Masterlist</h3>
+        <div className="row-form">
+          <select
+            className="filter-select"
+            value={stationFilter}
+            onChange={(e) => setStationFilter(e.target.value)}
+            title="Filter by station"
+          >
+            <option value="">All stations</option>
+            {stations.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search work description…"
+            style={{ minWidth: '220px' }}
+          />
+        </div>
+      </div>
+      <div className="table-scroll">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Station</th>
+              <th>Work description</th>
+              <th>Unit</th>
+              {tagCols.map((c) => (
+                <th key={c.key} className="right">{c.label} (RM)</th>
+              ))}
+              <th>Effective date</th>
+              <th>Status</th>
+              {canManage && <th className="right">Actions</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {groups.length === 0 && (
+              <tr>
+                <td colSpan={colCount} className="muted">
+                  No piece rates here — click “Create new piece rate” to add one.
+                </td>
+              </tr>
+            )}
+            {groups.map((g) => {
+              const rowActive = g.jobs.some((j) => j.active)
+              const dates = g.jobs
+                .map((j) => currentRate.get(j.id)?.effective_from)
+                .filter((d): d is string => Boolean(d))
+                .sort()
+              const effectiveDate = dates.length ? dates[dates.length - 1] : null
+              return (
+                <tr key={groupKey(g)} className={rowActive ? '' : 'muted'}>
+                  <td>{stationName(g.station_id)}</td>
+                  <td>{g.name}{!rowActive && ' (inactive)'}</td>
+                  <td className="muted">{g.jobs[0]?.unit}</td>
+                  {tagCols.map((c) => {
+                    const j = g.jobs.find((x) => (x.grade_id ?? NO_TAG) === c.key)
+                    const rate = j ? currentRate.get(j.id) : undefined
+                    return (
+                      <td key={c.key} className="right">
+                        {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="muted">—</span>}
+                      </td>
+                    )
+                  })}
+                  <td className="muted">{effectiveDate ?? '—'}</td>
+                  <td>{rowActive ? <span className="badge ok">Active</span> : <span className="badge off">Inactive</span>}</td>
+                  {canManage && (
+                    <td className="right">
+                      <button className="linkbtn" onClick={() => setManageGroup(g)}>Manage</button>
+                    </td>
+                  )}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="row-form spread">
+        <p className="muted small">{groups.length} work item(s) shown.</p>
         <label className="small muted checkbox">
           <input
             type="checkbox"
@@ -610,6 +726,247 @@ function RatesList({
           Show inactive
         </label>
       </div>
+
+      {manageGroup && (
+        <GroupManageModal
+          jobs={manageGroup.jobs}
+          stationName={stationName(manageGroup.station_id)}
+          grades={grades}
+          currentRate={currentRate}
+          onEdit={onEdit}
+          onChanged={onChanged}
+          onError={onError}
+          onClose={() => setManageGroup(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Per-tag detail behind a Master row's "Manage" action — same edit/deactivate
+ *  controls the listing used to expose per row, one line per tag/position. */
+function GroupManageModal({
+  jobs,
+  stationName,
+  grades,
+  currentRate,
+  onEdit,
+  onChanged,
+  onError,
+  onClose,
+}: {
+  jobs: Job[]
+  stationName: string
+  grades: Grade[]
+  currentRate: Map<string, Rate>
+  onEdit: (j: Job) => void
+  onChanged: () => void
+  onError: (m: string | null) => void
+  onClose: () => void
+}) {
+  const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? 'No tag'
+
+  async function setActive(job: Job, active: boolean) {
+    const { error } = await supabase.from('jobs').update({ active }).eq('id', job.id)
+    if (error) onError(error.message)
+    else onChanged()
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <div className="row-form spread">
+          <h2>{jobs[0]?.name} — {stationName}</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div className="stack">
+          {jobs.map((j) => {
+            const rate = currentRate.get(j.id)
+            return (
+              <div className="approval-item" key={j.id}>
+                <div className="row-form spread">
+                  <div>
+                    <strong>{gradeName(j.grade_id)}</strong>{' '}
+                    {!j.active && <span className="badge off">inactive</span>}
+                    <div className="muted small">
+                      {j.unit} · rate <strong>{rate ? Number(rate.rate).toFixed(2) : '—'}</strong>
+                      {rate && <> · effective {rate.effective_from}</>}
+                    </div>
+                  </div>
+                  <div className="row-form">
+                    <button className="linkbtn" onClick={() => { onClose(); onEdit(j) }}>Edit</button>
+                    {j.active ? (
+                      <button className="linkbtn danger" onClick={() => setActive(j, false)}>Deactivate</button>
+                    ) : (
+                      <button className="linkbtn" onClick={() => setActive(j, true)}>Reactivate</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Piece Rate History — every past rate change for approved contracts, */
+/* derived from piece_rates rows (no separate history table). Pivoted */
+/* the same way as Master, with one row per distinct effective date   */
+/* the group changed on.                                              */
+/* ------------------------------------------------------------------ */
+
+interface HistoryRow {
+  effectiveFrom: string
+  effectiveTo: string | null
+  status: 'current' | 'scheduled' | 'inactive'
+  rateByKey: Map<string, Rate>
+}
+
+type HistoryGroup = JobGroup & { rows: HistoryRow[] }
+
+function buildHistory(jobs: Job[], rates: Rate[]): HistoryGroup[] {
+  const approved = jobs.filter((j) => j.approval_status === 'approved')
+  const groups = groupJobs(approved)
+
+  const ratesByJob = new Map<string, Rate[]>()
+  for (const r of rates) {
+    if (!ratesByJob.has(r.job_id)) ratesByJob.set(r.job_id, [])
+    ratesByJob.get(r.job_id)!.push(r)
+  }
+  for (const list of ratesByJob.values()) list.sort((a, b) => a.effective_from.localeCompare(b.effective_from))
+
+  const today = todayISO()
+  return groups.map((g) => {
+    const changeDates = [
+      ...new Set(g.jobs.flatMap((j) => (ratesByJob.get(j.id) ?? []).map((r) => r.effective_from))),
+    ].sort()
+
+    const rows: HistoryRow[] = changeDates.map((date, i) => {
+      const rateByKey = new Map<string, Rate>()
+      for (const j of g.jobs) {
+        const list = ratesByJob.get(j.id) ?? []
+        let found: Rate | undefined
+        for (const r of list) {
+          if (r.effective_from <= date) found = r
+          else break
+        }
+        if (found) rateByKey.set(j.grade_id ?? NO_TAG, found)
+      }
+      const nextDate = changeDates[i + 1]
+      const effectiveTo = nextDate ? addDays(nextDate, -1) : null
+      const status: HistoryRow['status'] = effectiveTo ? 'inactive' : date <= today ? 'current' : 'scheduled'
+      return { effectiveFrom: date, effectiveTo, status, rateByKey }
+    })
+
+    return { ...g, rows }
+  })
+}
+
+function HistoryList({
+  stations,
+  grades,
+  jobs,
+  rates,
+}: {
+  stations: Station[]
+  grades: Grade[]
+  jobs: Job[]
+  rates: Rate[]
+}) {
+  const [stationFilter, setStationFilter] = useState('')
+  const [search, setSearch] = useState('')
+
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+
+  const filteredJobs = jobs
+    .filter((j) => (stationFilter ? j.station_id === stationFilter : true))
+    .filter((j) => (search.trim() ? j.name.toLowerCase().includes(search.trim().toLowerCase()) : true))
+
+  const groups = buildHistory(filteredJobs, rates).sort(
+    (a, b) => stationName(a.station_id).localeCompare(stationName(b.station_id)) || a.name.localeCompare(b.name),
+  )
+  const tagCols = tagColumns(grades)
+  const colCount = 5 + tagCols.length + 1
+  const rowCount = groups.reduce((n, g) => n + g.rows.length, 0)
+
+  return (
+    <div className="card stack">
+      <div className="row-form spread">
+        <h3>Piece Rate History</h3>
+        <div className="row-form">
+          <select
+            className="filter-select"
+            value={stationFilter}
+            onChange={(e) => setStationFilter(e.target.value)}
+            title="Filter by station"
+          >
+            <option value="">All stations</option>
+            {stations.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search work description…"
+            style={{ minWidth: '220px' }}
+          />
+        </div>
+      </div>
+      <div className="table-scroll">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Station</th>
+              <th>Work description</th>
+              <th>Unit</th>
+              <th>Effective from</th>
+              <th>Effective to</th>
+              {tagCols.map((c) => (
+                <th key={c.key} className="right">{c.label} (RM)</th>
+              ))}
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rowCount === 0 && (
+              <tr>
+                <td colSpan={colCount} className="muted">No rate history yet.</td>
+              </tr>
+            )}
+            {groups.flatMap((g) =>
+              g.rows.map((row, i) => (
+                <tr key={`${groupKey(g)}::${row.effectiveFrom}`}>
+                  <td>{i === 0 ? stationName(g.station_id) : ''}</td>
+                  <td>{i === 0 ? g.name : ''}</td>
+                  <td className="muted">{i === 0 ? g.jobs[0]?.unit : ''}</td>
+                  <td className="muted">{row.effectiveFrom}</td>
+                  <td className="muted">
+                    {row.status === 'current' ? 'Current' : row.status === 'scheduled' ? 'Scheduled' : row.effectiveTo}
+                  </td>
+                  {tagCols.map((c) => {
+                    const rate = row.rateByKey.get(c.key)
+                    return (
+                      <td key={c.key} className="right">
+                        {rate ? <strong>{Number(rate.rate).toFixed(2)}</strong> : <span className="muted">—</span>}
+                      </td>
+                    )
+                  })}
+                  <td>
+                    {row.status === 'current' && <span className="badge ok">Current</span>}
+                    {row.status === 'scheduled' && <span className="badge off">Scheduled</span>}
+                    {row.status === 'inactive' && <span className="badge off">Inactive</span>}
+                  </td>
+                </tr>
+              )),
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted small">{rowCount} rate change(s) across {groups.length} work item(s).</p>
     </div>
   )
 }

@@ -358,6 +358,7 @@ function UserAccessModal({
   onSaved: () => void
 }) {
   const [name, setName] = useState(user.full_name ?? '')
+  const [employeeCode, setEmployeeCode] = useState(user.employee_code ?? '')
   const [stationIds, setStationIds] = useState<string[]>(
     user.station_ids ?? (user.station_id ? [user.station_id] : []),
   )
@@ -379,6 +380,7 @@ function UserAccessModal({
     const g = grades.find((x) => x.id === gradeId)
     const fields: Partial<Profile> = {
       full_name: name.trim() || null,
+      employee_code: employeeCode.trim() || null,
       station_ids: stationIds,
       station_id: stationIds[0] ?? null,
       grade_id: gradeId || null,
@@ -404,6 +406,16 @@ function UserAccessModal({
         <label className="field">
           <span>Name (keyed in at sign up)</span>
           <input value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+
+        <label className="field">
+          <span>Employee code (optional)</span>
+          <input
+            value={employeeCode}
+            onChange={(e) => setEmployeeCode(e.target.value)}
+            placeholder="e.g. EMP001"
+          />
+          <span className="small">Shown next to the name when picking an employee in Daily Job Record.</span>
         </label>
 
         <div className="field">

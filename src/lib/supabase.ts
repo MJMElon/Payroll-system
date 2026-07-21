@@ -36,6 +36,7 @@ export interface Profile {
   approval_role: 'verify' | 'approve' | null
   modules?: string[] | null
   tags_confirmed?: boolean
+  employee_code?: string | null
 }
 
 // Rows of the work tables (see supabase/setup.sql).
@@ -55,6 +56,7 @@ export interface PhotoRecord {
   photo_path: string | null
   taken_at: string
   entry_id?: string | null
+  job_id?: string | null
 }
 
 export interface Worker {
@@ -104,6 +106,7 @@ export interface ProductionEntry {
   user_id: string | null
   quantity: number
   notes: string | null
+  shift: 'a' | 'b' | null
   created_by: string | null
   created_at: string
   // Mobile work-entry approval flow (older queries don't select these).

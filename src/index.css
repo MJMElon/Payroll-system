@@ -96,6 +96,7 @@ a { color: inherit; }
 .account { display: flex; align-items: center; gap: 0.75rem; margin-left: auto; }
 
 .content { width: 100%; max-width: var(--maxw); margin: 0 auto; padding: 1.5rem 1.25rem; }
+.content.content-wide { max-width: 1440px; }
 
 /* Building blocks */
 .stack { display: flex; flex-direction: column; gap: 1.25rem; }
@@ -130,6 +131,39 @@ input {
   border-radius: 8px; font-size: 0.95rem; background: var(--surface); color: var(--text);
 }
 input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+input:read-only, input:disabled, textarea:read-only, textarea:disabled { background: var(--bg); color: var(--muted); }
+textarea {
+  padding: 0.6rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 0.95rem; background: var(--surface); color: var(--text);
+  font-family: inherit; resize: vertical;
+}
+textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+/* Breadcrumb trail (e.g. Daily Job Record > Add Job Record) */
+.breadcrumb { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; margin-bottom: 0.6rem; }
+.breadcrumb a { color: var(--muted); text-decoration: none; }
+.breadcrumb a:hover { color: var(--text); text-decoration: underline; }
+.breadcrumb .sep { color: var(--muted); }
+.breadcrumb .current { color: var(--accent-strong); font-weight: 600; }
+
+/* Numbered form section */
+.form-section h3 { display: flex; align-items: center; gap: 0.4rem; }
+
+/* Soft blue info panel (e.g. auto-loaded rate) */
+.info-panel {
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px; padding: 0.9rem 1rem;
+  display: flex; flex-direction: column; gap: 0.6rem;
+}
+.info-panel .info-label { color: #1d4ed8; font-weight: 700; font-size: 0.85rem; }
+.info-panel .info-row { display: flex; gap: 0.8rem; }
+.info-panel .info-row .field { flex: 1; }
+.info-panel input { border-color: #bfdbfe; }
+
+/* Calculation row: rate × quantity = amount */
+.calc-row { display: flex; align-items: flex-end; gap: 0.8rem; }
+.calc-row .field { flex: 1; }
+.calc-op { padding-bottom: 0.7rem; color: var(--muted); font-weight: 700; }
+.calc-amount { color: #166534; font-weight: 700; }
 
 .btn {
   appearance: none; border: none; cursor: pointer;
@@ -165,6 +199,11 @@ select {
 }
 select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 
+/* Standalone filter dropdown (e.g. "All stations") — same bordered look as
+   any select, just a bit wider so the label isn't cramped. */
+.filter-select { min-width: 160px; }
+.filter-select:hover { border-color: var(--accent); }
+
 /* Tabs */
 .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); }
 .tab {
@@ -182,13 +221,20 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
   border-right: 1px solid var(--border); padding-right: 1rem;
 }
 .sidebar-link {
+  display: flex; align-items: center; gap: 0.6rem;
   appearance: none; background: none; border: none; cursor: pointer;
   text-align: left; padding: 0.6rem 0.7rem; border-radius: 10px;
   font-size: 0.92rem; color: var(--muted);
 }
+.sidebar-link svg { flex-shrink: 0; }
+.sidebar-link .count-badge.static { margin-left: auto; }
 .sidebar-link:hover { color: var(--text); background: var(--accent-soft); }
 .sidebar-link.active { color: var(--accent-strong); background: var(--accent-soft); font-weight: 600; }
 .sidebar-content { flex: 1; min-width: 0; }
+
+/* Wide pivoted tables (Piece Rate Master / History) scroll instead of
+   squeezing columns or overflowing the page. */
+.table-scroll { overflow-x: auto; }
 
 @media (max-width: 720px) {
   .sidebar-layout { flex-direction: column; }
@@ -362,8 +408,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px;
   font-size: 0.75rem; font-weight: 500;
 }
-.badge.ok { background: var(--accent-soft); color: var(--accent-strong); }
+.badge.ok { background: #dcfce7; color: #166534; }
 .badge.off { background: #ecedf0; color: var(--muted); }
+.badge.warn { background: #fef3c7; color: #92400e; }
 .badge.new { background: #fee2e2; color: #b91c1c; }
 
 /* Dashboard stats */
@@ -421,6 +468,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .module-grid .module-tile:nth-child(2) { animation-delay: 1.2s; }
 .module-grid .module-tile:nth-child(3) { animation-delay: 2.4s; }
 .module-grid .module-tile:nth-child(4) { animation-delay: 3.6s; }
+/* Non-draggable module tile (e.g. a station picker, not the reorderable
+   main-page grid) — skip the grab cursor and floating animation. */
+.module-tile.static { cursor: pointer; animation: none; }
 @keyframes tile-float {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-7px); }

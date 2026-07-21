@@ -274,6 +274,14 @@ drop policy if exists "admin manager delete photo records" on public.photo_recor
 create policy "admin manager delete photo records" on public.photo_records
   for delete using (public.my_role() in ('admin', 'manager'));
 
+-- Needed so an elapsed hour's photos can be linked to the production entry
+-- auto-created from their count (sets entry_id after the fact).
+drop policy if exists "owner links photo records to entry" on public.photo_records;
+create policy "owner links photo records to entry" on public.photo_records
+  for update using (
+    created_by = auth.uid() or public.my_role() in ('admin', 'manager')
+  );
+
 -- Storage bucket for the photos (public so thumbnails render directly).
 insert into storage.buckets (id, name, public)
 values ('records', 'records', true)
@@ -332,6 +340,11 @@ $$;
 update public.grades set modules = '{station-status,piece-rate,payroll,demo-mobile}'
   where name in ('Management', 'Manager', 'Engineer')
     and modules = '{station-status,piece-rate}';
+
+-- Daily Job Record: for the tags that actually record production entries.
+update public.grades set modules = array_append(modules, 'daily-job-record')
+  where name in ('Operator', 'Assistant Station Head', 'Station Head', 'General Worker')
+    and not ('daily-job-record' = any(modules));
 
 
 update public.workers set grade_id = null
@@ -556,6 +569,11 @@ alter table public.production_entries add column if not exists approved_by text;
 alter table public.production_entries add column if not exists approved_at timestamptz;
 alter table public.photo_records add column if not exists entry_id uuid references public.production_entries (id) on delete set null;
 
+-- Hourly piece-work photos (mobile view): each photo is tagged with the job
+-- it's being counted against, so an elapsed hour's photo count can convert
+-- into a production entry priced at that job's approved rate.
+alter table public.photo_records add column if not exists job_id uuid references public.jobs (id);
+
 -- Tiers holding the verify/approve capability may update entries below them.
 drop policy if exists "verifiers update production" on public.production_entries;
 create policy "verifiers update production" on public.production_entries
@@ -670,3 +688,23 @@ create policy "admin manager manage stations" on public.stations
     or public.my_tag_tier() = 1
     or 'station-create' = any(public.my_capabilities())
   );
+
+-- ---------------------------------------------------------------------------
+-- Daily Job Record form: shift worked + an optional employee code shown
+-- next to the name in the employee picker (e.g. "Ali Bin Ahmad (EMP001)").
+-- ---------------------------------------------------------------------------
+
+alter table public.production_entries add column if not exists shift text;
+
+-- Only Shift A / Shift B are offered — remap any rows saved under the
+-- earlier morning/afternoon/night options before tightening the check.
+update public.production_entries set shift = 'a' where shift in ('morning', 'afternoon');
+update public.production_entries set shift = 'b' where shift = 'night';
+
+alter table public.production_entries drop constraint if exists production_entries_shift_check;
+alter table public.production_entries add constraint production_entries_shift_check
+  check (shift is null or shift in ('a', 'b'));
+
+alter table public.access_profiles add column if not exists employee_code text;
+create unique index if not exists access_profiles_employee_code_idx
+  on public.access_profiles (employee_code) where employee_code is not null;

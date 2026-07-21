@@ -80,7 +80,7 @@ export default function StationDetail() {
   async function loadEntries() {
     const { data, error } = await supabase
       .from('production_entries')
-      .select('id, work_date, station_id, job_id, worker_id, user_id, quantity, notes, created_by, created_at')
+      .select('id, work_date, station_id, job_id, worker_id, user_id, quantity, notes, shift, created_by, created_at')
       .eq('work_date', workDate)
       .eq('station_id', stationId)
       .order('created_at', { ascending: false })
