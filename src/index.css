@@ -680,6 +680,24 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   text-transform: uppercase; letter-spacing: 0.07em;
 }
 
+/* Tag editor — titled setting sections */
+.modal.modal-wide { max-width: 640px; }
+.tag-section {
+  background: var(--bg); border-radius: 12px; padding: 0.75rem 0.9rem;
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+.tag-section-title {
+  font-size: 0.7rem; font-weight: 800; color: var(--accent-strong);
+  text-transform: uppercase; letter-spacing: 0.07em;
+}
+.tag-section-hint { margin: 0.1rem 0 0; font-size: 0.75rem; color: var(--muted); }
+.tag-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; align-items: stretch; }
+.tag-cols .tag-section { min-width: 0; }
+.cap-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.9rem; }
+@media (max-width: 560px) {
+  .tag-cols, .cap-cols { grid-template-columns: 1fr; }
+}
+
 /* Exception flag cards (manager dashboard) */
 .mob-flag {
   border-radius: 12px; padding: 0.55rem 0.75rem; font-size: 0.75rem;

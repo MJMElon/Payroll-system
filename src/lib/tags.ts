@@ -21,20 +21,22 @@ export const DEFAULT_MODULES = ['station-status', 'piece-rate']
 // ticked. Grouped so the tag editor reads like a permission sheet.
 export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[] = [
   // Work entries (mobile records)
-  { key: 'data-entry', label: 'Data entry', group: 'Work entries' },
-  { key: 'verify', label: "Verify below all tiers' work entry", group: 'Work entries' },
-  { key: 'approve', label: "Approve below all tiers' work entry", group: 'Work entries' },
+  { key: 'data-entry', label: 'Data entry', group: 'Work entry setting' },
+  { key: 'verify', label: "Verify below tiers' work entry", group: 'Work entry setting' },
+  { key: 'approve', label: "Approve below tiers' work entry", group: 'Work entry setting' },
   // Piece rates
-  { key: 'rate-create', label: 'Create piece rate', group: 'Piece rates' },
-  { key: 'rate-verify', label: 'Verify piece rate', group: 'Piece rates' },
-  { key: 'rate-approve', label: 'Approve piece rate', group: 'Piece rates' },
-  // System administration — each one grantable per tier on its own
-  { key: 'tag-add', label: 'Add new tag', group: 'System' },
-  { key: 'tag-move', label: 'Move tag tiers', group: 'System' },
-  { key: 'tag-edit', label: "Edit tags' settings", group: 'System' },
-  { key: 'user-access', label: "Change other users' settings", group: 'System' },
-  { key: 'station-create', label: 'Create & edit stations', group: 'System' },
-  { key: 'report-view', label: 'See report module (dashboards)', group: 'System' },
+  { key: 'rate-create', label: 'Create piece rate', group: 'Piece rate setting' },
+  { key: 'rate-verify', label: 'Verify piece rate', group: 'Piece rate setting' },
+  { key: 'rate-approve', label: 'Approve piece rate', group: 'Piece rate setting' },
+  // Tag management — each function grantable on its own
+  { key: 'tag-add', label: 'Add new tag', group: 'Tag management setting' },
+  { key: 'tag-move', label: 'Move tag tiers', group: 'Tag management setting' },
+  { key: 'tag-edit', label: "Edit tags' settings", group: 'Tag management setting' },
+  // Users & stations
+  { key: 'user-access', label: "Change other users' settings", group: 'User setting' },
+  { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
+  // Views
+  { key: 'report-view', label: 'See report module (dashboards)', group: 'View setting' },
 ]
 
 export const ALL_CAPABILITIES: string[] = CAPABILITY_OPTIONS.map((c) => c.key)

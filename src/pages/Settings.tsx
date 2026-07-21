@@ -11,7 +11,6 @@ import {
 } from '../lib/supabase'
 import {
   ALL_CAPABILITIES,
-  CAPABILITY_GROUPS,
   CAPABILITY_OPTIONS,
   DEFAULT_MODULES,
   MODULE_OPTIONS,
@@ -1061,53 +1060,75 @@ function TagEditModal({
     onSaved()
   }
 
+  // One checkbox row per capability of a group — shared by every section.
+  const capBoxes = (group: string) =>
+    CAPABILITY_OPTIONS.filter((c) => c.group === group).map((c) => (
+      <label key={c.key} className="checkbox small" style={{ margin: 0 }}>
+        <input
+          type="checkbox"
+          checked={capabilities.includes(c.key)}
+          disabled={isSuper}
+          onChange={() => toggleCapability(c.key)}
+        />{' '}
+        {c.label}
+      </label>
+    ))
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+      <form className="modal modal-wide" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="row-form spread">
           <h2>{grade ? 'Edit tag' : 'New tag'}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         {error && <div className="error">{error}</div>}
+        {isSuper && (
+          <p className="muted small" style={{ margin: 0 }}>
+            This tag is the super admin — it always has every ability, sees every
+            module, and stays at tier 1.
+          </p>
+        )}
 
-        <label className="field">
-          <span>Tag name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-        </label>
-
-        <div className="field">
-          <span>Colour</span>
-          <div className="color-plate">
-            {TAG_COLORS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                className={`color-swatch dot-${c} ${color === c ? 'selected' : ''}`}
-                onClick={() => setColor(c)}
-                title={c}
-                aria-label={c}
-              />
-            ))}
+        <div className="row-form">
+          <label className="field grow">
+            <span>Tag name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
+          </label>
+          <div className="field">
+            <span>Colour</span>
+            <div className="color-plate">
+              {TAG_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={`color-swatch dot-${c} ${color === c ? 'selected' : ''}`}
+                  onClick={() => setColor(c)}
+                  title={c}
+                  aria-label={c}
+                />
+              ))}
+            </div>
           </div>
         </div>
 
-        <div className="field">
-          <span>Can see (data — fixed rule)</span>
-          <p className="muted small" style={{ margin: 0 }}>
-            Piece rates of its own tier and every tier below. If the user also has
-            station tags, only those stations' rates.
+        {/* Right below the tag name, as requested: who this tier may manage. */}
+        <div className="tag-section">
+          <div className="tag-section-title">User setting</div>
+          {capBoxes('User setting')}
+          <p className="tag-section-hint">
+            Opens the User access panel to set lower-tier users' station, tier and modules.
           </p>
         </div>
 
-        <div className="field">
-          <span>Can see (modules)</span>
-          <p className="muted small" style={{ margin: 0 }}>
-            {isSuper
-              ? 'The super admin always sees every module.'
-              : "Which web modules this tier sees. Per-user checkboxes in User access can only narrow this further — never add beyond it."}
+        <div className="tag-section">
+          <div className="tag-section-title">Can see</div>
+          <p className="tag-section-hint">
+            Data always follows the fixed rule: this tier and every tier below it;
+            station tags narrow it to those stations. Tick the web modules this
+            tier sees — per-user boxes in User access can only narrow further.
           </p>
-          <div className="cap-group">
+          <div className="cap-cols">
             {MODULE_OPTIONS.map((m) => (
               <label key={m.key} className="checkbox small" style={{ margin: 0 }}>
                 <input
@@ -1119,32 +1140,33 @@ function TagEditModal({
                 {m.label}
               </label>
             ))}
+            {capBoxes('View setting')}
           </div>
         </div>
 
-        <div className="field">
-          <span>Can do (standardized)</span>
-          {isSuper && (
-            <p className="muted small" style={{ margin: 0 }}>
-              This tag is the super admin — it always has every ability and stays at tier 1.
+        <div className="tag-cols">
+          <div className="tag-section">
+            <div className="tag-section-title">Work entry setting</div>
+            {capBoxes('Work entry setting')}
+          </div>
+          <div className="tag-section">
+            <div className="tag-section-title">Piece rate setting</div>
+            {capBoxes('Piece rate setting')}
+          </div>
+        </div>
+
+        <div className="tag-cols">
+          <div className="tag-section">
+            <div className="tag-section-title">Tag management setting</div>
+            {capBoxes('Tag management setting')}
+          </div>
+          <div className="tag-section">
+            <div className="tag-section-title">Station setting</div>
+            {capBoxes('Station setting')}
+            <p className="tag-section-hint">
+              Only tags and users below this tier can be added, moved or edited.
             </p>
-          )}
-          {CAPABILITY_GROUPS.map((group) => (
-            <div key={group} className="cap-group">
-              <div className="cap-group-title">{group}</div>
-              {CAPABILITY_OPTIONS.filter((c) => c.group === group).map((c) => (
-                <label key={c.key} className="checkbox small" style={{ margin: 0 }}>
-                  <input
-                    type="checkbox"
-                    checked={capabilities.includes(c.key)}
-                    disabled={isSuper}
-                    onChange={() => toggleCapability(c.key)}
-                  />{' '}
-                  {c.label}
-                </label>
-              ))}
-            </div>
-          ))}
+          </div>
         </div>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
