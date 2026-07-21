@@ -1,8 +1,18 @@
 // Shared tag colour helpers — used by Settings and the Piece Rate module.
-export const TAG_COLORS = ['diamond', 'gold', 'silver', 'red', 'yellow', 'blue', 'green', 'grey']
+// Colours are ISSUED automatically (no picker): a new tag takes the first
+// colour not already used by another tier, in this order.
+export const TAG_COLORS = [
+  'diamond', 'gold', 'silver', 'red', 'yellow', 'blue',
+  'green', 'purple', 'teal', 'orange', 'pink', 'grey',
+]
 
 export function tagClass(color: string | undefined | null) {
   return `tagbadge tag-${TAG_COLORS.includes(color ?? '') ? color : 'grey'}`
+}
+
+/** First colour not yet used by any tier (cycles if every colour is taken). */
+export function nextTagColor(usedColors: (string | null | undefined)[]): string {
+  return TAG_COLORS.find((c) => !usedColors.includes(c)) ?? TAG_COLORS[usedColors.length % TAG_COLORS.length]
 }
 
 // Module keys a tag can be allowed to see on the web.
