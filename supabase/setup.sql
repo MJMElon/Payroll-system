@@ -655,9 +655,15 @@ update public.grades set color = 'diamond',
 -- ---------------------------------------------------------------------------
 
 alter table public.production_entries add column if not exists shift text;
+
+-- Only Shift A / Shift B are offered — remap any rows saved under the
+-- earlier morning/afternoon/night options before tightening the check.
+update public.production_entries set shift = 'a' where shift in ('morning', 'afternoon');
+update public.production_entries set shift = 'b' where shift = 'night';
+
 alter table public.production_entries drop constraint if exists production_entries_shift_check;
 alter table public.production_entries add constraint production_entries_shift_check
-  check (shift is null or shift in ('morning', 'afternoon', 'night'));
+  check (shift is null or shift in ('a', 'b'));
 
 alter table public.access_profiles add column if not exists employee_code text;
 create unique index if not exists access_profiles_employee_code_idx

@@ -20,9 +20,8 @@ import {
 } from '../lib/supabase'
 
 const SHIFTS = [
-  { key: 'morning', label: 'Morning Shift (07:00 - 15:00)' },
-  { key: 'afternoon', label: 'Afternoon Shift (15:00 - 23:00)' },
-  { key: 'night', label: 'Night Shift (23:00 - 07:00)' },
+  { key: 'a', label: 'Shift A' },
+  { key: 'b', label: 'Shift B' },
 ] as const
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
