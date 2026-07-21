@@ -59,6 +59,57 @@ function breakdownFor(
   return `${TIER1_UNIT_CAP} × ${RM(rate)} + ${tier2Count} × ${RM(tier2)}`
 }
 
+// Once an hour has fully elapsed, that hour's photos (taken by this user at
+// this station) convert into a pending production entry — quantity = photo
+// count, priced at read-time via rateFor/amountFor. Never touches the still-
+// running hour. Shared by the per-station screen (for a snappy refresh while
+// it's open) and a app-wide check (so conversion isn't stuck waiting for that
+// specific screen to be reopened after the hour ends).
+async function autoSubmitElapsedHoursForStation(stationId: string, profileId: string) {
+  const { data, error } = await supabase
+    .from('photo_records')
+    .select('id, taken_at, job_id')
+    .eq('station_id', stationId)
+    .eq('created_by', profileId)
+    .is('entry_id', null)
+    .not('job_id', 'is', null)
+    .order('taken_at', { ascending: true })
+  if (error || !data || data.length === 0) return
+
+  const currentHourStart = new Date()
+  currentHourStart.setMinutes(0, 0, 0)
+
+  const groups = new Map<string, { jobId: string; workDate: string; ids: string[] }>()
+  for (const r of data) {
+    const bucketStart = new Date(r.taken_at)
+    bucketStart.setMinutes(0, 0, 0)
+    if (bucketStart >= currentHourStart || !r.job_id) continue // still live — leave it
+    const key = `${r.job_id}-${bucketStart.toISOString()}`
+    const g = groups.get(key)
+    if (g) g.ids.push(r.id)
+    else groups.set(key, { jobId: r.job_id, workDate: dayISO(bucketStart), ids: [r.id] })
+  }
+  if (groups.size === 0) return
+
+  for (const { jobId: jid, workDate, ids } of groups.values()) {
+    const { data: entry, error: insErr } = await supabase
+      .from('production_entries')
+      .insert({
+        work_date: workDate,
+        station_id: stationId,
+        job_id: jid,
+        user_id: profileId,
+        created_by: profileId,
+        quantity: ids.length,
+        approval_status: 'pending',
+      })
+      .select()
+      .single()
+    if (insErr || !entry) continue
+    await supabase.from('photo_records').update({ entry_id: entry.id }).in('id', ids)
+  }
+}
+
 // Status-bar clock that actually ticks (the page itself rarely re-renders).
 function StatusClock() {
   const [now, setNow] = useState(() => new Date())
@@ -182,6 +233,23 @@ export default function DemoMobile() {
     isUpper || myStationIds.length === 0
       ? stations
       : stations.filter((s) => myStationIds.includes(s.id))
+
+  // Elapsed-hour photo → entry conversion used to only run while the
+  // Record tab (or Performance's station drill-in) happened to be open —
+  // so it never fired if you took a photo, then left before the hour
+  // ended. Running it here means it checks regardless of which tab is
+  // active, as long as the mobile view itself is open.
+  const hourlyStationIds = scopedStations.filter((s) => s.hourly_count).map((s) => s.id).join(',')
+  useEffect(() => {
+    if (!profile?.id || !jobColumnReady || !hourlyStationIds) return
+    const ids = hourlyStationIds.split(',')
+    const run = () => {
+      for (const id of ids) autoSubmitElapsedHoursForStation(id, profile.id)
+    }
+    run()
+    const t = setInterval(run, 30_000)
+    return () => clearInterval(t)
+  }, [profile?.id, jobColumnReady, hourlyStationIds])
 
   return (
     <div className="stack">
@@ -687,53 +755,12 @@ function StationWorkPanel({
     }
   }
 
-  // Once an hour has fully elapsed, its photo count converts into a pending
-  // production entry (quantity = photo count, priced via rateFor at read
-  // time from the approved piece rate) — never the still-running hour.
+  // Runs the shared conversion for just this station, then refreshes the
+  // screen immediately — the app-wide check (in DemoMobile) covers other
+  // tabs/screens so this isn't the only place it can happen.
   async function autoSubmitElapsedHours() {
     if (!hourlyPieceWork || !profileId) return
-    const { data, error } = await supabase
-      .from('photo_records')
-      .select('id, taken_at, job_id')
-      .eq('station_id', station.id)
-      .eq('created_by', profileId)
-      .is('entry_id', null)
-      .not('job_id', 'is', null)
-      .order('taken_at', { ascending: true })
-    if (error || !data || data.length === 0) return
-
-    const currentHourStart = new Date()
-    currentHourStart.setMinutes(0, 0, 0)
-
-    const groups = new Map<string, { jobId: string; workDate: string; ids: string[] }>()
-    for (const r of data) {
-      const bucketStart = new Date(r.taken_at)
-      bucketStart.setMinutes(0, 0, 0)
-      if (bucketStart >= currentHourStart || !r.job_id) continue // still live — leave it
-      const key = `${r.job_id}-${bucketStart.toISOString()}`
-      const g = groups.get(key)
-      if (g) g.ids.push(r.id)
-      else groups.set(key, { jobId: r.job_id, workDate: dayISO(bucketStart), ids: [r.id] })
-    }
-    if (groups.size === 0) return
-
-    for (const { jobId: jid, workDate, ids } of groups.values()) {
-      const { data: entry, error: insErr } = await supabase
-        .from('production_entries')
-        .insert({
-          work_date: workDate,
-          station_id: station.id,
-          job_id: jid,
-          user_id: profileId,
-          created_by: profileId,
-          quantity: ids.length,
-          approval_status: 'pending',
-        })
-        .select()
-        .single()
-      if (insErr || !entry) continue
-      await supabase.from('photo_records').update({ entry_id: entry.id }).in('id', ids)
-    }
+    await autoSubmitElapsedHoursForStation(station.id, profileId)
     await loadRecords()
   }
 
@@ -1709,13 +1736,21 @@ function ProfileTab({
     if (!profileId) return
     const from = new Date()
     from.setDate(from.getDate() - 40) // covers this month + this week
-    supabase
-      .from('production_entries')
-      .select('*')
-      .eq('user_id', profileId)
-      .gte('work_date', dayISO(from))
-      .order('created_at', { ascending: false })
-      .then(({ data }) => setEntries(data ?? []))
+    function load() {
+      supabase
+        .from('production_entries')
+        .select('*')
+        .eq('user_id', profileId)
+        .gte('work_date', dayISO(from))
+        .order('created_at', { ascending: false })
+        .then(({ data }) => setEntries(data ?? []))
+    }
+    load()
+    // Elapsed-hour photos can convert into entries while this page is open
+    // (see the app-wide check in DemoMobile) — poll so the total updates
+    // without needing to leave and come back.
+    const t = setInterval(load, 30_000)
+    return () => clearInterval(t)
   }, [profileId])
 
   const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
