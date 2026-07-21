@@ -131,6 +131,39 @@ input {
   border-radius: 8px; font-size: 0.95rem; background: var(--surface); color: var(--text);
 }
 input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+input:read-only, input:disabled, textarea:read-only, textarea:disabled { background: var(--bg); color: var(--muted); }
+textarea {
+  padding: 0.6rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 0.95rem; background: var(--surface); color: var(--text);
+  font-family: inherit; resize: vertical;
+}
+textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+
+/* Breadcrumb trail (e.g. Daily Job Record > Add Job Record) */
+.breadcrumb { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; margin-bottom: 0.6rem; }
+.breadcrumb a { color: var(--muted); text-decoration: none; }
+.breadcrumb a:hover { color: var(--text); text-decoration: underline; }
+.breadcrumb .sep { color: var(--muted); }
+.breadcrumb .current { color: var(--accent-strong); font-weight: 600; }
+
+/* Numbered form section */
+.form-section h3 { display: flex; align-items: center; gap: 0.4rem; }
+
+/* Soft blue info panel (e.g. auto-loaded rate) */
+.info-panel {
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px; padding: 0.9rem 1rem;
+  display: flex; flex-direction: column; gap: 0.6rem;
+}
+.info-panel .info-label { color: #1d4ed8; font-weight: 700; font-size: 0.85rem; }
+.info-panel .info-row { display: flex; gap: 0.8rem; }
+.info-panel .info-row .field { flex: 1; }
+.info-panel input { border-color: #bfdbfe; }
+
+/* Calculation row: rate × quantity = amount */
+.calc-row { display: flex; align-items: flex-end; gap: 0.8rem; }
+.calc-row .field { flex: 1; }
+.calc-op { padding-bottom: 0.7rem; color: var(--muted); font-weight: 700; }
+.calc-amount { color: #166534; font-weight: 700; }
 
 .btn {
   appearance: none; border: none; cursor: pointer;
