@@ -10,6 +10,10 @@
   align-items: flex-start;
 }
 
+.pm-brand-row { display: flex; align-items: center; gap: 0.7rem; }
+.pm-brand-row h1 { margin: 0; }
+.pm-logo { width: 40px; height: 40px; flex: none; border-radius: 9px; }
+
 .pm-sidebar {
   width: 190px;
   flex: none;
