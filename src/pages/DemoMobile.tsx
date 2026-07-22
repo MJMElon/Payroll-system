@@ -2110,29 +2110,29 @@ function ProfileTab({
       <div className="mob-body">
         <div style={{ padding: '0 0.2rem' }}>
           <div className="mob-role">{myName}</div>
-          <div className="mob-sub">{tier?.name ?? '—'}</div>
-        </div>
-
-        {/* This month */}
-        <div className="mob-card mob-highlight">
-          <div className="mob-field-label" style={{ color: '#aeb8c4' }}>This month so far</div>
-          <div className="mob-big">{RM(total)}</div>
-          <div className="mob-sub">{monthEntries.length} records · pending amounts included</div>
-          {pendingCount > 0 && (
-            <div className="mob-sub">
-              + {RM(pendingAmount)} pending this hour ({pendingCount} photo{pendingCount === 1 ? '' : 's'} · not yet submitted)
-            </div>
-          )}
+          <div className="mob-sub">
+            {tier?.name ?? '—'} · {monthEntries.length} record{monthEntries.length === 1 ? '' : 's'} this month
+          </div>
         </div>
 
         <div className="mob-grid2">
           <div className="mob-card">
+            <div className="mob-field-label">This month</div>
+            <div className="mob-stat">{RM(total)}</div>
+          </div>
+          <div className="mob-card">
             <div className="mob-field-label">Days worked</div>
             <div className="mob-stat">{days}</div>
           </div>
+        </div>
+        <div className="mob-grid2">
           <div className="mob-card">
             <div className="mob-field-label">Avg / day</div>
             <div className="mob-stat">{RM(avg)}</div>
+          </div>
+          <div className="mob-card">
+            <div className="mob-field-label">Pending this hr</div>
+            <div className="mob-stat">{pendingCount > 0 ? RM(pendingAmount) : '—'}</div>
           </div>
         </div>
 
