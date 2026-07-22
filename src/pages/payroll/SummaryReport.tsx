@@ -98,6 +98,24 @@ export default function SummaryReport() {
     statusFilter !== 'all' ? STATUS_LABEL[statusFilter] : null,
   ].filter(Boolean).join(', ')
 
+  function handleReset() {
+    setShiftFilter('all')
+    setStatusFilter('all')
+  }
+
+  function handleExportExcel() {
+    const suffix = filterSuffix ? `-${filterSuffix.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''
+    downloadTextFile(
+      `FFB-Reception-Payroll-Summary-July-2026${suffix}.csv`,
+      rowsToCSV(filteredRows),
+      'text/csv;charset=utf-8;',
+    )
+  }
+
+  function handleExportPDF() {
+    window.print()
+  }
+
   return (
     <div className="pr-summary">
       <div className="pr-filters">
@@ -127,12 +145,12 @@ export default function SummaryReport() {
           </select>
         </div>
         <div className="pr-filters-spacer">
-          <button className="pr-btn ghost">Reset</button>
-          <button className="pr-btn export-xls">
+          <button className="pr-btn ghost" onClick={handleReset}>Reset</button>
+          <button className="pr-btn export-xls" onClick={handleExportExcel}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /></svg>
             Export Excel
           </button>
-          <button className="pr-btn export-pdf">
+          <button className="pr-btn export-pdf" onClick={handleExportPDF}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /></svg>
             Export PDF
           </button>
@@ -246,7 +264,7 @@ export default function SummaryReport() {
               ? `Showing ${filteredRows.length} ${filterSuffix} workers at FFB Reception`
               : `Showing all ${ROWS.length} workers at FFB Reception`}
           </span>
-          <span className="muted small">Click a worker's name to open their payroll detail</span>
+          <span className="muted small pr-hint">Click a worker's name to open their payroll detail</span>
         </div>
       </div>
     </div>
@@ -464,6 +482,44 @@ function TrendChart({ dayVals }: { dayVals: number[] }) {
 
 function sum<T>(arr: T[], fn: (item: T) => number) { return arr.reduce((s, item) => s + fn(item), 0) }
 function num(n: number) { return n.toLocaleString('en-US') }
+
+function csvCell(v: string) {
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
+}
+
+function rowsToCSV(rows: WorkerRow[]): string {
+  const header = [
+    '#', 'Worker', 'ID', 'Position', 'Shift', 'Days', '1-4 Cages', '> 4 Cages',
+    'Piece-Rate (RM)', 'Wages (RM)', 'OT (RM)', 'Allowance (RM)', 'Deduction (RM)',
+    'Gross Pay (RM)', 'Net Pay (RM)', 'Status',
+  ]
+  const lines = [header]
+  rows.forEach((r, i) => {
+    lines.push([
+      String(i + 1), r.name, r.id, r.role, r.shift, String(r.days),
+      r.c14 == null ? '' : String(r.c14), r.c4p == null ? '' : String(r.c4p),
+      r.piece.toFixed(2), r.leave.toFixed(2), r.ot.toFixed(2), r.allow.toFixed(2), r.ded.toFixed(2),
+      grossOf(r).toFixed(2), netOf(r).toFixed(2), STATUS_LABEL[r.status],
+    ])
+  })
+  lines.push([
+    '', 'Total', '', '', '', '', '', '', '', '', '', '', '',
+    sum(rows, grossOf).toFixed(2), sum(rows, netOf).toFixed(2), '',
+  ])
+  return lines.map((line) => line.map(csvCell).join(',')).join('\r\n')
+}
+
+function downloadTextFile(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
 
 function PeopleIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg> }
 function BoxIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8 12 3 3 8l9 5 9-5Z" /><path d="M3 8v8l9 5 9-5V8" /><path d="M12 13v8" /></svg> }

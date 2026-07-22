@@ -193,3 +193,25 @@ table.pr-data tr.pr-total-row:hover { background: none; }
 .pr-history-row .pr-hist-val { width: 110px; flex: none; text-align: right; font-weight: 700; color: var(--text); }
 .pr-history-row.current .pr-hist-label, .pr-history-row.current .pr-hist-val { color: var(--text); font-weight: 700; }
 .pr-history-row.current .pr-hist-bar { background: linear-gradient(90deg, var(--pr-brand), var(--pr-brand-strong)); }
+
+/* ---------------- Export PDF (window.print()) ---------------- */
+/* Named page, scoped to .pr-summary only via the `page` property below, so
+   this can't change print orientation for any other page in the app. */
+@page pr-print {
+  size: landscape;
+  margin: 12mm;
+}
+.pr-summary {
+  page: pr-print;
+}
+@media print {
+  /* The shared .content class caps width at --maxw (1080px) on every page.
+     :has() scopes this override to only pages that contain .pr-summary, so
+     print behaviour on every other page is untouched. */
+  .content:has(.pr-summary) { max-width: none !important; padding: 0 !important; }
+  .pr-filters, .pr-hint {
+    display: none !important;
+  }
+  .pr-table-scroll { overflow: visible; }
+  .pr-chart-card, .pr-table-card, .pr-kpi-card { box-shadow: none; break-inside: avoid; }
+}

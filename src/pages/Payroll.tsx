@@ -87,7 +87,7 @@ export default function Payroll() {
 
   return (
     <div className="stack">
-      <div>
+      <div className="pm-print-hide">
         <Link to="/" className="small muted">← Back to main page</Link>
         <h1>Payroll Management</h1>
         <p className="muted">
@@ -97,7 +97,7 @@ export default function Payroll() {
       </div>
 
       <div className="pm-shell" style={shellWideStyle}>
-        <nav className="pm-sidebar">
+        <nav className="pm-sidebar pm-print-hide">
           <button className={`pm-sidebar-item ${tab === 'summary' ? 'active' : ''}`} onClick={() => setTab('summary')}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></svg>
             Summary

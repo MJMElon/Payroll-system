@@ -69,3 +69,12 @@
   .pm-shell { flex-direction: column; }
   .pm-sidebar { width: 100%; flex-direction: row; position: static; overflow-x: auto; }
 }
+
+/* Export PDF (window.print()). .pm-print-hide is only ever applied to
+   elements inside this page, so this can't affect printing on any other
+   page. Overrides the JS-computed inline width (useShellWideStyle) with
+   !important so print uses the page's natural width instead. */
+@media print {
+  .pm-print-hide { display: none !important; }
+  .pm-shell { width: auto !important; margin-left: 0 !important; gap: 0 !important; }
+}
