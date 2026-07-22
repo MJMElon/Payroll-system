@@ -51,14 +51,11 @@
 .pm-content { flex: 1; min-width: 0; }
 
 /*
- * Widen just this page's shell past the shared 1080px content cap (--maxw,
- * defined in the app's index.css) so the worker payroll table can show
- * every column without horizontal scrolling. This never touches --maxw or
- * .content itself — it only shifts this one element via a plain negative
- * margin, computed from the already-known --maxw value. Gated to viewports
- * wide enough to actually fit it, so nothing overflows on narrower screens;
- * below the gate, .pm-shell is simply its normal (unwidened) self and the
- * table's own internal horizontal scroll (already present) is the fallback.
+ * No-JS / pre-hydration fallback only. The real, fluid version of this
+ * (fills the actual browser width at any size, not just above a fixed
+ * breakpoint) is computed in Payroll.tsx via useShellWideStyle and applied
+ * as an inline style, which always wins over this rule once mounted. This
+ * never touches --maxw or .content itself, only this one scoped element.
  */
 @media (min-width: 1560px) {
   .pm-shell {
