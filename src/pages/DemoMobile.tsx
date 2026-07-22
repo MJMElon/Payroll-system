@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { effectiveCapabilities } from '../lib/tags'
+import { effectiveCapabilities, MODULE_OPTIONS } from '../lib/tags'
 import {
   profileName,
   supabase,
@@ -23,6 +23,7 @@ import {
   type PhotoRecord,
   type PieceRate,
   type ProductionEntry,
+  type Profile,
   type Station,
 } from '../lib/supabase'
 
@@ -317,6 +318,7 @@ export default function DemoMobile() {
                     tier2RateFor={tier2RateFor}
                     profileId={profile?.id ?? null}
                     jobColumnReady={jobColumnReady}
+                    onRecord={() => setTab('record')}
                     onError={setError}
                   />
                 ) : tab === 'record' ? (
@@ -349,13 +351,9 @@ export default function DemoMobile() {
                   />
                 ) : (
                   <ProfileTab
-                    profileId={profile?.id ?? null}
-                    myName={profileName(profile)}
+                    profile={profile}
                     tier={tier}
                     stations={stations}
-                    jobs={jobs}
-                    amountFor={amountFor}
-                    onRecord={() => setTab('record')}
                   />
                 )}
               </div>
@@ -483,6 +481,7 @@ function PerformanceTab({
   tier2RateFor,
   profileId,
   jobColumnReady,
+  onRecord,
   onError,
 }: {
   stations: Station[]
@@ -495,6 +494,7 @@ function PerformanceTab({
   tier2RateFor: (jobId: string) => number | null
   profileId: string | null
   jobColumnReady: boolean
+  onRecord: () => void
   onError: (m: string | null) => void
 }) {
   const [station, setStation] = useState<Station | null>(null)
@@ -513,6 +513,105 @@ function PerformanceTab({
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // My work — this operator's own earnings/records, shown here (rather than
+  // a separate Profile tab) since Performance is where "how am I doing"
+  // belongs. Only tiers that record their own work (data-entry) see it.
+  const [myEntries, setMyEntries] = useState<ProductionEntry[]>([])
+  const [pendingAmount, setPendingAmount] = useState(0)
+  const [pendingCount, setPendingCount] = useState(0)
+
+  useEffect(() => {
+    if (!canEntry || !profileId) return
+    const from = new Date()
+    from.setDate(from.getDate() - 40) // covers this month + this week
+    function load() {
+      supabase
+        .from('production_entries')
+        .select('*')
+        .eq('user_id', profileId)
+        .gte('work_date', dayISO(from))
+        .order('created_at', { ascending: false })
+        .then(({ data }) => setMyEntries(data ?? []))
+    }
+    load()
+    // Elapsed-hour photos can convert into entries while this page is open
+    // (see the app-wide check in DemoMobile) — poll so the total updates
+    // without needing to leave and come back.
+    const t = setInterval(load, 30_000)
+    return () => clearInterval(t)
+  }, [canEntry, profileId])
+
+  // Live estimate for photos taken today that haven't converted into a
+  // production entry yet (the still-running hour, or one waiting on the
+  // next background pass) — grouped by job + hour, same tiered math as
+  // everywhere else, so the total isn't a surprise once it does convert.
+  useEffect(() => {
+    if (!canEntry || !profileId) return
+    function loadPending() {
+      const start = new Date()
+      start.setHours(0, 0, 0, 0)
+      supabase
+        .from('photo_records')
+        .select('id, job_id, taken_at')
+        .eq('created_by', profileId)
+        .is('entry_id', null)
+        .not('job_id', 'is', null)
+        .gte('taken_at', start.toISOString())
+        .then(({ data }) => {
+          const groups = new Map<string, { jobId: string; count: number }>()
+          for (const r of data ?? []) {
+            if (!r.job_id) continue
+            const key = `${r.job_id}::${new Date(r.taken_at).getHours()}`
+            const g = groups.get(key)
+            if (g) g.count += 1
+            else groups.set(key, { jobId: r.job_id, count: 1 })
+          }
+          let amt = 0
+          let cnt = 0
+          for (const { jobId, count } of groups.values()) {
+            amt += amountFor(jobId, count)
+            cnt += count
+          }
+          setPendingAmount(amt)
+          setPendingCount(cnt)
+        })
+    }
+    loadPending()
+    const t = setInterval(loadPending, 30_000)
+    return () => clearInterval(t)
+  }, [canEntry, profileId, amountFor])
+
+  const myAmountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
+  const myMonthEntries = myEntries.filter(
+    (e) => e.work_date >= monthStart && e.approval_status !== 'rejected',
+  )
+  const myTotal = myMonthEntries.reduce((s, e) => s + myAmountOf(e), 0)
+  const myDays = new Set(myMonthEntries.map((e) => e.work_date)).size
+  const myAvg = myDays > 0 ? myTotal / myDays : 0
+  const needsFix = myEntries.filter((e) => e.approval_status === 'rejected').length
+
+  // This week's daily quantity (Mon–Sun).
+  const myWeek: { label: string; iso: string; qty: number }[] = []
+  const todayDate = new Date()
+  const monday = new Date(todayDate)
+  monday.setDate(todayDate.getDate() - ((todayDate.getDay() + 6) % 7))
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday)
+    d.setDate(monday.getDate() + i)
+    myWeek.push({
+      label: d.toLocaleDateString(undefined, { weekday: 'short' }),
+      iso: dayISO(d),
+      qty: 0,
+    })
+  }
+  for (const e of myEntries) {
+    const slot = myWeek.find((w) => w.iso === e.work_date)
+    if (slot) slot.qty += e.quantity
+  }
+  const myMaxQty = Math.max(1, ...myWeek.map((w) => w.qty))
+  const myBestIso = myWeek.reduce((a, b) => (b.qty > a.qty ? b : a), myWeek[0])?.iso
+  const myJobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
 
   if (station) {
     return (
@@ -559,6 +658,80 @@ function PerformanceTab({
           <div className="mob-role">Performance dashboard</div>
           <div className="mob-sub">{monthLabel} · {scoped ? 'your stations' : 'all stations'}</div>
         </div>
+
+        {canEntry && (
+          <>
+            <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
+              My work · {myMonthEntries.length} record{myMonthEntries.length === 1 ? '' : 's'} this month
+            </div>
+
+            <div className="mob-grid2">
+              <div className="mob-card">
+                <div className="mob-field-label">This month</div>
+                <div className="mob-stat">{RM(myTotal)}</div>
+              </div>
+              <div className="mob-card">
+                <div className="mob-field-label">Days worked</div>
+                <div className="mob-stat">{myDays}</div>
+              </div>
+            </div>
+            <div className="mob-grid2">
+              <div className="mob-card">
+                <div className="mob-field-label">Avg / day</div>
+                <div className="mob-stat">{RM(myAvg)}</div>
+              </div>
+              <div className="mob-card">
+                <div className="mob-field-label">Pending this hr</div>
+                <div className="mob-stat">{pendingCount > 0 ? RM(pendingAmount) : '—'}</div>
+              </div>
+            </div>
+
+            {needsFix > 0 && (
+              <button className="mob-alert" onClick={onRecord}>
+                ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
+              </button>
+            )}
+
+            <button className="mob-btn" onClick={onRecord}>✎ Enter today's work record</button>
+
+            <div className="mob-card">
+              <div className="mob-title">Daily quantity — this week</div>
+              <div className="mob-bars">
+                {myWeek.map((w) => (
+                  <div className="mob-barrow" key={w.iso}>
+                    <span className="lbl">{w.label}</span>
+                    <span className="mob-bartrack">
+                      <div
+                        className={w.iso === myBestIso && w.qty > 0 ? 'best' : ''}
+                        style={{ width: `${(w.qty / myMaxQty) * 100}%` }}
+                      />
+                    </span>
+                    <span className="val">{w.qty > 0 ? w.qty : '·'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mob-card">
+              <div className="mob-title">Recent records</div>
+              {myEntries.length === 0 && <div className="mob-sub">No records yet.</div>}
+              {myEntries.slice(0, 5).map((e) => (
+                <div className="mob-entry static" key={e.id}>
+                  <span className="mob-entry-main">
+                    <span className="mob-entry-name">{myJobName(e.job_id)}</span>
+                    <span className="mob-station-meta" style={{ display: 'block' }}>
+                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                    </span>
+                  </span>
+                  <span className="mob-entry-side">
+                    <span className="mob-entry-amt">{myAmountOf(e).toFixed(2)}</span>
+                    {statusChip(e.approval_status)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         <div className="mob-grid2">
           <div className="mob-card">
@@ -1984,121 +2157,60 @@ function ApprovalsScreen({
 /* ------------------------------------------------------------------ */
 
 function ProfileTab({
-  profileId,
-  myName,
+  profile,
   tier,
   stations,
-  jobs,
-  amountFor,
-  onRecord,
 }: {
-  profileId: string | null
-  myName: string
+  profile: Profile | null
   tier: Grade | null
   stations: Station[]
-  jobs: Job[]
-  amountFor: (jobId: string, quantity: number) => number
-  onRecord: () => void
 }) {
-  const [entries, setEntries] = useState<ProductionEntry[]>([])
-  const [pendingAmount, setPendingAmount] = useState(0)
-  const [pendingCount, setPendingCount] = useState(0)
+  const [workerName, setWorkerName] = useState<string | null>(null)
+  const [supervisorName, setSupervisorName] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!profileId) return
-    const from = new Date()
-    from.setDate(from.getDate() - 40) // covers this month + this week
-    function load() {
-      supabase
-        .from('production_entries')
-        .select('*')
-        .eq('user_id', profileId)
-        .gte('work_date', dayISO(from))
-        .order('created_at', { ascending: false })
-        .then(({ data }) => setEntries(data ?? []))
-    }
-    load()
-    // Elapsed-hour photos can convert into entries while this page is open
-    // (see the app-wide check in DemoMobile) — poll so the total updates
-    // without needing to leave and come back.
-    const t = setInterval(load, 30_000)
-    return () => clearInterval(t)
-  }, [profileId])
+    if (!profile?.worker_id) return setWorkerName(null)
+    supabase
+      .from('workers')
+      .select('full_name')
+      .eq('id', profile.worker_id)
+      .maybeSingle()
+      .then(({ data }) => setWorkerName(data?.full_name ?? null))
+  }, [profile?.worker_id])
 
-  // Live estimate for photos taken today that haven't converted into a
-  // production entry yet (the still-running hour, or one waiting on the
-  // next background pass) — grouped by job + hour, same tiered math as
-  // everywhere else, so the total isn't a surprise once it does convert.
   useEffect(() => {
-    if (!profileId) return
-    function loadPending() {
-      const start = new Date()
-      start.setHours(0, 0, 0, 0)
-      supabase
-        .from('photo_records')
-        .select('id, job_id, taken_at')
-        .eq('created_by', profileId)
-        .is('entry_id', null)
-        .not('job_id', 'is', null)
-        .gte('taken_at', start.toISOString())
-        .then(({ data }) => {
-          const groups = new Map<string, { jobId: string; count: number }>()
-          for (const r of data ?? []) {
-            if (!r.job_id) continue
-            const key = `${r.job_id}::${new Date(r.taken_at).getHours()}`
-            const g = groups.get(key)
-            if (g) g.count += 1
-            else groups.set(key, { jobId: r.job_id, count: 1 })
-          }
-          let amt = 0
-          let cnt = 0
-          for (const { jobId, count } of groups.values()) {
-            amt += amountFor(jobId, count)
-            cnt += count
-          }
-          setPendingAmount(amt)
-          setPendingCount(cnt)
-        })
-    }
-    loadPending()
-    const t = setInterval(loadPending, 30_000)
-    return () => clearInterval(t)
-  }, [profileId, amountFor])
+    if (!profile?.supervisor_id) return setSupervisorName(null)
+    supabase
+      .from('access_profiles')
+      .select('id, full_name, email')
+      .eq('id', profile.supervisor_id)
+      .maybeSingle()
+      .then(({ data }) => setSupervisorName(data ? profileName(data) : null))
+  }, [profile?.supervisor_id])
 
-  const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
-  const monthStart = todayISO().slice(0, 8) + '01'
-  const monthEntries = entries.filter(
-    (e) => e.work_date >= monthStart && e.approval_status !== 'rejected',
-  )
-  const total = monthEntries.reduce((s, e) => s + amountOf(e), 0)
-  const days = new Set(monthEntries.map((e) => e.work_date)).size
-  const avg = days > 0 ? total / days : 0
-  const needsFix = entries.filter((e) => e.approval_status === 'rejected').length
-
-  // This week's daily quantity (Mon–Sun).
-  const week: { label: string; iso: string; qty: number }[] = []
-  const today = new Date()
-  const monday = new Date(today)
-  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7))
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(monday)
-    d.setDate(monday.getDate() + i)
-    week.push({
-      label: d.toLocaleDateString(undefined, { weekday: 'short' }),
-      iso: dayISO(d),
-      qty: 0,
-    })
-  }
-  for (const e of entries) {
-    const slot = week.find((w) => w.iso === e.work_date)
-    if (slot) slot.qty += e.quantity
-  }
-  const maxQty = Math.max(1, ...week.map((w) => w.qty))
-  const bestIso = week.reduce((a, b) => (b.qty > a.qty ? b : a), week[0])?.iso
-
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
+  const myName = profileName(profile)
   const initials = myName.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+
+  const stationNames = (() => {
+    const ids = profile?.station_ids && profile.station_ids.length > 0
+      ? profile.station_ids
+      : profile?.station_id
+        ? [profile.station_id]
+        : []
+    if (ids.length === 0) return 'All stations'
+    return ids.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
+  })()
+
+  const moduleLabels = (profile?.modules ?? [])
+    .map((k) => MODULE_OPTIONS.find((m) => m.key === k)?.label ?? k)
+    .join(', ')
+
+  const Row = ({ label, value }: { label: string; value: string }) => (
+    <div className="mob-row">
+      <span className="mob-field-label">{label}</span>
+      <span>{value}</span>
+    </div>
+  )
 
   return (
     <>
@@ -2108,82 +2220,47 @@ function ProfileTab({
       </div>
 
       <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
+        <div className="mob-card" style={{ alignItems: 'center', textAlign: 'center' }}>
+          <span className="mob-recent-avatar" style={{ width: 48, height: 48, fontSize: '1rem' }}>
+            {initials}
+          </span>
           <div className="mob-role">{myName}</div>
-          <div className="mob-sub">
-            {tier?.name ?? '—'} · {monthEntries.length} record{monthEntries.length === 1 ? '' : 's'} this month
-          </div>
+          <div className="mob-sub">{tier?.name ?? '—'}</div>
         </div>
 
-        <div className="mob-grid2">
-          <div className="mob-card">
-            <div className="mob-field-label">This month</div>
-            <div className="mob-stat">{RM(total)}</div>
-          </div>
-          <div className="mob-card">
-            <div className="mob-field-label">Days worked</div>
-            <div className="mob-stat">{days}</div>
-          </div>
-        </div>
-        <div className="mob-grid2">
-          <div className="mob-card">
-            <div className="mob-field-label">Avg / day</div>
-            <div className="mob-stat">{RM(avg)}</div>
-          </div>
-          <div className="mob-card">
-            <div className="mob-field-label">Pending this hr</div>
-            <div className="mob-stat">{pendingCount > 0 ? RM(pendingAmount) : '—'}</div>
-          </div>
-        </div>
-
-        {needsFix > 0 && (
-          <button className="mob-alert" onClick={onRecord}>
-            ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
-          </button>
-        )}
-
-        <button className="mob-btn" onClick={onRecord}>✎ Enter today's work record</button>
-
-        {/* Weekly productivity */}
         <div className="mob-card">
-          <div className="mob-title">Daily quantity — this week</div>
-          <div className="mob-bars">
-            {week.map((w) => (
-              <div className="mob-barrow" key={w.iso}>
-                <span className="lbl">{w.label}</span>
-                <span className="mob-bartrack">
-                  <div
-                    className={w.iso === bestIso && w.qty > 0 ? 'best' : ''}
-                    style={{ width: `${(w.qty / maxQty) * 100}%` }}
-                  />
-                </span>
-                <span className="val">{w.qty > 0 ? w.qty : '·'}</span>
-              </div>
-            ))}
-          </div>
+          <div className="mob-title">Core identity</div>
+          <Row label="Full name" value={profile?.full_name ?? '—'} />
+          <Row label="Email" value={profile?.email ?? '—'} />
+          <Row label="Employee code" value={profile?.employee_code ?? '—'} />
         </div>
 
-        {/* Recent records */}
         <div className="mob-card">
-          <div className="mob-title">Recent records</div>
-          {entries.length === 0 && <div className="mob-sub">No records yet.</div>}
-          {entries.slice(0, 5).map((e) => (
-            <div className="mob-entry static" key={e.id}>
-              <span className="mob-entry-main">
-                <span className="mob-recent-avatar">{initials}</span>
-                <span>
-                  <span className="mob-entry-name">{jobName(e.job_id)}</span>
-                  <span className="mob-station-meta" style={{ display: 'block' }}>
-                    {stationName(e.station_id)} · {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                  </span>
-                </span>
-              </span>
-              <span className="mob-entry-side">
-                <span className="mob-entry-amt">{amountOf(e).toFixed(2)}</span>
-                {statusChip(e.approval_status)}
-              </span>
-            </div>
-          ))}
+          <div className="mob-title">Access & role</div>
+          <Row label="Role" value={profile?.role ? profile.role[0].toUpperCase() + profile.role.slice(1) : '—'} />
+          <Row label="Tier tag" value={tier?.name ?? '—'} />
+          <Row label="Modules" value={moduleLabels || '—'} />
+          <Row label="Status" value={profile?.tags_confirmed ? 'Confirmed' : 'Pending confirmation'} />
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">Work assignment</div>
+          <Row label="Station(s)" value={stationNames} />
+          <Row label="Reports to" value={supervisorName ?? '—'} />
+          <Row label="Linked worker record" value={workerName ?? '—'} />
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">Piece-rate approval (legacy)</div>
+          <Row label="Can approve rates" value={profile?.can_approve_rates ? 'Yes' : 'No'} />
+          <Row
+            label="Approval role"
+            value={
+              profile?.approval_role
+                ? profile.approval_role[0].toUpperCase() + profile.approval_role.slice(1)
+                : '—'
+            }
+          />
         </div>
       </div>
     </>
