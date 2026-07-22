@@ -11,8 +11,11 @@ import {
   type Profile,
   type Worker,
 } from '../lib/supabase'
+import SummaryReport from './payroll/SummaryReport'
+import './payroll/module-sidebar.css'
 
 export default function Payroll() {
+  const [tab, setTab] = useState<'summary' | 'runs'>('summary')
   const [runs, setRuns] = useState<PayrollRun[]>([])
   const [openRun, setOpenRun] = useState<PayrollRun | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -57,37 +60,58 @@ export default function Payroll() {
         </p>
       </div>
 
-      {error && <div className="error">{error}</div>}
+      <div className="pm-shell">
+        <nav className="pm-sidebar">
+          <button className={`pm-sidebar-item ${tab === 'summary' ? 'active' : ''}`} onClick={() => setTab('summary')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></svg>
+            Summary
+          </button>
+          <button className={`pm-sidebar-item ${tab === 'runs' ? 'active' : ''}`} onClick={() => setTab('runs')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /><path d="M9 15h6" /><path d="M9 11h2" /></svg>
+            Runs
+          </button>
+        </nav>
 
-      <NewRunForm onCreated={(run) => { setOpenRun(run); loadRuns() }} />
+        <div className="pm-content">
+          {tab === 'summary' ? (
+            <SummaryReport />
+          ) : (
+            <div className="stack">
+              {error && <div className="error">{error}</div>}
 
-      <div className="card">
-        <h3>Runs</h3>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Period</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.length === 0 && (
-              <tr><td colSpan={4} className="muted">No payroll runs yet.</td></tr>
-            )}
-            {runs.map((r) => (
-              <tr key={r.id}>
-                <td>{r.period_start} → {r.period_end}</td>
-                <td><span className={`badge ${r.status === 'finalized' ? 'ok' : 'off'}`}>{r.status}</span></td>
-                <td className="muted">{r.created_at.slice(0, 10)}</td>
-                <td className="right">
-                  <button className="linkbtn" onClick={() => setOpenRun(r)}>Open</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              <NewRunForm onCreated={(run) => { setOpenRun(run); loadRuns() }} />
+
+              <div className="card">
+                <h3>Runs</h3>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Period</th>
+                      <th>Status</th>
+                      <th>Created</th>
+                      <th className="right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runs.length === 0 && (
+                      <tr><td colSpan={4} className="muted">No payroll runs yet.</td></tr>
+                    )}
+                    {runs.map((r) => (
+                      <tr key={r.id}>
+                        <td>{r.period_start} → {r.period_end}</td>
+                        <td><span className={`badge ${r.status === 'finalized' ? 'ok' : 'off'}`}>{r.status}</span></td>
+                        <td className="muted">{r.created_at.slice(0, 10)}</td>
+                        <td className="right">
+                          <button className="linkbtn" onClick={() => setOpenRun(r)}>Open</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
