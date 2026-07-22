@@ -89,7 +89,10 @@ export default function Payroll() {
     <div className="stack">
       <div className="pm-print-hide">
         <Link to="/" className="small muted">← Back to main page</Link>
-        <h1>Payroll Management</h1>
+        <div className="pm-brand-row">
+          <MjmLogo />
+          <h1>Payroll Management</h1>
+        </div>
         <p className="muted">
           A run totals each worker's production in the period and prices it with the
           rate in force at the period end.
@@ -487,5 +490,30 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
         <h3>{grandTotal.toFixed(2)}</h3>
       </div>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+function MjmLogo() {
+  return (
+    <svg className="pm-logo" viewBox="0 0 120 120" role="img" aria-label="MJM Group">
+      <rect width="120" height="120" rx="16" fill="#2c5940" />
+      <text
+        x="60" y="60" textAnchor="middle" dominantBaseline="middle"
+        fontFamily="Georgia, 'Times New Roman', serif" fontWeight="700"
+        fontSize="46" letterSpacing="1" fill="#ffffff"
+      >
+        MJM
+      </text>
+      <rect x="14" y="70" width="92" height="24" fill="#a9bd82" />
+      <text
+        x="60" y="83" textAnchor="middle" dominantBaseline="middle"
+        fontFamily="Arial, Helvetica, sans-serif" fontWeight="700"
+        fontSize="13" letterSpacing="2.5" fill="#ffffff"
+      >
+        GROUP
+      </text>
+    </svg>
   )
 }
