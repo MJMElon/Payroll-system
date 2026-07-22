@@ -11,8 +11,10 @@ import {
   type Profile,
   type Worker,
 } from '../lib/supabase'
+import SummaryReport from './payroll/SummaryReport'
 
 export default function Payroll() {
+  const [tab, setTab] = useState<'summary' | 'runs'>('summary')
   const [runs, setRuns] = useState<PayrollRun[]>([])
   const [openRun, setOpenRun] = useState<PayrollRun | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -57,38 +59,49 @@ export default function Payroll() {
         </p>
       </div>
 
-      {error && <div className="error">{error}</div>}
-
-      <NewRunForm onCreated={(run) => { setOpenRun(run); loadRuns() }} />
-
-      <div className="card">
-        <h3>Runs</h3>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Period</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th className="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.length === 0 && (
-              <tr><td colSpan={4} className="muted">No payroll runs yet.</td></tr>
-            )}
-            {runs.map((r) => (
-              <tr key={r.id}>
-                <td>{r.period_start} → {r.period_end}</td>
-                <td><span className={`badge ${r.status === 'finalized' ? 'ok' : 'off'}`}>{r.status}</span></td>
-                <td className="muted">{r.created_at.slice(0, 10)}</td>
-                <td className="right">
-                  <button className="linkbtn" onClick={() => setOpenRun(r)}>Open</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="tabs">
+        <button className={`tab ${tab === 'summary' ? 'active' : ''}`} onClick={() => setTab('summary')}>Summary</button>
+        <button className={`tab ${tab === 'runs' ? 'active' : ''}`} onClick={() => setTab('runs')}>Runs</button>
       </div>
+
+      {tab === 'summary' ? (
+        <SummaryReport />
+      ) : (
+        <>
+          {error && <div className="error">{error}</div>}
+
+          <NewRunForm onCreated={(run) => { setOpenRun(run); loadRuns() }} />
+
+          <div className="card">
+            <h3>Runs</h3>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Period</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th className="right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.length === 0 && (
+                  <tr><td colSpan={4} className="muted">No payroll runs yet.</td></tr>
+                )}
+                {runs.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.period_start} → {r.period_end}</td>
+                    <td><span className={`badge ${r.status === 'finalized' ? 'ok' : 'off'}`}>{r.status}</span></td>
+                    <td className="muted">{r.created_at.slice(0, 10)}</td>
+                    <td className="right">
+                      <button className="linkbtn" onClick={() => setOpenRun(r)}>Open</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   )
 }
