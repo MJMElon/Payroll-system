@@ -59,6 +59,7 @@ const netOf = (r: WorkerRow) => grossOf(r) - r.ded
 
 export default function SummaryReport() {
   const [shiftFilter, setShiftFilter] = useState<'all' | 'A' | 'B'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | Status>('all')
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
 
   if (selectedIdx != null) {
@@ -87,9 +88,15 @@ export default function SummaryReport() {
 
   const dayVals = [2.7, 3.1, 2.9, 3.8, 4.1, 3.9, 2.9, 2.5, 2.4, 3.0, 3.7, 4.1, 4.4, 4.2, 3.3, 2.8, 2.4, 2.7, 3.4, 4.0, 4.4, 4.2, 3.5, 2.9, 2.6, 2.5, 3.0, 3.6, 4.1, 4.5, 3.8]
 
-  const filteredRows = ROWS.filter((r) => shiftFilter === 'all' || r.shift === shiftFilter)
+  const filteredRows = ROWS.filter(
+    (r) => (shiftFilter === 'all' || r.shift === shiftFilter) && (statusFilter === 'all' || r.status === statusFilter),
+  )
   const filteredGross = sum(filteredRows, grossOf)
   const filteredNet = sum(filteredRows, netOf)
+  const filterSuffix = [
+    shiftFilter !== 'all' ? `Shift ${shiftFilter}` : null,
+    statusFilter !== 'all' ? STATUS_LABEL[statusFilter] : null,
+  ].filter(Boolean).join(', ')
 
   return (
     <div className="pr-summary">
@@ -112,7 +119,7 @@ export default function SummaryReport() {
         </div>
         <div className="pr-filter-field">
           <label>Worker Status</label>
-          <select defaultValue="all">
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | Status)}>
             <option value="all">All Status</option>
             <option value="pending">Pending Verification</option>
             <option value="verified">Verified</option>
@@ -205,10 +212,7 @@ export default function SummaryReport() {
                   <tr key={r.id}>
                     <td className="muted">{i + 1}</td>
                     <td className="wrap">
-                      <div className="pr-worker-cell">
-                        <div className="pr-worker-avatar">{initialsOf(r.name)}</div>
-                        <button className="pr-worker-link" onClick={() => setSelectedIdx(originalIdx)}>{r.name}</button>
-                      </div>
+                      <button className="pr-worker-link" onClick={() => setSelectedIdx(originalIdx)}>{r.name}</button>
                     </td>
                     <td className="muted">{r.id}</td>
                     <td className="wrap">{r.role}</td>
@@ -228,7 +232,7 @@ export default function SummaryReport() {
                 )
               })}
               <tr className="pr-total-row">
-                <td colSpan={13}>Total{shiftFilter === 'all' ? '' : ` — Shift ${shiftFilter}`}</td>
+                <td colSpan={13}>Total{filterSuffix ? ` — ${filterSuffix}` : ''}</td>
                 <td className="right">{fmt(filteredGross)}</td>
                 <td className="right">{fmt(filteredNet)}</td>
                 <td />
@@ -238,9 +242,9 @@ export default function SummaryReport() {
         </div>
         <div className="pr-table-foot">
           <span>
-            {shiftFilter === 'all'
-              ? `Showing all ${ROWS.length} workers at FFB Reception`
-              : `Showing ${filteredRows.length} Shift ${shiftFilter} workers at FFB Reception`}
+            {filterSuffix
+              ? `Showing ${filteredRows.length} ${filterSuffix} workers at FFB Reception`
+              : `Showing all ${ROWS.length} workers at FFB Reception`}
           </span>
           <span className="muted small">Click a worker's name to open their payroll detail</span>
         </div>
