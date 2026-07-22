@@ -317,6 +317,7 @@ export default function DemoMobile() {
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
                     profileId={profile?.id ?? null}
+                    myEmail={profile?.email ?? 'unknown'}
                     jobColumnReady={jobColumnReady}
                     onRecord={() => setTab('record')}
                     onError={setError}
@@ -335,18 +336,6 @@ export default function DemoMobile() {
                     tier2RateFor={tier2RateFor}
                     canEntry={canEntry}
                     jobColumnReady={jobColumnReady}
-                    onError={setError}
-                  />
-                ) : isUpper ? (
-                  <ManagerProfileTab
-                    myName={profileName(profile)}
-                    myEmail={profile?.email ?? 'unknown'}
-                    tier={tier}
-                    stations={stations}
-                    jobs={jobs}
-                    rateFor={rateFor}
-                    amountFor={amountFor}
-                    tier2RateFor={tier2RateFor}
                     onError={setError}
                   />
                 ) : (
@@ -480,6 +469,7 @@ function PerformanceTab({
   amountFor,
   tier2RateFor,
   profileId,
+  myEmail,
   jobColumnReady,
   onRecord,
   onError,
@@ -493,26 +483,39 @@ function PerformanceTab({
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
   profileId: string | null
+  myEmail: string
   jobColumnReady: boolean
   onRecord: () => void
   onError: (m: string | null) => void
 }) {
   const [station, setStation] = useState<Station | null>(null)
+  const [showApprovals, setShowApprovals] = useState(false)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
-  const canEntry = effectiveCapabilities(tier).includes('data-entry')
+  const tierCaps = effectiveCapabilities(tier)
+  const canEntry = tierCaps.includes('data-entry')
+  const canVerify = tierCaps.includes('verify')
+  const canFinal = tierCaps.includes('approve')
   const monthStart = todayISO().slice(0, 8) + '01'
 
-  useEffect(() => {
+  // Six months back covers the management dashboard's trend chart; the
+  // month-to-date subset (mtd, below) feeds everything else.
+  function loadEntries() {
+    const now = new Date()
+    const from = new Date(now.getFullYear(), now.getMonth() - 5, 1)
     supabase
       .from('production_entries')
       .select('*')
-      .gte('work_date', monthStart)
+      .gte('work_date', dayISO(from))
       .then(({ data, error }) => {
         if (error) onError(error.message)
         else setEntries(data ?? [])
       })
+  }
+  useEffect(() => {
+    loadEntries()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  const mtd = entries.filter((e) => e.work_date >= monthStart)
 
   // My work — this operator's own earnings/records, shown here (rather than
   // a separate Profile tab) since Performance is where "how am I doing"
@@ -613,6 +616,99 @@ function PerformanceTab({
   const myBestIso = myWeek.reduce((a, b) => (b.qty > a.qty ? b : a), myWeek[0])?.iso
   const myJobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
 
+  const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
+  const status = (e: ProductionEntry) => e.approval_status ?? 'approved'
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const weekMonday = new Date()
+  weekMonday.setDate(weekMonday.getDate() - ((weekMonday.getDay() + 6) % 7))
+  const weekStart = dayISO(weekMonday)
+
+  // Management dashboard — verify/approve-capable tiers only.
+  const payable = mtd.filter((e) => status(e) !== 'rejected')
+  const cost = payable.reduce((s, e) => s + amountOf(e), 0)
+  const mgmtWorkers = new Set(payable.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
+  const activeStations = new Set(payable.map((e) => e.station_id)).size
+  const awaiting = mtd.filter(
+    (e) => (canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'),
+  )
+  // Unscoped by month — an aging entry from further back still needs action.
+  const awaitingAll = entries.filter(
+    (e) => (canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'),
+  )
+  const rejectedWk = entries.filter((e) => status(e) === 'rejected' && e.work_date >= weekStart)
+  const fmtMoney = (v: number) => (v >= 1000 ? `RM ${Math.round(v).toLocaleString()}` : RM(v))
+
+  // Approval completion per station (this month).
+  const stationPct = stations
+    .map((s) => {
+      const rows = mtd.filter((e) => e.station_id === s.id)
+      return {
+        id: s.id,
+        name: s.name,
+        pct: rows.length > 0
+          ? Math.round((rows.filter((e) => status(e) === 'approved').length / rows.length) * 100)
+          : null,
+      }
+    })
+    .filter((r) => r.pct != null)
+
+  // Payroll cost trend — last 6 months.
+  const trend: { label: string; total: number }[] = []
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date()
+    const m = new Date(d.getFullYear(), d.getMonth() - i, 1)
+    const prefix = dayISO(m).slice(0, 7)
+    const trendTotal = entries
+      .filter((e) => e.work_date.startsWith(prefix) && status(e) !== 'rejected')
+      .reduce((s, e) => s + amountOf(e), 0)
+    trend.push({ label: m.toLocaleDateString(undefined, { month: 'short' }), total: trendTotal })
+  }
+  const maxTrend = Math.max(1, ...trend.map((t) => t.total))
+  const fmtK = (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v).toString())
+
+  // Exception flags — only the ones that actually trigger.
+  const flags: { kind: 'red' | 'amber'; title: string; text: string }[] = []
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3_600_000)
+  const aging = entries.filter(
+    (e) => ['pending', 'verified'].includes(status(e)) && new Date(e.created_at) < threeDaysAgo,
+  )
+  if (aging.length > 0) {
+    flags.push({
+      kind: 'red',
+      title: 'Aging approval',
+      text: `${aging.length} record${aging.length === 1 ? '' : 's'} pending > 3 days`,
+    })
+  }
+  const rejByStation = new Map<string, number>()
+  for (const e of rejectedWk) rejByStation.set(e.station_id, (rejByStation.get(e.station_id) ?? 0) + 1)
+  for (const [sid, n] of rejByStation) {
+    if (n >= 3) flags.push({
+      kind: 'amber',
+      title: 'Rejection spike',
+      text: `${stationName(sid)}: ${n} rejections this week`,
+    })
+  }
+  for (const s of stations) {
+    const rows = mtd.filter((e) => e.station_id === s.id)
+    if (rows.length < 5) continue
+    const rowsAvg = rows.reduce((sum, e) => sum + e.quantity, 0) / rows.length
+    const spike = rows.find((e) => e.work_date >= weekStart && e.quantity > 2 * rowsAvg)
+    if (spike) {
+      flags.push({
+        kind: 'amber',
+        title: 'High entry',
+        text: `${s.name}: ${spike.quantity} logged — above normal range`,
+      })
+      break
+    }
+  }
+
+  // Workforce (today).
+  const today = todayISO()
+  const todayRows = entries.filter((e) => e.work_date === today)
+  const activeToday = new Set(todayRows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
+  const coveredToday = new Set(todayRows.map((e) => e.station_id)).size
+
   if (station) {
     return (
       <StationScreen
@@ -632,8 +728,27 @@ function PerformanceTab({
     )
   }
 
+  if (showApprovals) {
+    return (
+      <ApprovalsScreen
+        items={awaitingAll}
+        jobs={jobs}
+        stations={stations}
+        rateFor={rateFor}
+        amountFor={amountFor}
+        tier2RateFor={tier2RateFor}
+        myEmail={myEmail}
+        canVerify={canVerify}
+        canFinal={canFinal}
+        onBack={() => setShowApprovals(false)}
+        onChanged={loadEntries}
+        onError={onError}
+      />
+    )
+  }
+
   const statFor = (sid: string) => {
-    const rows = entries.filter((e) => e.station_id === sid)
+    const rows = mtd.filter((e) => e.station_id === sid)
     const workers = new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
     const output = rows.reduce((s, e) => s + e.quantity, 0)
     const done = rows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
@@ -641,7 +756,7 @@ function PerformanceTab({
     return { workers, output, pct }
   }
   const totalOutput = stations.reduce((s, st) => s + statFor(st.id).output, 0)
-  const scopedRows = entries.filter((e) => stations.some((s) => s.id === e.station_id))
+  const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
   const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
   const compliance = scopedRows.length > 0 ? Math.round((doneAll / scopedRows.length) * 100) : null
   const monthLabel = new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
@@ -729,6 +844,106 @@ function PerformanceTab({
                   </span>
                 </div>
               ))}
+            </div>
+          </>
+        )}
+
+        {(canVerify || canFinal) && (
+          <>
+            <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Management dashboard</div>
+
+            <div className="mob-card mob-highlight">
+              <div className="mob-field-label" style={{ color: '#aeb8c4' }}>Payroll cost MTD</div>
+              <div className="mob-big">{fmtMoney(cost)}</div>
+              <div className="mob-sub">
+                {mgmtWorkers} active worker{mgmtWorkers === 1 ? '' : 's'} across {activeStations} station{activeStations === 1 ? '' : 's'}
+              </div>
+            </div>
+
+            <div className="mob-grid2">
+              <div className="mob-card">
+                <div className="mob-field-label">{canFinal ? 'Pending final' : 'Pending verify'}</div>
+                <div className="mob-stat">{awaiting.length}</div>
+              </div>
+              <div className="mob-card">
+                <div className="mob-field-label">Rejected this wk</div>
+                <div className="mob-stat">{rejectedWk.length}</div>
+              </div>
+            </div>
+            <div className="mob-grid2">
+              <div className="mob-card">
+                <div className="mob-field-label">Avg wage / worker</div>
+                <div className="mob-stat">{mgmtWorkers > 0 ? fmtMoney(cost / mgmtWorkers) : '—'}</div>
+              </div>
+              <div className="mob-card">
+                <div className="mob-field-label">Compliance %</div>
+                <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
+              </div>
+            </div>
+
+            {awaiting.length > 0 && (
+              <button className="mob-alert" onClick={() => setShowApprovals(true)}>
+                ⚠ {awaiting.length} record{awaiting.length === 1 ? '' : 's'} awaiting {canFinal ? 'final approval' : 'verification'} — tap to review →
+              </button>
+            )}
+
+            {stationPct.length > 0 && (
+              <div className="mob-card">
+                <div className="mob-title">Approval completion by station</div>
+                <div className="mob-bars">
+                  {stationPct.map((s) => (
+                    <div className="mob-barrow" key={s.id}>
+                      <span className="lbl wide">{s.name}</span>
+                      <span className="mob-bartrack">
+                        <div className={s.pct! < 80 ? 'best' : ''} style={{ width: `${s.pct}%` }} />
+                      </span>
+                      <span className="val">{s.pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mob-card">
+              <div className="mob-title">Payroll cost trend (6 months)</div>
+              <div className="mob-bars">
+                {trend.map((t) => (
+                  <div className="mob-barrow" key={t.label}>
+                    <span className="lbl">{t.label}</span>
+                    <span className="mob-bartrack">
+                      <div style={{ width: `${(t.total / maxTrend) * 100}%` }} />
+                    </span>
+                    <span className="val">{fmtK(t.total)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mob-card">
+              <div className="mob-title">Exception flags</div>
+              {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
+              {flags.map((f, i) => (
+                <div className={`mob-flag ${f.kind}`} key={i}>
+                  <div className="mob-flag-title">{f.title}</div>
+                  <div>{f.text}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mob-card">
+              <div className="mob-title">Workforce</div>
+              <div className="mob-breakrow">
+                <span>Active workers today</span>
+                <span className="mob-entry-amt">{activeToday}</span>
+              </div>
+              <div className="mob-breakrow">
+                <span>Records submitted today</span>
+                <span className="mob-entry-amt">{todayRows.length}</span>
+              </div>
+              <div className="mob-breakrow">
+                <span>Stations at full coverage</span>
+                <span className="mob-entry-amt">{coveredToday} / {stations.length}</span>
+              </div>
             </div>
           </>
         )}
@@ -1735,288 +1950,6 @@ function EntryDetail({
                 </div>
               </span>
             </div>
-          </div>
-        </div>
-      </div>
-    </>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* TAB 3a — PROFILE for verify/approve tiers (Engineer / Manager /    */
-/* Management): mill-wide performance dashboard — payroll cost MTD,   */
-/* pending approvals, compliance, 6-month trend and exception flags.  */
-/* ------------------------------------------------------------------ */
-
-function ManagerProfileTab({
-  myName,
-  myEmail,
-  tier,
-  stations,
-  jobs,
-  rateFor,
-  amountFor,
-  tier2RateFor,
-  onError,
-}: {
-  myName: string
-  myEmail: string
-  tier: Grade | null
-  stations: Station[]
-  jobs: Job[]
-  rateFor: (jobId: string) => number
-  amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
-  onError: (m: string | null) => void
-}) {
-  const [entries, setEntries] = useState<ProductionEntry[]>([])
-  const [showApprovals, setShowApprovals] = useState(false)
-
-  // Six months of entries feed the trend chart; everything else (including
-  // the approvals list) derives from the same rows client-side.
-  function loadEntries() {
-    const now = new Date()
-    const from = new Date(now.getFullYear(), now.getMonth() - 5, 1)
-    supabase
-      .from('production_entries')
-      .select('*')
-      .gte('work_date', dayISO(from))
-      .then(({ data, error }) => {
-        if (error) onError(error.message)
-        else setEntries(data ?? [])
-      })
-  }
-  useEffect(() => {
-    loadEntries()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const isApprover = effectiveCapabilities(tier).includes('approve')
-  const canVerify = effectiveCapabilities(tier).includes('verify')
-  const canFinal = isApprover
-  const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
-  const status = (e: ProductionEntry) => e.approval_status ?? 'approved'
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-
-  const today = todayISO()
-  const monthStart = today.slice(0, 8) + '01'
-  const monday = new Date()
-  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
-  const weekStart = dayISO(monday)
-
-  const mtd = entries.filter((e) => e.work_date >= monthStart)
-  const payable = mtd.filter((e) => status(e) !== 'rejected')
-  const cost = payable.reduce((s, e) => s + amountOf(e), 0)
-  const workers = new Set(payable.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
-  const activeStations = new Set(payable.map((e) => e.station_id)).size
-  const awaiting = mtd.filter(
-    (e) => (canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'),
-  )
-  // Unscoped by month — an aging entry from further back still needs action.
-  const awaitingAll = entries.filter(
-    (e) => (canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'),
-  )
-  const rejectedWk = entries.filter((e) => status(e) === 'rejected' && e.work_date >= weekStart)
-  const compliance = mtd.length > 0
-    ? Math.round((mtd.filter((e) => status(e) === 'approved').length / mtd.length) * 100)
-    : null
-
-  const fmtMoney = (v: number) =>
-    v >= 1000 ? `RM ${Math.round(v).toLocaleString()}` : RM(v)
-
-  // Approval completion per station (this month).
-  const stationPct = stations
-    .map((s) => {
-      const rows = mtd.filter((e) => e.station_id === s.id)
-      return {
-        id: s.id,
-        name: s.name,
-        pct: rows.length > 0
-          ? Math.round((rows.filter((e) => status(e) === 'approved').length / rows.length) * 100)
-          : null,
-      }
-    })
-    .filter((r) => r.pct != null)
-
-  // Payroll cost trend — last 6 months.
-  const trend: { label: string; total: number }[] = []
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date()
-    const m = new Date(d.getFullYear(), d.getMonth() - i, 1)
-    const prefix = dayISO(m).slice(0, 7)
-    const total = entries
-      .filter((e) => e.work_date.startsWith(prefix) && status(e) !== 'rejected')
-      .reduce((s, e) => s + amountOf(e), 0)
-    trend.push({ label: m.toLocaleDateString(undefined, { month: 'short' }), total })
-  }
-  const maxTrend = Math.max(1, ...trend.map((t) => t.total))
-  const fmtK = (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v).toString())
-
-  // Exception flags — only the ones that actually trigger.
-  const flags: { kind: 'red' | 'amber'; title: string; text: string }[] = []
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3_600_000)
-  const aging = entries.filter(
-    (e) => ['pending', 'verified'].includes(status(e)) && new Date(e.created_at) < threeDaysAgo,
-  )
-  if (aging.length > 0) {
-    flags.push({
-      kind: 'red',
-      title: 'Aging approval',
-      text: `${aging.length} record${aging.length === 1 ? '' : 's'} pending > 3 days`,
-    })
-  }
-  const rejByStation = new Map<string, number>()
-  for (const e of rejectedWk) rejByStation.set(e.station_id, (rejByStation.get(e.station_id) ?? 0) + 1)
-  for (const [sid, n] of rejByStation) {
-    if (n >= 3) flags.push({
-      kind: 'amber',
-      title: 'Rejection spike',
-      text: `${stationName(sid)}: ${n} rejections this week`,
-    })
-  }
-  for (const s of stations) {
-    const rows = mtd.filter((e) => e.station_id === s.id)
-    if (rows.length < 5) continue
-    const avg = rows.reduce((sum, e) => sum + e.quantity, 0) / rows.length
-    const spike = rows.find((e) => e.work_date >= weekStart && e.quantity > 2 * avg)
-    if (spike) {
-      flags.push({
-        kind: 'amber',
-        title: 'High entry',
-        text: `${s.name}: ${spike.quantity} logged — above normal range`,
-      })
-      break
-    }
-  }
-
-  // Workforce (today).
-  const todayRows = entries.filter((e) => e.work_date === today)
-  const activeToday = new Set(todayRows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
-  const coveredToday = new Set(todayRows.map((e) => e.station_id)).size
-
-  if (showApprovals) {
-    return (
-      <ApprovalsScreen
-        items={awaitingAll}
-        jobs={jobs}
-        stations={stations}
-        rateFor={rateFor}
-        amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
-        myEmail={myEmail}
-        canVerify={canVerify}
-        canFinal={canFinal}
-        onBack={() => setShowApprovals(false)}
-        onChanged={loadEntries}
-        onError={onError}
-      />
-    )
-  }
-
-  return (
-    <>
-      <div className="mob-header">
-        <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
-      </div>
-
-      <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
-          <div className="mob-role">Performance dashboard</div>
-          <div className="mob-sub">{myName} · {tier?.name ?? '—'} · All stations</div>
-        </div>
-
-        <div className="mob-card mob-highlight">
-          <div className="mob-field-label" style={{ color: '#aeb8c4' }}>Payroll cost MTD</div>
-          <div className="mob-big">{fmtMoney(cost)}</div>
-          <div className="mob-sub">
-            {workers} active worker{workers === 1 ? '' : 's'} across {activeStations} station{activeStations === 1 ? '' : 's'}
-          </div>
-        </div>
-
-        <div className="mob-grid2">
-          <div className="mob-card">
-            <div className="mob-field-label">{isApprover ? 'Pending final' : 'Pending verify'}</div>
-            <div className="mob-stat">{awaiting.length}</div>
-          </div>
-          <div className="mob-card">
-            <div className="mob-field-label">Rejected this wk</div>
-            <div className="mob-stat">{rejectedWk.length}</div>
-          </div>
-        </div>
-        <div className="mob-grid2">
-          <div className="mob-card">
-            <div className="mob-field-label">Avg wage / worker</div>
-            <div className="mob-stat">{workers > 0 ? fmtMoney(cost / workers) : '—'}</div>
-          </div>
-          <div className="mob-card">
-            <div className="mob-field-label">Compliance %</div>
-            <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
-          </div>
-        </div>
-
-        {awaiting.length > 0 && (
-          <button className="mob-alert" onClick={() => setShowApprovals(true)}>
-            ⚠ {awaiting.length} record{awaiting.length === 1 ? '' : 's'} awaiting {isApprover ? 'final approval' : 'verification'} — tap to review →
-          </button>
-        )}
-
-        {stationPct.length > 0 && (
-          <div className="mob-card">
-            <div className="mob-title">Approval completion by station</div>
-            <div className="mob-bars">
-              {stationPct.map((s) => (
-                <div className="mob-barrow" key={s.id}>
-                  <span className="lbl wide">{s.name}</span>
-                  <span className="mob-bartrack">
-                    <div className={s.pct! < 80 ? 'best' : ''} style={{ width: `${s.pct}%` }} />
-                  </span>
-                  <span className="val">{s.pct}%</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="mob-card">
-          <div className="mob-title">Payroll cost trend (6 months)</div>
-          <div className="mob-bars">
-            {trend.map((t) => (
-              <div className="mob-barrow" key={t.label}>
-                <span className="lbl">{t.label}</span>
-                <span className="mob-bartrack">
-                  <div style={{ width: `${(t.total / maxTrend) * 100}%` }} />
-                </span>
-                <span className="val">{fmtK(t.total)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">Exception flags</div>
-          {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
-          {flags.map((f, i) => (
-            <div className={`mob-flag ${f.kind}`} key={i}>
-              <div className="mob-flag-title">{f.title}</div>
-              <div>{f.text}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">Workforce</div>
-          <div className="mob-breakrow">
-            <span>Active workers today</span>
-            <span className="mob-entry-amt">{activeToday}</span>
-          </div>
-          <div className="mob-breakrow">
-            <span>Records submitted today</span>
-            <span className="mob-entry-amt">{todayRows.length}</span>
-          </div>
-          <div className="mob-breakrow">
-            <span>Stations at full coverage</span>
-            <span className="mob-entry-amt">{coveredToday} / {stations.length}</span>
           </div>
         </div>
       </div>
