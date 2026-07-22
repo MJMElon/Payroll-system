@@ -227,7 +227,8 @@ export default function DemoMobile() {
   // and see ALL stations; lower tiers see only their own station tags.
   const tierCaps = effectiveCapabilities(tier)
   const canEntry = tierCaps.includes('data-entry')
-  const isUpper = tierCaps.includes('report-view')
+  const isUpper =
+    tierCaps.includes('report-view') || tierCaps.includes('verify') || tierCaps.includes('approve')
   const myStationIds = profile?.station_ids ?? []
   const scopedStations =
     isUpper || myStationIds.length === 0
