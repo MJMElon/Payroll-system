@@ -119,6 +119,17 @@ export default function SummaryReport() {
             <option value="approved">Approved</option>
           </select>
         </div>
+        <div className="pr-filters-spacer">
+          <button className="pr-btn ghost">Reset</button>
+          <button className="pr-btn export-xls">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /></svg>
+            Export Excel
+          </button>
+          <button className="pr-btn export-pdf">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /></svg>
+            Export PDF
+          </button>
+        </div>
       </div>
 
       <div className="pr-kpi-grid">
@@ -164,17 +175,26 @@ export default function SummaryReport() {
       <div className="pr-table-card">
         <div className="pr-table-card-head">
           <h3>Worker Payroll Summary</h3>
+          <span className="muted small">All amounts in RM</span>
         </div>
         <div className="pr-table-scroll">
           <table className="pr-data">
+            <colgroup>
+              <col style={{ width: 30 }} /><col style={{ width: 130 }} /><col style={{ width: 60 }} />
+              <col style={{ width: 98 }} /><col style={{ width: 40 }} /><col style={{ width: 40 }} />
+              <col style={{ width: 56 }} /><col style={{ width: 56 }} /><col style={{ width: 76 }} />
+              <col style={{ width: 66 }} /><col style={{ width: 70 }} /><col style={{ width: 76 }} />
+              <col style={{ width: 70 }} /><col style={{ width: 76 }} /><col style={{ width: 76 }} />
+              <col style={{ width: 101 }} />
+            </colgroup>
             <thead>
               <tr>
                 <th>#</th><th>Worker</th><th>ID</th><th>Position</th><th>Shift</th>
-                <th className="right">Days Worked</th><th className="right">1-4 Cages</th><th className="right">&gt; 4 Cages</th>
-                <th className="right">Piece-Rate (RM)</th><th className="right">Wages (RM)</th>
-                <th className="right">OT (RM)</th><th className="right">Allowance (RM)</th>
-                <th className="right">Deduction (RM)</th><th className="right">Gross Pay (RM)</th>
-                <th className="right">Net Pay (RM)</th><th>Status</th>
+                <th className="right">Days</th><th className="right">1-4 Cages</th><th className="right">&gt; 4 Cages</th>
+                <th className="right">Piece-Rate</th><th className="right">Wages</th>
+                <th className="right">OT</th><th className="right">Allowance</th>
+                <th className="right">Deduction</th><th className="right">Gross Pay</th>
+                <th className="right">Net Pay</th><th>Status</th>
               </tr>
             </thead>
             <tbody>
@@ -184,14 +204,14 @@ export default function SummaryReport() {
                 return (
                   <tr key={r.id}>
                     <td className="muted">{i + 1}</td>
-                    <td>
+                    <td className="wrap">
                       <div className="pr-worker-cell">
                         <div className="pr-worker-avatar">{initialsOf(r.name)}</div>
                         <button className="pr-worker-link" onClick={() => setSelectedIdx(originalIdx)}>{r.name}</button>
                       </div>
                     </td>
                     <td className="muted">{r.id}</td>
-                    <td>{r.role}</td>
+                    <td className="wrap">{r.role}</td>
                     <td>{r.shift}</td>
                     <td className="right">{r.days}</td>
                     <td className="right">{r.c14 == null ? '—' : num(r.c14)}</td>
@@ -203,7 +223,7 @@ export default function SummaryReport() {
                     <td className="right">{fmt(r.ded)}</td>
                     <td className="right">{fmt(g)}</td>
                     <td className="right"><strong>{fmt(n)}</strong></td>
-                    <td><span className={`pr-status-pill ${r.status}`}>{STATUS_LABEL[r.status]}</span></td>
+                    <td className="wrap"><span className={`pr-status-pill ${r.status}`}>{STATUS_LABEL[r.status]}</span></td>
                   </tr>
                 )
               })}
