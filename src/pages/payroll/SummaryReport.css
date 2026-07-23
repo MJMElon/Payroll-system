@@ -1,4 +1,4 @@
-/* Styles scoped to the Payroll Management "Summary" tab only.
+/* Styles scoped to the Payroll Report "Summary" tab only.
    Everything is nested under .pr-summary so nothing here can leak into,
    or be affected by, the shared index.css used by the rest of the app. */
 
