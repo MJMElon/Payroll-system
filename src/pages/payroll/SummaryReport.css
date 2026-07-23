@@ -47,6 +47,18 @@
 }
 .pr-filter-field select:focus-visible { outline: 2px solid var(--pr-brand); outline-offset: 1px; }
 
+.pr-search-field { flex: 1; min-width: 200px; }
+.pr-search-box {
+  display: flex; align-items: center; gap: 0.4rem;
+  border: 1px solid var(--pr-border); border-radius: 10px; padding: 0.5rem 0.75rem;
+  color: var(--pr-muted);
+}
+.pr-search-box svg { width: 15px; height: 15px; flex: none; }
+.pr-search-box input {
+  border: none; outline: none; background: none; color: var(--text); font-size: 0.83rem; width: 100%;
+}
+.pr-search-box:focus-within { outline: 2px solid var(--pr-brand); outline-offset: 1px; }
+
 .pr-filters-spacer { margin-left: auto; display: flex; gap: 0.5rem; align-items: center; }
 .pr-btn {
   display: flex; align-items: center; gap: 0.4rem; cursor: pointer;
