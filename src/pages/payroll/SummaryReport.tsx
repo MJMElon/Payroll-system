@@ -207,7 +207,7 @@ export default function SummaryReport() {
         <KpiCard icon={<WalletIcon />} label="Total Wages Pay" value={`RM ${fmt(wages)}`} foot={`${pctOfGross(wages).toFixed(1)}% of gross payroll`} />
         <KpiCard icon={<ClockIcon />} label="Incentive / Allowance" value={`RM ${fmt(incentive)}`} foot={`${pctOfGross(incentive).toFixed(1)}% of gross payroll`} />
         <KpiCard icon={<PlusIcon />} label="Others" value={`RM ${fmt(others)}`} foot={`${pctOfGross(others).toFixed(1)}% of gross payroll`} />
-        <KpiCard icon={<ReceiptIcon />} label="Deductions" value={`RM ${fmt(ded)}`} foot={`${pctOfGross(ded).toFixed(1)}% of gross payroll`} />
+        <KpiCard icon={<ReceiptIcon />} label="Deductions" value={`RM ${fmt(ded)}`} foot={`${pctOfGross(ded).toFixed(1)}% of gross payroll`} negative />
         <KpiCard icon={<BanknoteIcon />} label="Net Payroll" value={`RM ${fmt(net)}`} foot={`${pctOfGross(net).toFixed(1)}% of gross payroll`} footGood />
       </div>
 
@@ -394,13 +394,14 @@ function WorkerDetail({ row, onBack }: { row: WorkerRow; onBack: () => void }) {
 /* ------------------------------------------------------------------ */
 
 function KpiCard({
-  icon, label, value, foot, footGood, children,
+  icon, label, value, foot, footGood, negative, children,
 }: {
   icon: React.ReactNode
   label: string
   value: string
   foot?: string
   footGood?: boolean
+  negative?: boolean
   children?: React.ReactNode
 }) {
   return (
@@ -409,7 +410,7 @@ function KpiCard({
         <div className="pr-kpi-icon">{icon}</div>
         <div className="pr-kpi-label">{label}</div>
       </div>
-      <div className="pr-kpi-value">{value}</div>
+      <div className={`pr-kpi-value${negative ? ' negative' : ''}`}>{negative ? '(-) ' : ''}{value}</div>
       {foot && <div className={`pr-kpi-foot${footGood ? ' good' : ''}`}>{foot}</div>}
       {children}
     </div>

@@ -93,6 +93,7 @@
   line-height: 1.25; overflow-wrap: anywhere; flex: 1; min-width: 0;
 }
 .pr-kpi-value { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; color: var(--text); }
+.pr-kpi-value.negative { color: #b23030; }
 .pr-kpi-foot { font-size: 0.74rem; color: var(--pr-muted); }
 .pr-kpi-foot.good { color: var(--pr-good-text); font-weight: 600; }
 
