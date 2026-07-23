@@ -93,10 +93,6 @@ export default function Payroll() {
           <MjmLogo />
           <h1>Payroll Management</h1>
         </div>
-        <p className="muted">
-          A run totals each worker's production in the period and prices it with the
-          rate in force at the period end.
-        </p>
       </div>
 
       <div className="pm-shell" style={shellWideStyle}>
