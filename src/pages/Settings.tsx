@@ -493,6 +493,7 @@ function UserAccessModal({
   )
   const [gradeId, setGradeId] = useState(user.grade_id ?? '')
   const [supervisorId, setSupervisorId] = useState(user.supervisor_id ?? '')
+  const [approvalScreen, setApprovalScreen] = useState(user.mobile_approval ?? '')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -523,6 +524,7 @@ function UserAccessModal({
       station_id: stationIds[0] ?? null,
       grade_id: gradeId || null,
       supervisor_id: validSupervisor ? supervisorId : null,
+      mobile_approval: (approvalScreen || null) as Profile['mobile_approval'],
     }
     if (user.role !== 'admin') fields.role = roleForTier(g?.sort_order ?? null, g?.name)
     const { error } = await supabase.from('access_profiles').update(fields).eq('id', user.id)
@@ -593,6 +595,19 @@ function UserAccessModal({
             Only higher tiers can be chosen. This builds the team structure tree
             — e.g. 4 operators under 1 assistant head, 2 assistant heads under 1
             station head.
+          </p>
+        </div>
+
+        <div className="tag-section">
+          <div className="tag-section-title">Work approval screen (mobile)</div>
+          <select value={approvalScreen} onChange={(e) => setApprovalScreen(e.target.value)}>
+            <option value="">Not allowed — no Approvals page</option>
+            <option value="verify">Verification — can verify submitted work</option>
+            <option value="approve">Final approval — can verify and approve</option>
+          </select>
+          <p className="tag-section-hint">
+            Opens the Approvals page in the mobile app for THIS user only — it
+            is granted per person here, not fixed to any tier.
           </p>
         </div>
 

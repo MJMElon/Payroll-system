@@ -821,3 +821,38 @@ end $$;
 -- ---------------------------------------------------------------------------
 alter table public.access_profiles add column if not exists supervisor_id uuid
   references public.access_profiles (id) on delete set null;
+
+-- ---------------------------------------------------------------------------
+-- Mobile Approvals screen. Access is granted PER USER in Settings → User
+-- access ("Work approval screen"): null = no access, 'verify' = can verify
+-- submitted work, 'approve' = final approval (sees both queues). Not tied
+-- to any tier — the super admin / admins always have it.
+-- ---------------------------------------------------------------------------
+alter table public.access_profiles add column if not exists mobile_approval text;
+alter table public.access_profiles drop constraint if exists access_profiles_mobile_approval_check;
+alter table public.access_profiles add constraint access_profiles_mobile_approval_check
+  check (mobile_approval is null or mobile_approval in ('verify', 'approve'));
+
+-- Reason shown to the worker when their entry is rejected.
+alter table public.production_entries add column if not exists rejected_reason text;
+
+create or replace function public.my_approval_screen()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select mobile_approval from public.access_profiles where id = auth.uid();
+$$;
+
+-- Granted users may update entries (verify / approve / reject) in addition
+-- to the tier-capability holders.
+drop policy if exists "verifiers update production" on public.production_entries;
+create policy "verifiers update production" on public.production_entries
+  for update using (
+    public.my_role() in ('admin', 'manager')
+    or public.my_tag_tier() = 1
+    or public.my_capabilities() && array['verify', 'approve']
+    or public.my_approval_screen() is not null
+  );
