@@ -92,7 +92,7 @@ export default function Payroll() {
         <Link to="/" className="small muted">← Back to main page</Link>
         <div className="pm-brand-row">
           <MjmLogo />
-          <h1>Payroll Management</h1>
+          <h1>Payroll Report</h1>
         </div>
       </div>
 
