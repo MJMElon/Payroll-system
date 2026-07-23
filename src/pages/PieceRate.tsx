@@ -1043,8 +1043,27 @@ function ContractModal({
         unit: unit.trim() || 'unit',
       }
       if (job) {
-        const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
-        if (error) throw new Error(error.message)
+        // Only send the identity fields (station/tag/description/unit) when
+        // one actually changed — Postgres re-checks the station+tag+name
+        // uniqueness constraint against every other row whenever an UPDATE
+        // touches those columns, even to the same value, so resaving just
+        // the rate on an unrelated field would otherwise fail if some other
+        // job happens to share that combination.
+        const identityChanged =
+          fields.station_id !== job.station_id ||
+          fields.grade_id !== job.grade_id ||
+          fields.name !== job.name ||
+          fields.unit !== job.unit
+        if (identityChanged) {
+          const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
+          if (error) {
+            throw new Error(
+              error.message.includes('jobs_station_grade_name_idx')
+                ? 'Another piece rate already exists for this exact Station + Tag + Work description — change one of those, or edit the existing entry instead (check "Show inactive" if it might be hidden).'
+                : error.message,
+            )
+          }
+        }
       } else {
         // Every new contract waits for verify + approve, admins included.
         submitted = true
@@ -1053,7 +1072,13 @@ function ContractModal({
           .insert({ ...fields, approval_status: 'pending' })
           .select()
           .single()
-        if (error) throw new Error(error.message)
+        if (error) {
+          throw new Error(
+            error.message.includes('jobs_station_grade_name_idx')
+              ? 'A piece rate already exists for this exact Station + Tag + Work description — edit that one instead (check "Show inactive" if it might be hidden).'
+              : error.message,
+          )
+        }
         jobId = data.id
       }
       const unchanged =
