@@ -1,0 +1,14 @@
+/* Bar chart + lunch-row styling for the Hourly Production screen only.
+   Reuses the --pr-* custom properties defined on .pr-summary in
+   SummaryReport.css; this file only adds classes not already provided there,
+   so it can't affect the Summary tab or any other page. */
+
+.pr-hourly-chart { display: flex; align-items: flex-end; gap: clamp(0.3rem, 1vw, 0.7rem); padding: 0.4rem 0.3rem 0; }
+.pr-hourly-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.35rem; min-width: 0; }
+.pr-hourly-value { font-size: 0.68rem; font-weight: 700; color: var(--pr-text-secondary); }
+.pr-hourly-track { width: 100%; max-width: 34px; height: 150px; display: flex; align-items: flex-end; }
+.pr-hourly-bar { width: 100%; border-radius: 6px 6px 2px 2px; background: #1baf7a; }
+.pr-hourly-col.lunch .pr-hourly-bar { background: var(--pr-muted); opacity: 0.55; }
+.pr-hourly-label { font-size: 0.64rem; color: var(--pr-muted); white-space: nowrap; }
+
+table.pr-data tr.pr-lunch-row td { color: var(--pr-muted); font-style: italic; }
