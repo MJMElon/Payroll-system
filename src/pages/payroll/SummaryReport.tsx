@@ -64,6 +64,7 @@ const netOf = (r: WorkerRow) => grossOf(r) - r.ded
 export default function SummaryReport() {
   const [shiftFilter, setShiftFilter] = useState<'all' | 'A' | 'B'>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | Status>('all')
+  const [searchQuery, setSearchQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
 
   if (selectedIdx != null) {
@@ -93,8 +94,12 @@ export default function SummaryReport() {
 
   const dayVals = [2.7, 3.1, 2.9, 3.8, 4.1, 3.9, 2.9, 2.5, 2.4, 3.0, 3.7, 4.1, 4.4, 4.2, 3.3, 2.8, 2.4, 2.7, 3.4, 4.0, 4.4, 4.2, 3.5, 2.9, 2.6, 2.5, 3.0, 3.6, 4.1, 4.5, 3.8]
 
+  const query = searchQuery.trim().toLowerCase()
   const filteredRows = ROWS.filter(
-    (r) => (shiftFilter === 'all' || r.shift === shiftFilter) && (statusFilter === 'all' || r.status === statusFilter),
+    (r) =>
+      (shiftFilter === 'all' || r.shift === shiftFilter) &&
+      (statusFilter === 'all' || r.status === statusFilter) &&
+      (query === '' || r.name.toLowerCase().includes(query)),
   )
   const filteredWages = sum(filteredRows, totalWagesOf)
   const filteredPiece = sum(filteredRows, (r) => r.piece)
@@ -103,11 +108,13 @@ export default function SummaryReport() {
   const filterSuffix = [
     shiftFilter !== 'all' ? `Shift ${shiftFilter}` : null,
     statusFilter !== 'all' ? STATUS_LABEL[statusFilter] : null,
+    query !== '' ? `matching "${searchQuery.trim()}"` : null,
   ].filter(Boolean).join(', ')
 
   function handleReset() {
     setShiftFilter('all')
     setStatusFilter('all')
+    setSearchQuery('')
   }
 
   function handleExportExcel() {
@@ -150,6 +157,18 @@ export default function SummaryReport() {
             <option value="verified">Verified</option>
             <option value="approved">Approved</option>
           </select>
+        </div>
+        <div className="pr-filter-field pr-search-field">
+          <label>Search Worker</label>
+          <div className="pr-search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+            <input
+              type="text"
+              placeholder="Search worker name…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
         </div>
         <div className="pr-filters-spacer">
           <button className="pr-btn ghost" onClick={handleReset}>Reset</button>
