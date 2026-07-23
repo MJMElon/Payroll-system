@@ -27,7 +27,7 @@ import {
   type Station,
 } from '../lib/supabase'
 
-type Tab = 'performance' | 'record' | 'profile'
+type Tab = 'performance' | 'record' | 'approvals' | 'profile'
 
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
@@ -236,6 +236,42 @@ export default function DemoMobile() {
       ? stations
       : stations.filter((s) => myStationIds.includes(s.id))
 
+  // The Approvals PAGE is granted PER USER in Settings -> User access
+  // ("Work approval screen") — not tied to any tier. Admins and the
+  // tier-1 super admin always have final-approval access.
+  const myOwnGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
+  const approvalLevel: 'verify' | 'approve' | null =
+    profile?.role === 'admin' || myOwnGrade?.sort_order === 1
+      ? 'approve'
+      : profile?.mobile_approval ?? null
+
+  // Badge on the Approvals tab: how many entries wait for MY action.
+  const [approvalsCount, setApprovalsCount] = useState(0)
+  useEffect(() => {
+    if (!approvalLevel || !profile?.id) return
+    let cancelled = false
+    async function count() {
+      const { data } = await supabase
+        .from('production_entries')
+        .select('id, user_id, approval_status')
+        .in('approval_status', ['pending', 'verified'])
+      if (cancelled) return
+      const rows = (data ?? []).filter(
+        (e) =>
+          e.user_id !== profile?.id &&
+          ['pending', 'verified'].includes(e.approval_status ?? '') &&
+          (approvalLevel === 'approve' || e.approval_status === 'pending'),
+      )
+      setApprovalsCount(rows.length)
+    }
+    count()
+    const t = setInterval(count, 60_000)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+  }, [approvalLevel, profile?.id, tab])
+
   // Elapsed-hour photo → entry conversion used to only run while the
   // Record tab (or Performance's station drill-in) happened to be open —
   // so it never fired if you took a photo, then left before the hour
@@ -338,6 +374,17 @@ export default function DemoMobile() {
                     jobColumnReady={jobColumnReady}
                     onError={setError}
                   />
+                ) : tab === 'approvals' && approvalLevel ? (
+                  <ApprovalsTab
+                    profileId={profile?.id ?? null}
+                    myEmail={profile?.email ?? 'unknown'}
+                    level={approvalLevel}
+                    tier={tier}
+                    stations={stations}
+                    jobs={jobs}
+                    amountFor={amountFor}
+                    onError={setError}
+                  />
                 ) : (
                   <ProfileTab
                     profile={profile}
@@ -347,7 +394,7 @@ export default function DemoMobile() {
                 )}
               </div>
 
-              <TabBar tab={tab} onTab={setTab} />
+              <TabBar tab={tab} onTab={setTab} showApprovals={Boolean(approvalLevel)} badge={approvalsCount} />
             </div>
           </div>
           <p className="muted small">
@@ -363,7 +410,17 @@ export default function DemoMobile() {
 /* Bottom tab bar — COMMON to every tier's version                    */
 /* ------------------------------------------------------------------ */
 
-function TabBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+function TabBar({
+  tab,
+  onTab,
+  showApprovals,
+  badge,
+}: {
+  tab: Tab
+  onTab: (t: Tab) => void
+  showApprovals: boolean
+  badge: number
+}) {
   return (
     <div className="mob-tabbar">
       <button className={`mob-tab ${tab === 'performance' ? 'active' : ''}`} onClick={() => onTab('performance')}>
@@ -384,6 +441,17 @@ function TabBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
           <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
         </svg>
       </button>
+      {showApprovals && (
+        <button className={`mob-tab ${tab === 'approvals' ? 'active' : ''}`} onClick={() => onTab('approvals')}>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 11l3 3 8-8" />
+            <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" />
+          </svg>
+          <span>Approvals</span>
+          {badge > 0 && <span className="mob-tab-badge">{badge > 99 ? '99+' : badge}</span>}
+        </button>
+      )}
       <button className={`mob-tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => onTab('profile')}>
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -1951,6 +2019,315 @@ function EntryDetail({
               </span>
             </div>
           </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* TAB — APPROVALS (granted per user in Settings → User access).      */
+/* 'verify' level works the To-verify queue; 'approve' level gets     */
+/* both queues. Own submissions are never in either queue.            */
+/* ------------------------------------------------------------------ */
+
+function ApprovalsTab({
+  profileId,
+  myEmail,
+  level,
+  tier,
+  stations,
+  jobs,
+  amountFor,
+  onError,
+}: {
+  profileId: string | null
+  myEmail: string
+  level: 'verify' | 'approve'
+  tier: Grade | null
+  stations: Station[]
+  jobs: Job[]
+  amountFor: (jobId: string, quantity: number) => number
+  onError: (m: string | null) => void
+}) {
+  const [entries, setEntries] = useState<ProductionEntry[]>([])
+  const [people, setPeople] = useState<Map<string, string>>(new Map())
+  const [queue, setQueue] = useState<'verify' | 'approve'>('verify')
+  const [detail, setDetail] = useState<ProductionEntry | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  async function load() {
+    const [e, p] = await Promise.all([
+      supabase
+        .from('production_entries')
+        .select('*')
+        .in('approval_status', ['pending', 'verified'])
+        .order('created_at', { ascending: true }),
+      supabase.from('access_profiles').select('id, full_name, email'),
+    ])
+    if (e.error) onError(e.error.message)
+    // Never queue someone's own submissions to themselves.
+    setEntries(
+      ((e.data ?? []) as ProductionEntry[]).filter(
+        (x) =>
+          x.user_id !== profileId &&
+          ['pending', 'verified'].includes(x.approval_status ?? ''),
+      ),
+    )
+    setPeople(
+      new Map(
+        ((p.data ?? []) as Profile[]).map((x) => [x.id, x.full_name ?? x.email ?? '?']),
+      ),
+    )
+    setLoading(false)
+  }
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId])
+
+  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const submitterName = (e: ProductionEntry) => people.get(e.user_id ?? '') ?? '?'
+
+  const pendingList = entries.filter((e) => e.approval_status === 'pending')
+  const verifiedList = entries.filter((e) => e.approval_status === 'verified')
+  const list = level === 'approve' && queue === 'approve' ? verifiedList : pendingList
+
+  if (detail) {
+    return (
+      <ApprovalDetail
+        entry={detail}
+        submitter={submitterName(detail)}
+        level={level}
+        myEmail={myEmail}
+        tier={tier}
+        stations={stations}
+        jobs={jobs}
+        amountFor={amountFor}
+        onBack={() => setDetail(null)}
+        onDone={() => {
+          setDetail(null)
+          load()
+        }}
+        onError={onError}
+      />
+    )
+  }
+
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+        <TierBadge tier={tier} />
+      </div>
+
+      <div className="mob-body">
+        <div style={{ padding: '0 0.2rem' }}>
+          <div className="mob-role">Approvals</div>
+          <div className="mob-sub">
+            {level === 'approve' ? 'Verification & final approval' : 'Work verification'}
+          </div>
+        </div>
+
+        {level === 'approve' && (
+          <div className="mob-queue-chips">
+            <button className={queue === 'verify' ? 'on' : ''} onClick={() => setQueue('verify')}>
+              To verify ({pendingList.length})
+            </button>
+            <button className={queue === 'approve' ? 'on' : ''} onClick={() => setQueue('approve')}>
+              To approve ({verifiedList.length})
+            </button>
+          </div>
+        )}
+
+        {loading ? (
+          <p className="muted small">Loading…</p>
+        ) : list.length === 0 ? (
+          <div className="mob-card">
+            <div className="mob-sub">Nothing waiting — all caught up ✅</div>
+          </div>
+        ) : (
+          list.map((e) => (
+            <button className="mob-station perf" key={e.id} onClick={() => setDetail(e)}>
+              <span className="perf-top">
+                <span>{submitterName(e)}</span>
+                <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+              </span>
+              <span className="perf-top">
+                <span className="mob-station-meta">
+                  {jobName(e.job_id)} · {stationName(e.station_id)} ·{' '}
+                  {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                </span>
+                {statusChip(e.approval_status)}
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+    </>
+  )
+}
+
+/* One entry under review: parameters, photo evidence, then the action. */
+function ApprovalDetail({
+  entry,
+  submitter,
+  level,
+  myEmail,
+  tier,
+  stations,
+  jobs,
+  amountFor,
+  onBack,
+  onDone,
+  onError,
+}: {
+  entry: ProductionEntry
+  submitter: string
+  level: 'verify' | 'approve'
+  myEmail: string
+  tier: Grade | null
+  stations: Station[]
+  jobs: Job[]
+  amountFor: (jobId: string, quantity: number) => number
+  onBack: () => void
+  onDone: () => void
+  onError: (m: string | null) => void
+}) {
+  const [photos, setPhotos] = useState<PhotoRecord[]>([])
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    supabase
+      .from('photo_records')
+      .select('*')
+      .eq('entry_id', entry.id)
+      .then(({ data }) => setPhotos(data ?? []))
+  }, [entry.id])
+
+  const job = jobs.find((j) => j.id === entry.job_id)
+  const station = stations.find((s) => s.id === entry.station_id)
+  const total = amountFor(entry.job_id, entry.quantity)
+  const status = entry.approval_status ?? 'pending'
+  const canVerifyNow = status === 'pending'
+  const canApproveNow = status === 'verified' && level === 'approve'
+  const photoUrl = (path: string | null) =>
+    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
+
+  async function act(next: 'verified' | 'approved' | 'rejected') {
+    let reason: string | null = null
+    if (next === 'rejected') {
+      reason = window.prompt('Reason for rejecting (shown to the worker):') ?? null
+      if (reason === null) return // cancelled
+    }
+    setBusy(true)
+    onError(null)
+    const now = new Date().toISOString()
+    const fields: Partial<ProductionEntry> & Record<string, unknown> = { approval_status: next }
+    if (next === 'verified') {
+      fields.verified_by = myEmail
+      fields.verified_at = now
+    }
+    if (next === 'approved') {
+      fields.approved_by = myEmail
+      fields.approved_at = now
+    }
+    if (next === 'rejected') fields.rejected_reason = reason || null
+    const { error } = await supabase.from('production_entries').update(fields).eq('id', entry.id)
+    setBusy(false)
+    if (error) return onError(error.message)
+    onDone()
+  }
+
+  return (
+    <>
+      <div className="mob-header">
+        <button className="mob-back" onClick={onBack}>‹ Approvals</button>
+        <span className="mob-brand">MJM</span>
+        <TierBadge tier={tier} />
+      </div>
+
+      <div className="mob-body">
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Review work entry</div>
+
+        <div className="mob-card">
+          <div className="mob-row">
+            <span>
+              <div className="mob-entry-name">{submitter}</div>
+              <div className="mob-station-meta">
+                {job?.name ?? 'Work'} · {station?.name ?? '?'} ·{' '}
+                {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+                  day: 'numeric', month: 'long',
+                })}
+              </div>
+            </span>
+            <span className="mob-detail-amt">{RM(total)}</span>
+          </div>
+          {statusChip(status)}
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">Submitted parameters</div>
+          <div className="mob-grid2">
+            <div>
+              <div className="mob-field-label">Quantity</div>
+              <div className="mob-param">{entry.quantity} {job ? job.unit.replace('/', '') : ''}</div>
+            </div>
+            <div>
+              <div className="mob-field-label">Amount</div>
+              <div className="mob-param">{RM(total)}</div>
+            </div>
+          </div>
+          {entry.verified_by && (
+            <div className="mob-sub">Verified by {entry.verified_by}</div>
+          )}
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">
+            Photo evidence{' '}
+            <span className="mob-chip">{photos.length} photo{photos.length === 1 ? '' : 's'}</span>
+          </div>
+          {photos.length === 0 && <div className="mob-sub">No photos attached.</div>}
+          <div className="mob-photo-grid">
+            {photos.map((p) => {
+              const url = photoUrl(p.photo_path)
+              return url ? (
+                <a key={p.id} href={url} target="_blank" rel="noreferrer">
+                  <img className="mob-photo" src={url} alt="evidence" />
+                </a>
+              ) : (
+                <span key={p.id} className="mob-chip">no photo</span>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">
+            {canApproveNow ? 'Final approval' : canVerifyNow ? 'Verification' : 'Review'}
+          </div>
+          {canVerifyNow && (
+            <button className="mob-btn approve" disabled={busy} onClick={() => act('verified')}>
+              ✓ Verify this work
+            </button>
+          )}
+          {canApproveNow && (
+            <button className="mob-btn approve" disabled={busy} onClick={() => act('approved')}>
+              ✓ Approve — final
+            </button>
+          )}
+          {(canVerifyNow || canApproveNow) && (
+            <button className="mob-btn reject" disabled={busy} onClick={() => act('rejected')}>
+              ✗ Reject…
+            </button>
+          )}
+          {!canVerifyNow && !canApproveNow && (
+            <div className="mob-sub">
+              Waiting for a final approver — your access level covers verification only.
+            </div>
+          )}
         </div>
       </div>
     </>
