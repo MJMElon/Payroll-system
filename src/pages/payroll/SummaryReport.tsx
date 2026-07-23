@@ -10,36 +10,39 @@ import './SummaryReport.css'
  */
 
 type Status = 'pending' | 'verified' | 'approved'
+type Nationality = 'Malaysian' | 'Indonesian'
 
 interface WorkerRow {
   name: string
   id: string
+  nat: Nationality
   role: string
   shift: 'A' | 'B'
   days: number
   c14: number | null
   c4p: number | null
   piece: number
-  leave: number
+  wages: number
   ot: number
-  allow: number
+  incentive: number
+  others: number
   ded: number
   status: Status
 }
 
 const ROWS: WorkerRow[] = [
-  { name: 'Mohd Hafiz Bin Ali', id: 'W-0123', role: 'FFB Inspector', shift: 'A', days: 26, c14: 180, c4p: 396, piece: 8432.60, leave: 0, ot: 1820, allow: 180, ded: 910, status: 'approved' },
-  { name: 'Siti Aisyah Bt. Ramli', id: 'W-0187', role: 'Ramp Operator', shift: 'B', days: 26, c14: 140, c4p: 308, piece: 6752.00, leave: 0, ot: 1820, allow: 150, ded: 720, status: 'verified' },
-  { name: 'Rajesh A/L Kumar', id: 'W-0076', role: 'Weighbridge Operator', shift: 'A', days: 25, c14: 160, c4p: 353, piece: 7868.50, leave: 0, ot: 1750, allow: 150, ded: 840, status: 'pending' },
-  { name: 'Sutrisno', id: 'W-0211', role: 'Kernel Recovery', shift: 'B', days: 26, c14: 110, c4p: 231, piece: 5220.80, leave: 420, ot: 1820, allow: 120, ded: 620, status: 'pending' },
-  { name: 'Kamalul Azlan Bin Hamid', id: 'W-0098', role: 'Oil Recovery', shift: 'A', days: 24, c14: 100, c4p: 213, piece: 4860.00, leave: 420, ot: 1680, allow: 120, ded: 560, status: 'pending' },
-  { name: 'Budi Santoso', id: 'W-0302', role: 'Press & Threshing', shift: 'B', days: 26, c14: 90, c4p: 197, piece: 4580.80, leave: 0, ot: 1820, allow: 100, ded: 720, status: 'verified' },
-  { name: 'Muhammad Iqram Bin Zainal', id: 'W-0148', role: 'Lab Technician', shift: 'A', days: 25, c14: null, c4p: null, piece: 0, leave: 2000, ot: 1750, allow: 150, ded: 400, status: 'verified' },
-  { name: 'Lim Wei Sheng', id: 'W-0264', role: 'EB Station', shift: 'B', days: 23, c14: null, c4p: null, piece: 0, leave: 1840, ot: 1610, allow: 100, ded: 380, status: 'pending' },
-  { name: 'Rosi Bin Ahmad', id: 'W-0331', role: 'Water Treatment Plant', shift: 'A', days: 26, c14: null, c4p: null, piece: 0, leave: 1820, ot: 1620, allow: 90, ded: 350, status: 'approved' },
-  { name: 'Faridah Bt. Yusof', id: 'W-0410', role: 'FFB Reception', shift: 'B', days: 26, c14: 155, c4p: 344, piece: 7462.50, leave: 0, ot: 1820, allow: 150, ded: 850, status: 'approved' },
-  { name: 'Nur Aisyah Bt. Ismail', id: 'W-0455', role: 'Weighbridge Clerk', shift: 'A', days: 25, c14: 125, c4p: 277, piece: 6030.00, leave: 0, ot: 1750, allow: 140, ded: 480, status: 'verified' },
-  { name: 'Amirul Hakim Bin Zulkifli', id: 'W-0512', role: 'Ramp Operator', shift: 'B', days: 26, c14: 140, c4p: 315, piece: 6825.00, leave: 0, ot: 1820, allow: 150, ded: 730, status: 'approved' },
+  { name: 'Mohd Hafiz Bin Ali', id: 'W-0123', nat: 'Malaysian', role: 'FFB Inspector', shift: 'A', days: 26, c14: 180, c4p: 396, piece: 8432.60, wages: 0, ot: 1820, incentive: 180, others: 40, ded: 910, status: 'approved' },
+  { name: 'Siti Aisyah Bt. Ramli', id: 'W-0187', nat: 'Malaysian', role: 'Ramp Operator', shift: 'B', days: 26, c14: 140, c4p: 308, piece: 6752.00, wages: 0, ot: 1820, incentive: 150, others: 30, ded: 720, status: 'verified' },
+  { name: 'Rajesh A/L Kumar', id: 'W-0076', nat: 'Malaysian', role: 'Weighbridge Operator', shift: 'A', days: 25, c14: 160, c4p: 353, piece: 7868.50, wages: 0, ot: 1750, incentive: 150, others: 35, ded: 840, status: 'pending' },
+  { name: 'Sutrisno', id: 'W-0211', nat: 'Indonesian', role: 'Kernel Recovery', shift: 'B', days: 26, c14: 110, c4p: 231, piece: 5220.80, wages: 420, ot: 1820, incentive: 120, others: 25, ded: 620, status: 'pending' },
+  { name: 'Kamalul Azlan Bin Hamid', id: 'W-0098', nat: 'Malaysian', role: 'Oil Recovery', shift: 'A', days: 24, c14: 100, c4p: 213, piece: 4860.00, wages: 420, ot: 1680, incentive: 120, others: 20, ded: 560, status: 'pending' },
+  { name: 'Budi Santoso', id: 'W-0302', nat: 'Indonesian', role: 'Press & Threshing', shift: 'B', days: 26, c14: 90, c4p: 197, piece: 4580.80, wages: 0, ot: 1820, incentive: 100, others: 25, ded: 720, status: 'verified' },
+  { name: 'Muhammad Iqram Bin Zainal', id: 'W-0148', nat: 'Malaysian', role: 'Lab Technician', shift: 'A', days: 25, c14: null, c4p: null, piece: 0, wages: 2000, ot: 1750, incentive: 150, others: 20, ded: 400, status: 'verified' },
+  { name: 'Lim Wei Sheng', id: 'W-0264', nat: 'Malaysian', role: 'EB Station', shift: 'B', days: 23, c14: null, c4p: null, piece: 0, wages: 1840, ot: 1610, incentive: 100, others: 15, ded: 380, status: 'pending' },
+  { name: 'Rosi Bin Ahmad', id: 'W-0331', nat: 'Malaysian', role: 'Water Treatment Plant', shift: 'A', days: 26, c14: null, c4p: null, piece: 0, wages: 1820, ot: 1620, incentive: 90, others: 15, ded: 350, status: 'approved' },
+  { name: 'Faridah Bt. Yusof', id: 'W-0410', nat: 'Malaysian', role: 'FFB Reception', shift: 'B', days: 26, c14: 155, c4p: 344, piece: 7462.50, wages: 0, ot: 1820, incentive: 150, others: 30, ded: 850, status: 'approved' },
+  { name: 'Nur Aisyah Bt. Ismail', id: 'W-0455', nat: 'Malaysian', role: 'Weighbridge Clerk', shift: 'A', days: 25, c14: 125, c4p: 277, piece: 6030.00, wages: 0, ot: 1750, incentive: 140, others: 25, ded: 480, status: 'verified' },
+  { name: 'Amirul Hakim Bin Zulkifli', id: 'W-0512', nat: 'Malaysian', role: 'Ramp Operator', shift: 'B', days: 26, c14: 140, c4p: 315, piece: 6825.00, wages: 0, ot: 1820, incentive: 150, others: 30, ded: 730, status: 'approved' },
 ]
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -54,7 +57,8 @@ const YTD_FACTORS = [0.78, 0.83, 0.88, 0.90, 0.94, 0.97, 1.00]
 const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const initialsOf = (name: string) =>
   name.split(' ').filter((w) => /^[A-Z]/.test(w)).slice(0, 2).map((w) => w[0]).join('')
-const grossOf = (r: WorkerRow) => r.piece + r.leave + r.ot + r.allow
+const totalWagesOf = (r: WorkerRow) => r.wages + r.ot
+const grossOf = (r: WorkerRow) => totalWagesOf(r) + r.piece + r.incentive + r.others
 const netOf = (r: WorkerRow) => grossOf(r) - r.ded
 
 export default function SummaryReport() {
@@ -67,7 +71,7 @@ export default function SummaryReport() {
   }
 
   const totalWorkers = ROWS.length
-  const indonesian = 2
+  const indonesian = ROWS.filter((r) => r.nat === 'Indonesian').length
   const malaysian = totalWorkers - indonesian
 
   const totalC14 = sum(ROWS, (r) => r.c14 ?? 0)
@@ -75,11 +79,12 @@ export default function SummaryReport() {
   const totalCages = totalC14 + totalC4p
 
   const piece = sum(ROWS, (r) => r.piece)
-  const leave = sum(ROWS, (r) => r.leave)
+  const wages = sum(ROWS, (r) => r.wages)
   const ot = sum(ROWS, (r) => r.ot)
-  const allow = sum(ROWS, (r) => r.allow)
+  const incentive = sum(ROWS, (r) => r.incentive)
+  const others = sum(ROWS, (r) => r.others)
   const ded = sum(ROWS, (r) => r.ded)
-  const gross = piece + leave + ot + allow
+  const gross = wages + ot + piece + incentive + others
   const net = gross - ded
   const pctOfGross = (v: number) => (gross ? (v / gross) * 100 : 0)
 
@@ -91,6 +96,8 @@ export default function SummaryReport() {
   const filteredRows = ROWS.filter(
     (r) => (shiftFilter === 'all' || r.shift === shiftFilter) && (statusFilter === 'all' || r.status === statusFilter),
   )
+  const filteredWages = sum(filteredRows, totalWagesOf)
+  const filteredPiece = sum(filteredRows, (r) => r.piece)
   const filteredGross = sum(filteredRows, grossOf)
   const filteredNet = sum(filteredRows, netOf)
   const filterSuffix = [
@@ -173,9 +180,9 @@ export default function SummaryReport() {
         </KpiCard>
 
         <KpiCard icon={<DollarIcon />} label="Piece-Rate Pay" value={`RM ${fmt(piece)}`} foot={`${pctOfGross(piece).toFixed(1)}% of gross payroll`} />
-        <KpiCard icon={<WalletIcon />} label="Daily Wages" value={`RM ${fmt(leave)}`} foot={`${pctOfGross(leave).toFixed(1)}% of gross payroll`} />
-        <KpiCard icon={<ClockIcon />} label="Incentive / Allowance" value={`RM ${fmt(ot)}`} foot={`${pctOfGross(ot).toFixed(1)}% of gross payroll`} />
-        <KpiCard icon={<PlusIcon />} label="Others" value={`RM ${fmt(allow)}`} foot={`${pctOfGross(allow).toFixed(1)}% of gross payroll`} />
+        <KpiCard icon={<WalletIcon />} label="Daily Wages" value={`RM ${fmt(wages)}`} foot={`${pctOfGross(wages).toFixed(1)}% of gross payroll`} />
+        <KpiCard icon={<ClockIcon />} label="Incentive / Allowance" value={`RM ${fmt(incentive)}`} foot={`${pctOfGross(incentive).toFixed(1)}% of gross payroll`} />
+        <KpiCard icon={<PlusIcon />} label="Others" value={`RM ${fmt(others)}`} foot={`${pctOfGross(others).toFixed(1)}% of gross payroll`} />
         <KpiCard icon={<ReceiptIcon />} label="Deductions" value={`RM ${fmt(ded)}`} foot={`${pctOfGross(ded).toFixed(1)}% of gross payroll`} />
         <KpiCard icon={<BanknoteIcon />} label="Net Payroll" value={`RM ${fmt(net)}`} foot={`${pctOfGross(net).toFixed(1)}% of gross payroll`} footGood />
       </div>
@@ -205,55 +212,76 @@ export default function SummaryReport() {
         <div className="pr-table-scroll">
           <table className="pr-data">
             <colgroup>
-              <col style={{ width: 30 }} /><col style={{ width: 130 }} /><col style={{ width: 60 }} />
-              <col style={{ width: 98 }} /><col style={{ width: 40 }} /><col style={{ width: 40 }} />
-              <col style={{ width: 56 }} /><col style={{ width: 56 }} /><col style={{ width: 76 }} />
-              <col style={{ width: 66 }} /><col style={{ width: 70 }} /><col style={{ width: 76 }} />
-              <col style={{ width: 70 }} /><col style={{ width: 76 }} /><col style={{ width: 76 }} />
-              <col style={{ width: 101 }} />
+              <col style={{ width: 28 }} /><col style={{ width: 62 }} /><col style={{ width: 216 }} /><col style={{ width: 84 }} />
+              <col style={{ width: 160 }} /><col style={{ width: 40 }} />
+              <col style={{ width: 56 }} /><col style={{ width: 68 }} /><col style={{ width: 66 }} /><col style={{ width: 78 }} />
+              <col style={{ width: 54 }} /><col style={{ width: 54 }} /><col style={{ width: 80 }} />
+              <col style={{ width: 76 }} /><col style={{ width: 58 }} /><col style={{ width: 80 }} />
+              <col style={{ width: 80 }} /><col style={{ width: 80 }} />
             </colgroup>
             <thead>
               <tr>
-                <th>#</th><th>Worker</th><th>ID</th><th>Position</th><th>Shift</th>
-                <th className="right">Days</th><th className="right">1-4 Cages</th><th className="right">&gt; 4 Cages</th>
-                <th className="right">Piece-Rate</th><th className="right">Wages</th>
-                <th className="right">OT</th><th className="right">Allowance</th>
-                <th className="right">Deduction</th><th className="right">Gross Pay</th>
-                <th className="right">Net Pay</th><th>Status</th>
+                <th rowSpan={2}>No</th>
+                <th rowSpan={2}>ID</th>
+                <th rowSpan={2}>Worker Name</th>
+                <th rowSpan={2}>Nationality</th>
+                <th rowSpan={2}>Position</th>
+                <th rowSpan={2}>Shift</th>
+                <th className="pr-th-group" colSpan={4}>Wages Pay (RM)</th>
+                <th className="pr-th-group" colSpan={3}>Piece Rate Earning (RM)</th>
+                <th rowSpan={2} className="right">Incentive/<br />Allowance (RM)</th>
+                <th rowSpan={2} className="right">Others (RM)</th>
+                <th rowSpan={2} className="right">Deduction (RM)</th>
+                <th rowSpan={2} className="right">Gross Pay (RM)</th>
+                <th rowSpan={2} className="right">Net Pay (RM)</th>
+              </tr>
+              <tr>
+                <th>No of Days Work</th>
+                <th className="right">Wages</th>
+                <th className="right">OT</th>
+                <th className="right">Total Wages (RM)</th>
+                <th className="right">1-4 Cages</th>
+                <th className="right">&gt; 4 cages</th>
+                <th className="right">Total Piece Rate (RM)</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.map((r, i) => {
                 const originalIdx = ROWS.indexOf(r)
-                const g = grossOf(r), n = netOf(r)
+                const totalWages = totalWagesOf(r), g = grossOf(r), n = netOf(r)
                 return (
                   <tr key={r.id}>
                     <td className="muted">{i + 1}</td>
+                    <td className="muted">{r.id}</td>
                     <td className="wrap">
                       <button className="pr-worker-link" onClick={() => setSelectedIdx(originalIdx)}>{r.name}</button>
                     </td>
-                    <td className="muted">{r.id}</td>
+                    <td>{r.nat}</td>
                     <td className="wrap">{r.role}</td>
                     <td>{r.shift}</td>
                     <td className="right">{r.days}</td>
+                    <td className="right">{fmt(r.wages)}</td>
+                    <td className="right">{fmt(r.ot)}</td>
+                    <td className="right">{fmt(totalWages)}</td>
                     <td className="right">{r.c14 == null ? '—' : num(r.c14)}</td>
                     <td className="right">{r.c4p == null ? '—' : num(r.c4p)}</td>
                     <td className="right">{fmt(r.piece)}</td>
-                    <td className="right">{fmt(r.leave)}</td>
-                    <td className="right">{fmt(r.ot)}</td>
-                    <td className="right">{fmt(r.allow)}</td>
+                    <td className="right">{fmt(r.incentive)}</td>
+                    <td className="right">{fmt(r.others)}</td>
                     <td className="right">{fmt(r.ded)}</td>
                     <td className="right">{fmt(g)}</td>
                     <td className="right"><strong>{fmt(n)}</strong></td>
-                    <td className="wrap"><span className={`pr-status-pill ${r.status}`}>{STATUS_LABEL[r.status]}</span></td>
                   </tr>
                 )
               })}
               <tr className="pr-total-row">
-                <td colSpan={13}>Total{filterSuffix ? ` — ${filterSuffix}` : ''}</td>
+                <td colSpan={9}>Total{filterSuffix ? ` — ${filterSuffix}` : ''}</td>
+                <td className="right">{fmt(filteredWages)}</td>
+                <td colSpan={2} />
+                <td className="right">{fmt(filteredPiece)}</td>
+                <td colSpan={3} />
                 <td className="right">{fmt(filteredGross)}</td>
                 <td className="right">{fmt(filteredNet)}</td>
-                <td />
               </tr>
             </tbody>
           </table>
@@ -313,9 +341,10 @@ function WorkerDetail({ row, onBack }: { row: WorkerRow; onBack: () => void }) {
             <thead><tr><th>Component</th><th className="right">Amount (RM)</th></tr></thead>
             <tbody>
               <tr><td>Piece-Rate Pay</td><td className="right">{fmt(row.piece)}</td></tr>
-              <tr><td>Wages</td><td className="right">{fmt(row.leave)}</td></tr>
+              <tr><td>Wages</td><td className="right">{fmt(row.wages)}</td></tr>
               <tr><td>OT</td><td className="right">{fmt(row.ot)}</td></tr>
-              <tr><td>Allowance</td><td className="right">{fmt(row.allow)}</td></tr>
+              <tr><td>Incentive / Allowance</td><td className="right">{fmt(row.incentive)}</td></tr>
+              <tr><td>Others</td><td className="right">{fmt(row.others)}</td></tr>
               <tr><td className="muted">Deduction</td><td className="right">−{fmt(row.ded)}</td></tr>
               <tr className="pr-total-row"><td>Net Pay</td><td className="right">{fmt(net)}</td></tr>
             </tbody>
@@ -489,22 +518,27 @@ function csvCell(v: string) {
 
 function rowsToCSV(rows: WorkerRow[]): string {
   const header = [
-    '#', 'Worker', 'ID', 'Position', 'Shift', 'Days', '1-4 Cages', '> 4 Cages',
-    'Piece-Rate (RM)', 'Wages (RM)', 'OT (RM)', 'Allowance (RM)', 'Deduction (RM)',
-    'Gross Pay (RM)', 'Net Pay (RM)', 'Status',
+    'No', 'ID', 'Worker Name', 'Nationality', 'Position', 'Shift',
+    'No of Days Work', 'Wages (RM)', 'OT (RM)', 'Total Wages (RM)',
+    '1-4 Cages', '> 4 Cages', 'Total Piece Rate (RM)',
+    'Incentive/Allowance (RM)', 'Others (RM)', 'Deduction (RM)', 'Gross Pay (RM)', 'Net Pay (RM)',
   ]
   const lines = [header]
   rows.forEach((r, i) => {
     lines.push([
-      String(i + 1), r.name, r.id, r.role, r.shift, String(r.days),
-      r.c14 == null ? '' : String(r.c14), r.c4p == null ? '' : String(r.c4p),
-      r.piece.toFixed(2), r.leave.toFixed(2), r.ot.toFixed(2), r.allow.toFixed(2), r.ded.toFixed(2),
-      grossOf(r).toFixed(2), netOf(r).toFixed(2), STATUS_LABEL[r.status],
+      String(i + 1), r.id, r.name, r.nat, r.role, r.shift, String(r.days),
+      r.wages.toFixed(2), r.ot.toFixed(2), totalWagesOf(r).toFixed(2),
+      r.c14 == null ? '' : String(r.c14), r.c4p == null ? '' : String(r.c4p), r.piece.toFixed(2),
+      r.incentive.toFixed(2), r.others.toFixed(2), r.ded.toFixed(2),
+      grossOf(r).toFixed(2), netOf(r).toFixed(2),
     ])
   })
   lines.push([
-    '', 'Total', '', '', '', '', '', '', '', '', '', '', '',
-    sum(rows, grossOf).toFixed(2), sum(rows, netOf).toFixed(2), '',
+    '', '', 'Total', '', '', '', '',
+    '', '', sum(rows, totalWagesOf).toFixed(2),
+    '', '', sum(rows, (r) => r.piece).toFixed(2),
+    '', '', '',
+    sum(rows, grossOf).toFixed(2), sum(rows, netOf).toFixed(2),
   ])
   return lines.map((line) => line.map(csvCell).join(',')).join('\r\n')
 }

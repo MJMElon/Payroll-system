@@ -139,7 +139,10 @@ table.pr-data th, table.pr-data td {
 }
 table.pr-data th {
   color: var(--pr-muted); font-weight: 700; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.02em;
-  white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.25; vertical-align: bottom;
+  white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.25; vertical-align: middle;
+}
+table.pr-data th.pr-th-group {
+  text-align: center; color: var(--pr-brand-strong); background: var(--pr-brand-soft);
 }
 table.pr-data td.wrap { white-space: normal; overflow-wrap: break-word; line-height: 1.2; }
 table.pr-data td.right, table.pr-data th.right { text-align: right; }
