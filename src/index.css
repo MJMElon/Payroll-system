@@ -576,6 +576,21 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   min-width: 16px; line-height: 1.1;
 }
 
+/* Operation module: station sidebar + entry table */
+.station-link { display: flex; align-items: center; gap: 0.5rem; }
+.station-link .tag-dot { width: 11px; height: 11px; border-radius: 4px; flex: none; }
+.you-chip {
+  margin-left: auto; background: #fdf3d5; color: #92600a;
+  border-radius: 999px; padding: 0.05rem 0.45rem;
+  font-size: 0.65rem; font-weight: 800;
+}
+.op-actions .linkbtn { margin-left: 0.5rem; white-space: nowrap; }
+
+/* Worker management */
+.signup-row { border-top: 1px solid var(--border); padding-top: 0.6rem; }
+.signup-row:first-of-type { border-top: none; padding-top: 0; }
+.salary-input { width: 120px; text-align: right; padding: 0.4rem 0.5rem; font-size: 0.9rem; }
+
 /* Approvals queue chips + action buttons */
 .mob-queue-chips { display: flex; gap: 0.4rem; }
 .mob-queue-chips button {

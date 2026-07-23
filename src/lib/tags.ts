@@ -18,9 +18,11 @@ export function nextTagColor(usedColors: (string | null | undefined)[]): string 
 // Module keys a tag can be allowed to see on the web.
 export const MODULE_OPTIONS = [
   { key: 'station-status', label: 'Station status board' },
+  { key: 'operation', label: 'Operation module' },
   { key: 'daily-job-record', label: 'Daily Job Record' },
   { key: 'piece-rate', label: 'Piece Rate module' },
   { key: 'payroll', label: 'Payroll module' },
+  { key: 'worker-management', label: 'Worker Management' },
   { key: 'demo-mobile', label: 'Demo Mobile View' },
 ] as const
 
