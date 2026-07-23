@@ -856,3 +856,33 @@ create policy "verifiers update production" on public.production_entries
     or public.my_capabilities() && array['verify', 'approve']
     or public.my_approval_screen() is not null
   );
+
+-- ---------------------------------------------------------------------------
+-- Worker management. Monthly basic salary lives on the profile, and a
+-- direct upper (supervisor) may manage their own team members — claim new
+-- sign-ups into the team and edit their details.
+-- ---------------------------------------------------------------------------
+alter table public.access_profiles add column if not exists basic_salary numeric;
+
+drop policy if exists "upper tier manages lower signups" on public.access_profiles;
+create policy "upper tier manages lower signups" on public.access_profiles
+  for update using (
+    public.my_tag_tier() = 1
+    or supervisor_id = auth.uid()
+    or (
+      'user-access' = any(public.my_capabilities())
+      and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
+    )
+    or (
+      public.my_tag_tier() is not null
+      and public.my_tag_tier() < public.bottom_tier()
+      and not tags_confirmed
+      and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
+    )
+  )
+  with check (
+    public.my_tag_tier() = 1
+    or grade_id is null
+    or public.grade_tier(grade_id) > public.my_tag_tier()
+    or supervisor_id = auth.uid()
+  );

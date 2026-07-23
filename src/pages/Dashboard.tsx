@@ -26,6 +26,36 @@ interface ModuleDef {
 
 const MODULES: ModuleDef[] = [
   {
+    key: 'operation',
+    to: '/operation',
+    title: 'Operation',
+    desc: 'Station work records & approvals',
+    show: () => true,
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 6h13M8 12h13M8 18h13" />
+        <path d="M3 6h.01M3 12h.01M3 18h.01" />
+      </svg>
+    ),
+  },
+  {
+    key: 'worker-management',
+    to: '/workers',
+    title: 'Worker Management',
+    desc: 'Teams, sign-ups & salaries',
+    show: () => true,
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="9" cy="8" r="3.5" />
+        <path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5" />
+        <circle cx="17.5" cy="9.5" r="2.5" />
+        <path d="M16.5 14.6c2.9 0 5 1.7 5 4.4" />
+      </svg>
+    ),
+  },
+  {
     key: 'daily-job-record',
     to: '/daily-job-record',
     title: 'Daily Job Record',

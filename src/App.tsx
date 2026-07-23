@@ -7,6 +7,8 @@ import DailyJobRecord from './pages/DailyJobRecord'
 import AddJobRecord from './pages/AddJobRecord'
 import StationDetail from './pages/StationDetail'
 import DemoMobile from './pages/DemoMobile'
+import Operation from './pages/Operation'
+import WorkerManagement from './pages/WorkerManagement'
 import Payroll from './pages/Payroll'
 import PieceRate from './pages/PieceRate'
 import Settings from './pages/Settings'
@@ -25,6 +27,8 @@ export default function App() {
           <Route path="/daily-job-record/add" element={<AddJobRecord />} />
           <Route path="/station/:stationId" element={<StationDetail />} />
           <Route path="/demo-mobile" element={<DemoMobile />} />
+          <Route path="/operation" element={<Operation />} />
+          <Route path="/workers" element={<WorkerManagement />} />
           <Route path="/piece-rate" element={<PieceRate />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
 

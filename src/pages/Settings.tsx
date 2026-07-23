@@ -124,10 +124,17 @@ function UserAccessTab() {
   const userEditable = (p: Profile) =>
     isAdmin || myTier === 1 || (myTier !== null && (tierOf(p) === null || tierOf(p)! > myTier))
 
-  if (!canConfirm) {
+  // This tab is the SYSTEM access setting (engineer tier and above via the
+  // "Change other users' settings" capability). Day-to-day team work —
+  // claiming sign-ups, salaries — lives in the Worker Management module.
+  if (!loading && !canManageUsers && !canConfirm) {
     return (
       <div className="card">
-        <p className="muted">Only upper tiers or admins can manage user access.</p>
+        <p className="muted">
+          Only admins or tiers granted "Change other users' settings" can open
+          the system access settings. Team leaders manage their people in the
+          Worker Management module on the main page.
+        </p>
       </div>
     )
   }

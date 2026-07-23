@@ -41,6 +41,8 @@ export interface Profile {
   supervisor_id?: string | null
   // Per-user grant of the mobile Approvals screen (null = no access).
   mobile_approval?: 'verify' | 'approve' | null
+  // Monthly basic salary (RM), edited in Worker Management.
+  basic_salary?: number | null
 }
 
 // Rows of the work tables (see supabase/setup.sql).
@@ -123,6 +125,7 @@ export interface ProductionEntry {
   verified_at?: string | null
   approved_by?: string | null
   approved_at?: string | null
+  rejected_reason?: string | null
 }
 
 export interface PayrollRun {
