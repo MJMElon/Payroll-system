@@ -95,11 +95,16 @@ export default function SummaryReport() {
   const dayVals = [2.7, 3.1, 2.9, 3.8, 4.1, 3.9, 2.9, 2.5, 2.4, 3.0, 3.7, 4.1, 4.4, 4.2, 3.3, 2.8, 2.4, 2.7, 3.4, 4.0, 4.4, 4.2, 3.5, 2.9, 2.6, 2.5, 3.0, 3.6, 4.1, 4.5, 3.8]
 
   const query = searchQuery.trim().toLowerCase()
+  const matchesQuery = (r: WorkerRow) =>
+    query === '' ||
+    r.name.toLowerCase().includes(query) ||
+    r.id.toLowerCase().includes(query) ||
+    r.role.toLowerCase().includes(query)
   const filteredRows = ROWS.filter(
     (r) =>
       (shiftFilter === 'all' || r.shift === shiftFilter) &&
       (statusFilter === 'all' || r.status === statusFilter) &&
-      (query === '' || r.name.toLowerCase().includes(query)),
+      matchesQuery(r),
   )
   const filteredWages = sum(filteredRows, totalWagesOf)
   const filteredPiece = sum(filteredRows, (r) => r.piece)
@@ -164,7 +169,7 @@ export default function SummaryReport() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
             <input
               type="text"
-              placeholder="Search worker name…"
+              placeholder="Search name, ID, or position…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
