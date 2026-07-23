@@ -180,7 +180,7 @@ export default function SummaryReport() {
         </KpiCard>
 
         <KpiCard icon={<DollarIcon />} label="Piece-Rate Pay" value={`RM ${fmt(piece)}`} foot={`${pctOfGross(piece).toFixed(1)}% of gross payroll`} />
-        <KpiCard icon={<WalletIcon />} label="Daily Wages" value={`RM ${fmt(wages)}`} foot={`${pctOfGross(wages).toFixed(1)}% of gross payroll`} />
+        <KpiCard icon={<WalletIcon />} label="Total Wages Pay" value={`RM ${fmt(wages)}`} foot={`${pctOfGross(wages).toFixed(1)}% of gross payroll`} />
         <KpiCard icon={<ClockIcon />} label="Incentive / Allowance" value={`RM ${fmt(incentive)}`} foot={`${pctOfGross(incentive).toFixed(1)}% of gross payroll`} />
         <KpiCard icon={<PlusIcon />} label="Others" value={`RM ${fmt(others)}`} foot={`${pctOfGross(others).toFixed(1)}% of gross payroll`} />
         <KpiCard icon={<ReceiptIcon />} label="Deductions" value={`RM ${fmt(ded)}`} foot={`${pctOfGross(ded).toFixed(1)}% of gross payroll`} />
