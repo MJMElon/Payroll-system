@@ -63,6 +63,8 @@ export const STATUS_LABEL: Record<Status, string> = {
   approved: 'Approved',
 }
 
+const POSITIONS = [...new Set(ROWS.map((r) => r.role))].sort()
+
 const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const totalWagesOf = (r: WorkerRow) => r.wages + r.ot
 const grossOf = (r: WorkerRow) => totalWagesOf(r) + r.piece + r.incentive + r.others
@@ -75,6 +77,7 @@ export interface SummaryReportHandle {
 const SummaryReport = forwardRef<SummaryReportHandle, { onWorkerDetailChange?: (open: boolean) => void }>(
   function SummaryReport({ onWorkerDetailChange }, ref) {
   const [shiftFilter, setShiftFilter] = useState<'all' | 'A' | 'B'>('all')
+  const [positionFilter, setPositionFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState<'all' | Status>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
@@ -130,6 +133,7 @@ const SummaryReport = forwardRef<SummaryReportHandle, { onWorkerDetailChange?: (
   const filteredRows = ROWS.filter(
     (r) =>
       (shiftFilter === 'all' || r.shift === shiftFilter) &&
+      (positionFilter === 'all' || r.role === positionFilter) &&
       (statusFilter === 'all' || r.status === statusFilter) &&
       matchesQuery(r),
   )
@@ -139,12 +143,14 @@ const SummaryReport = forwardRef<SummaryReportHandle, { onWorkerDetailChange?: (
   const filteredNet = sum(filteredRows, netOf)
   const filterSuffix = [
     shiftFilter !== 'all' ? `Shift ${shiftFilter}` : null,
+    positionFilter !== 'all' ? positionFilter : null,
     statusFilter !== 'all' ? STATUS_LABEL[statusFilter] : null,
     query !== '' ? `matching "${searchQuery.trim()}"` : null,
   ].filter(Boolean).join(', ')
 
   function handleReset() {
     setShiftFilter('all')
+    setPositionFilter('all')
     setStatusFilter('all')
     setSearchQuery('')
   }
@@ -179,7 +185,12 @@ const SummaryReport = forwardRef<SummaryReportHandle, { onWorkerDetailChange?: (
         </div>
         <div className="pr-filter-field">
           <label>Position</label>
-          <span className="pr-pill">All Positions</span>
+          <select value={positionFilter} onChange={(e) => setPositionFilter(e.target.value)}>
+            <option value="all">All Positions</option>
+            {POSITIONS.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
         </div>
         <div className="pr-filter-field">
           <label>Worker Status</label>
