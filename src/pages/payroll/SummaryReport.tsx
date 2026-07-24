@@ -57,14 +57,26 @@ const totalWagesOf = (r: WorkerRow) => r.wages + r.ot
 const grossOf = (r: WorkerRow) => totalWagesOf(r) + r.piece + r.incentive + r.others
 const netOf = (r: WorkerRow) => grossOf(r) - r.ded
 
-export default function SummaryReport() {
+export default function SummaryReport({
+  onWorkerDetailChange,
+}: {
+  onWorkerDetailChange?: (open: boolean) => void
+} = {}) {
   const [shiftFilter, setShiftFilter] = useState<'all' | 'A' | 'B'>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | Status>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
 
   if (selectedIdx != null) {
-    return <WorkerPayrollDetail row={ROWS[selectedIdx]} onBack={() => setSelectedIdx(null)} />
+    return (
+      <WorkerPayrollDetail
+        row={ROWS[selectedIdx]}
+        onBack={() => {
+          setSelectedIdx(null)
+          onWorkerDetailChange?.(false)
+        }}
+      />
+    )
   }
 
   const totalWorkers = ROWS.length
@@ -274,7 +286,15 @@ export default function SummaryReport() {
                     <td className="muted">{i + 1}</td>
                     <td className="muted">{r.id}</td>
                     <td className="wrap">
-                      <button className="pr-worker-link" onClick={() => setSelectedIdx(originalIdx)}>{r.name}</button>
+                      <button
+                        className="pr-worker-link"
+                        onClick={() => {
+                          setSelectedIdx(originalIdx)
+                          onWorkerDetailChange?.(true)
+                        }}
+                      >
+                        {r.name}
+                      </button>
                     </td>
                     <td>{r.nat}</td>
                     <td className="wrap">{r.role}</td>
