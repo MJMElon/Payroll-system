@@ -1,14 +1,87 @@
-/* Bar chart + lunch-row styling for the Hourly Production screen only.
-   Reuses the --pr-* custom properties defined on .pr-summary in
-   SummaryReport.css; this file only adds classes not already provided there,
-   so it can't affect the Summary tab or any other page. */
+/* Styles scoped to the Hourly Production screen only. Reuses the --pr-*
+   tokens and the .pr-filters / .pr-pill / .pr-chart-card / .pr-kpi-card
+   classes already defined in SummaryReport.css (both files are only ever
+   mounted under the shared .pr-summary wrapper), and only adds the pieces
+   that screen doesn't already have. Nothing here can leak into, or be
+   affected by, the shared index.css used by the rest of the app. */
 
-.pr-hourly-chart { display: flex; align-items: flex-end; gap: clamp(0.3rem, 1vw, 0.7rem); padding: 0.4rem 0.3rem 0; }
-.pr-hourly-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.35rem; min-width: 0; }
-.pr-hourly-value { font-size: 0.68rem; font-weight: 700; color: var(--pr-text-secondary); }
-.pr-hourly-track { width: 100%; max-width: 34px; height: 150px; display: flex; align-items: flex-end; }
-.pr-hourly-bar { width: 100%; border-radius: 6px 6px 2px 2px; background: #1baf7a; }
-.pr-hourly-col.lunch .pr-hourly-bar { background: var(--pr-muted); opacity: 0.55; }
-.pr-hourly-label { font-size: 0.64rem; color: var(--pr-muted); white-space: nowrap; }
+/* ---------------- KPI icon color variants (extends .pr-kpi-icon) ---------------- */
+.pr-kpi-icon.blue { background: #e6f0fb; color: var(--pr-series-blue); }
+.pr-kpi-icon.orange { background: #fdece3; color: var(--pr-series-orange); }
+.pr-kpi-icon.amber { background: var(--pr-warn-bg); color: var(--pr-warn-text); }
 
-table.pr-data tr.pr-lunch-row td { color: var(--pr-muted); font-style: italic; }
+/* ---------------- Chart head / legend ---------------- */
+.pr-chart-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+.pr-chart-sub { font-size: 0.74rem; color: var(--pr-muted); margin-top: 0.15rem; }
+.pr-legend { display: flex; gap: 1rem; flex-wrap: wrap; }
+.pr-legend-item { display: flex; align-items: center; gap: 0.4rem; font-size: 0.76rem; color: var(--pr-text-secondary); font-weight: 600; }
+.pr-legend-dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.pr-legend-dot.qual { background: #fdedab; border: 1px solid #e3cd6b; }
+
+/* ---------------- Average-by-hour bar chart (Shift A vs Shift B) ---------------- */
+.pr-hourly-chart-scroll { overflow-x: auto; }
+.pr-hourly-chart { display: flex; align-items: flex-end; gap: 0.35rem; padding: 0.4rem 0.3rem 0; min-width: 900px; }
+.pr-hourly-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.3rem; min-width: 0; }
+.pr-hourly-bars { width: 100%; max-width: 30px; height: 140px; display: flex; align-items: flex-end; gap: 2px; }
+.pr-hourly-bars.brk { opacity: 0.5; }
+.pr-hourly-track { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+.pr-hourly-bar { width: 100%; border-radius: 4px 4px 1px 1px; position: relative; }
+.pr-hourly-bar.a { background: var(--pr-series-blue); }
+.pr-hourly-bar.b { background: var(--pr-series-orange); }
+.pr-hourly-bar-val { position: absolute; top: -14px; left: 50%; transform: translateX(-50%); font-size: 0.56rem; font-weight: 700; color: var(--pr-text-secondary); white-space: nowrap; }
+.pr-hourly-label { font-size: 0.58rem; color: var(--pr-muted); white-space: nowrap; text-align: center; }
+
+/* ---------------- Monthly register grid ---------------- */
+.pr-reg-card { background: var(--surface); border: 1px solid var(--pr-border); border-radius: var(--pr-radius); box-shadow: var(--pr-shadow); overflow: hidden; }
+.pr-reg-head { display: flex; align-items: baseline; justify-content: space-between; padding: 1rem 1.1rem 0.2rem; flex-wrap: wrap; gap: 0.5rem 1rem; }
+.pr-reg-head h3 { margin: 0; font-size: 0.95rem; color: var(--text); }
+.pr-reg-legend { display: flex; gap: 1.1rem; padding: 0 1.1rem 0.8rem; flex-wrap: wrap; }
+
+.pr-reg-scroll { overflow: auto; max-height: 620px; margin: 0 0.2rem 1rem; border: 1px solid var(--pr-border); border-radius: 10px; }
+table.pr-reg { border-collapse: separate; border-spacing: 0; font-size: 0.64rem; font-variant-numeric: tabular-nums; }
+table.pr-reg th, table.pr-reg td { border-right: 1px solid var(--pr-border); border-bottom: 1px solid var(--pr-border); padding: 3px 4px; text-align: center; white-space: nowrap; }
+table.pr-reg thead th { position: sticky; top: 0; background: var(--pr-brand-soft); color: var(--pr-brand-strong); font-weight: 700; font-size: 0.62rem; z-index: 2; padding: 5px 4px; }
+table.pr-reg th.time-col, table.pr-reg td.time-col { position: sticky; left: 0; background: var(--surface); z-index: 1; text-align: left; font-weight: 700; min-width: 78px; color: var(--pr-text-secondary); }
+table.pr-reg thead th.time-col { z-index: 4; background: var(--pr-brand-soft); }
+table.pr-reg th.total-col, table.pr-reg td.total-col { position: sticky; right: 0; background: #fbfcfa; font-weight: 800; z-index: 1; border-left: 2px solid var(--pr-border); min-width: 46px; }
+table.pr-reg thead th.total-col { z-index: 4; background: var(--pr-brand-soft); }
+td.day-col { min-width: 26px; }
+
+.pr-reg-cell { display: flex; flex-direction: column; align-items: center; gap: 0px; line-height: 1.15; }
+.pr-reg-a { color: var(--pr-series-blue); font-weight: 700; }
+.pr-reg-b { color: var(--pr-series-orange); font-weight: 700; }
+.pr-reg-empty { color: var(--pr-border); }
+td.day-col.qualified { background: #fdedab; }
+
+tr.reg-summary td, tr.reg-summary td.time-col { background: var(--bg); font-weight: 700; }
+tr.reg-summary:first-of-type td, tr.reg-summary:first-of-type td.time-col { border-top: 2px solid var(--pr-border); }
+
+/* ---------------- Cages-by-tier cards (per shift) ---------------- */
+.pr-tier-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; }
+.pr-tier-card { background: var(--surface); border: 1px solid var(--pr-border); border-radius: var(--pr-radius); box-shadow: var(--pr-shadow); padding: 1.1rem 1.2rem; border-top: 3px solid var(--pr-shift-color); }
+.pr-tier-card.a { --pr-shift-color: var(--pr-series-blue); }
+.pr-tier-card.b { --pr-shift-color: var(--pr-series-orange); }
+.pr-tier-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.9rem; }
+.pr-tier-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--pr-shift-color); flex: none; }
+.pr-tier-head h3 { margin: 0; font-size: 0.85rem; font-weight: 800; color: var(--text); }
+.pr-tier-head .total { margin-left: auto; font-size: 0.95rem; font-weight: 800; color: var(--text); }
+.pr-tier-bar { height: 9px; border-radius: 999px; overflow: hidden; display: flex; background: var(--bg); margin-bottom: 0.6rem; }
+.pr-tier-bar div.seg1 { background: var(--pr-shift-color); }
+.pr-tier-bar div.seg2 { background: var(--pr-shift-color); opacity: 0.4; }
+.pr-tier-rows { display: flex; flex-direction: column; gap: 0.35rem; }
+.pr-tier-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--pr-text-secondary); }
+.pr-tier-row .sw { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.pr-tier-row .sw.d1 { background: var(--pr-shift-color); }
+.pr-tier-row .sw.d2 { background: var(--pr-shift-color); opacity: 0.4; }
+.pr-tier-row .amt { margin-left: auto; font-weight: 700; color: var(--text); }
+.pr-tier-row .pct { color: var(--pr-muted); font-size: 0.72rem; width: 3.4em; text-align: right; }
+
+@media (max-width: 900px) {
+  .pr-tier-grid { grid-template-columns: 1fr; }
+}
+
+/* ---------------- Export PDF (window.print()) ---------------- */
+@media print {
+  .pr-reg-scroll { max-height: none; overflow: visible; }
+  .pr-reg-card, .pr-tier-card { box-shadow: none; break-inside: avoid; }
+}
