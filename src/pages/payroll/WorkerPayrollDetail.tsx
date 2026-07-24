@@ -94,6 +94,19 @@ function genAttendance(row: WorkerRow): AttendanceRecord[] {
       remarks: late ? 'Traffic delay' : '',
     })
   }
+  // Paid leave days are separate calendar days beyond the worked sample above —
+  // still a full paid day (8 hours), just no clock-in/out.
+  for (let i = 0; i < row.leaveDays; i++) {
+    const day = String(n + i + 1).padStart(2, '0')
+    records.push({
+      date: `${day}/07/2026`,
+      clockIn: '—',
+      clockOut: '—',
+      hours: 8,
+      status: 'leave',
+      remarks: 'Annual Leave (Paid)',
+    })
+  }
   return records
 }
 
@@ -142,7 +155,7 @@ export default function WorkerPayrollDetail({ row, onBack }: { row: WorkerRow; o
     : row.status === 'approved' ? 'approved' : 'verified'
 
   const otRate = row.days ? Math.round((row.ot / row.days / 8) * 100) / 100 : 14
-  const dailyRate = Math.round(otRate * 5 * 100) / 100
+  const totalPayableDays = row.days + row.leaveDays
 
   const filteredCage = useMemo(() => {
     const fromD = parseYMD(appliedFilter.from)
@@ -210,7 +223,7 @@ export default function WorkerPayrollDetail({ row, onBack }: { row: WorkerRow; o
 
           <div className="pr-wd-card pr-wd-side-card">
             <h3>Rate Information</h3>
-            <div className="pr-wd-side-row"><span>Daily Wage Rate</span><span className="amt">RM {fmt(dailyRate)}</span></div>
+            <div className="pr-wd-side-row"><span>Daily Wage Rate</span><span className="amt">RM {fmt(row.dailyRate)}</span></div>
             <div className="pr-wd-side-row"><span>OT Rate (per hour)</span><span className="amt">RM {fmt(otRate)}</span></div>
             <div className="pr-wd-side-row"><span>Effective From</span><span className="amt">01/01/2026</span></div>
           </div>
@@ -295,9 +308,46 @@ export default function WorkerPayrollDetail({ row, onBack }: { row: WorkerRow; o
               <div className="pr-kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
                 <MiniTile color="green" icon={<CheckSquareIcon />} label="Days Present" value={String(row.days)} />
                 <MiniTile color="red" icon={<XCircleIcon />} label="Days Absent" value="0" />
-                <MiniTile color="amber" icon={<CalendarIcon />} label="Leave Taken" value={String(row.id.length % 3)} />
+                <MiniTile color="amber" icon={<CalendarIcon />} label="Leave Taken (Paid)" value={String(row.leaveDays)} />
                 <MiniTile color="blue" icon={<ClockIcon />} label="Late Arrivals" value={String(attendance.filter((a) => a.status === 'late').length)} />
               </div>
+
+              <div className="pr-wd-card pr-wd-wagecalc-card">
+                <div className="pr-wd-wagecalc-head">
+                  <h3>Wage Calculation</h3>
+                  <span className="muted small">Daily wage — paid in addition to Piece Rate Earnings, using the same formula for every FFB Reception worker</span>
+                </div>
+                <div className="pr-wd-wagecalc-strip">
+                  <div className="pr-wd-wagecalc-seg">
+                    <span className="l">Days Worked</span>
+                    <span className="v">{row.days} days</span>
+                  </div>
+                  <div className="pr-wd-wagecalc-op">+</div>
+                  <div className="pr-wd-wagecalc-seg">
+                    <span className="l">Paid Leave</span>
+                    <span className="v">{row.leaveDays} days</span>
+                  </div>
+                  <div className="pr-wd-wagecalc-op">=</div>
+                  <div className="pr-wd-wagecalc-seg">
+                    <span className="l">Total Payable Days</span>
+                    <span className="v">{totalPayableDays} days</span>
+                  </div>
+                  <div className="pr-wd-wagecalc-op">×</div>
+                  <div className="pr-wd-wagecalc-seg">
+                    <span className="l">Daily Wage Rate</span>
+                    <span className="v">RM {fmt(row.dailyRate)}</span>
+                  </div>
+                  <div className="pr-wd-wagecalc-op">=</div>
+                  <div className="pr-wd-wagecalc-seg result">
+                    <span className="l">Total Wages</span>
+                    <span className="v">RM {fmt(row.wages)}</span>
+                  </div>
+                </div>
+                <p className="pr-wd-wagecalc-note">
+                  Every FFB Reception worker is paid <b>Piece Rate (cages tipped) + Wage Pay (days worked × daily rate)</b> — the two are added together, not one or the other. Daily wage is fixed at hiring and paid regardless of cage output. <b>Paid leave counts the same as a day worked</b> — it isn't deducted from wages, so Total Payable Days includes both days actually worked and approved paid leave days.
+                </p>
+              </div>
+
               <div className="pr-table-card">
                 <div className="pr-table-scroll">
                   <table className="pr-data">

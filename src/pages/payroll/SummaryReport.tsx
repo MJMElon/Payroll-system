@@ -24,6 +24,8 @@ export interface WorkerRow {
   c4p: number | null
   piece: number
   wages: number
+  dailyRate: number
+  leaveDays: number
   ot: number
   incentive: number
   others: number
@@ -31,19 +33,28 @@ export interface WorkerRow {
   status: Status
 }
 
+/**
+ * Every FFB Reception worker earns Piece Rate (cages tipped) AND daily
+ * Wage Pay (days worked + paid leave, times a fixed daily rate set at
+ * hiring) — the two add together, they're never mutually exclusive.
+ * `wages` = dailyRate * (days + leaveDays); kept as a plain field like the
+ * rest of this mock data rather than a live formula, but WorkerPayrollDetail
+ * re-derives and displays the same breakdown from dailyRate/leaveDays so
+ * the two stay consistent.
+ */
 const ROWS: WorkerRow[] = [
-  { name: 'Mohd Hafiz Bin Ali', id: 'W-0123', nat: 'Malaysian', role: 'FFB Inspector', shift: 'A', days: 26, c14: 180, c4p: 396, piece: 8432.60, wages: 0, ot: 1820, incentive: 180, others: 40, ded: 910, status: 'approved' },
-  { name: 'Siti Aisyah Bt. Ramli', id: 'W-0187', nat: 'Malaysian', role: 'Ramp Operator', shift: 'B', days: 26, c14: 140, c4p: 308, piece: 6752.00, wages: 0, ot: 1820, incentive: 150, others: 30, ded: 720, status: 'verified' },
-  { name: 'Rajesh A/L Kumar', id: 'W-0076', nat: 'Malaysian', role: 'Weighbridge Operator', shift: 'A', days: 25, c14: 160, c4p: 353, piece: 7868.50, wages: 0, ot: 1750, incentive: 150, others: 35, ded: 840, status: 'pending' },
-  { name: 'Sutrisno', id: 'W-0211', nat: 'Indonesian', role: 'Kernel Recovery', shift: 'B', days: 26, c14: 110, c4p: 231, piece: 5220.80, wages: 420, ot: 1820, incentive: 120, others: 25, ded: 620, status: 'pending' },
-  { name: 'Kamalul Azlan Bin Hamid', id: 'W-0098', nat: 'Malaysian', role: 'Oil Recovery', shift: 'A', days: 24, c14: 100, c4p: 213, piece: 4860.00, wages: 420, ot: 1680, incentive: 120, others: 20, ded: 560, status: 'pending' },
-  { name: 'Budi Santoso', id: 'W-0302', nat: 'Indonesian', role: 'Press & Threshing', shift: 'B', days: 26, c14: 90, c4p: 197, piece: 4580.80, wages: 0, ot: 1820, incentive: 100, others: 25, ded: 720, status: 'verified' },
-  { name: 'Muhammad Iqram Bin Zainal', id: 'W-0148', nat: 'Malaysian', role: 'Lab Technician', shift: 'A', days: 25, c14: null, c4p: null, piece: 0, wages: 2000, ot: 1750, incentive: 150, others: 20, ded: 400, status: 'verified' },
-  { name: 'Lim Wei Sheng', id: 'W-0264', nat: 'Malaysian', role: 'EB Station', shift: 'B', days: 23, c14: null, c4p: null, piece: 0, wages: 1840, ot: 1610, incentive: 100, others: 15, ded: 380, status: 'pending' },
-  { name: 'Rosi Bin Ahmad', id: 'W-0331', nat: 'Malaysian', role: 'Water Treatment Plant', shift: 'A', days: 26, c14: null, c4p: null, piece: 0, wages: 1820, ot: 1620, incentive: 90, others: 15, ded: 350, status: 'approved' },
-  { name: 'Faridah Bt. Yusof', id: 'W-0410', nat: 'Malaysian', role: 'FFB Reception', shift: 'B', days: 26, c14: 155, c4p: 344, piece: 7462.50, wages: 0, ot: 1820, incentive: 150, others: 30, ded: 850, status: 'approved' },
-  { name: 'Nur Aisyah Bt. Ismail', id: 'W-0455', nat: 'Malaysian', role: 'Weighbridge Clerk', shift: 'A', days: 25, c14: 125, c4p: 277, piece: 6030.00, wages: 0, ot: 1750, incentive: 140, others: 25, ded: 480, status: 'verified' },
-  { name: 'Amirul Hakim Bin Zulkifli', id: 'W-0512', nat: 'Malaysian', role: 'Ramp Operator', shift: 'B', days: 26, c14: 140, c4p: 315, piece: 6825.00, wages: 0, ot: 1820, incentive: 150, others: 30, ded: 730, status: 'approved' },
+  { name: 'Mohd Hafiz Bin Ali', id: 'W-0123', nat: 'Malaysian', role: 'FFB Inspector', shift: 'A', days: 26, c14: 180, c4p: 396, piece: 8432.60, wages: 1830.64, dailyRate: 65.38, leaveDays: 2, ot: 1820, incentive: 180, others: 40, ded: 910, status: 'approved' },
+  { name: 'Siti Aisyah Bt. Ramli', id: 'W-0187', nat: 'Malaysian', role: 'Ramp Operator', shift: 'B', days: 26, c14: 140, c4p: 308, piece: 6752.00, wages: 1687.50, dailyRate: 62.50, leaveDays: 1, ot: 1820, incentive: 150, others: 30, ded: 720, status: 'verified' },
+  { name: 'Rajesh A/L Kumar', id: 'W-0076', nat: 'Malaysian', role: 'Weighbridge Operator', shift: 'A', days: 25, c14: 160, c4p: 353, piece: 7868.50, wages: 1600.00, dailyRate: 64.00, leaveDays: 0, ot: 1750, incentive: 150, others: 35, ded: 840, status: 'pending' },
+  { name: 'Sutrisno', id: 'W-0211', nat: 'Indonesian', role: 'Kernel Recovery', shift: 'B', days: 26, c14: 110, c4p: 231, piece: 5220.80, wages: 1680.00, dailyRate: 60.00, leaveDays: 2, ot: 1820, incentive: 120, others: 25, ded: 620, status: 'pending' },
+  { name: 'Kamalul Azlan Bin Hamid', id: 'W-0098', nat: 'Malaysian', role: 'Oil Recovery', shift: 'A', days: 24, c14: 100, c4p: 213, piece: 4860.00, wages: 1500.00, dailyRate: 60.00, leaveDays: 1, ot: 1680, incentive: 120, others: 20, ded: 560, status: 'pending' },
+  { name: 'Budi Santoso', id: 'W-0302', nat: 'Indonesian', role: 'Press & Threshing', shift: 'B', days: 26, c14: 90, c4p: 197, piece: 4580.80, wages: 1508.00, dailyRate: 58.00, leaveDays: 0, ot: 1820, incentive: 100, others: 25, ded: 720, status: 'verified' },
+  { name: 'Muhammad Iqram Bin Zainal', id: 'W-0148', nat: 'Malaysian', role: 'Lab Technician', shift: 'A', days: 25, c14: null, c4p: null, piece: 0, wages: 2000.00, dailyRate: 80.00, leaveDays: 0, ot: 1750, incentive: 150, others: 20, ded: 400, status: 'verified' },
+  { name: 'Lim Wei Sheng', id: 'W-0264', nat: 'Malaysian', role: 'EB Station', shift: 'B', days: 23, c14: null, c4p: null, piece: 0, wages: 1840.00, dailyRate: 80.00, leaveDays: 0, ot: 1610, incentive: 100, others: 15, ded: 380, status: 'pending' },
+  { name: 'Rosi Bin Ahmad', id: 'W-0331', nat: 'Malaysian', role: 'Water Treatment Plant', shift: 'A', days: 26, c14: null, c4p: null, piece: 0, wages: 1820.00, dailyRate: 70.00, leaveDays: 0, ot: 1620, incentive: 90, others: 15, ded: 350, status: 'approved' },
+  { name: 'Faridah Bt. Yusof', id: 'W-0410', nat: 'Malaysian', role: 'FFB Reception', shift: 'B', days: 26, c14: 155, c4p: 344, piece: 7462.50, wages: 1701.00, dailyRate: 63.00, leaveDays: 1, ot: 1820, incentive: 150, others: 30, ded: 850, status: 'approved' },
+  { name: 'Nur Aisyah Bt. Ismail', id: 'W-0455', nat: 'Malaysian', role: 'Weighbridge Clerk', shift: 'A', days: 25, c14: 125, c4p: 277, piece: 6030.00, wages: 1550.00, dailyRate: 62.00, leaveDays: 0, ot: 1750, incentive: 140, others: 25, ded: 480, status: 'verified' },
+  { name: 'Amirul Hakim Bin Zulkifli', id: 'W-0512', nat: 'Malaysian', role: 'Ramp Operator', shift: 'B', days: 26, c14: 140, c4p: 315, piece: 6825.00, wages: 1687.50, dailyRate: 62.50, leaveDays: 1, ot: 1820, incentive: 150, others: 30, ded: 730, status: 'approved' },
 ]
 
 export const STATUS_LABEL: Record<Status, string> = {
