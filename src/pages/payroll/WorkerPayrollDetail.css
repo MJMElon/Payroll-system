@@ -69,6 +69,24 @@
 .pr-wd-tab:hover { background: var(--bg); color: var(--text); }
 .pr-wd-tab.active { color: var(--pr-brand-strong); background: var(--surface); border-color: var(--pr-border); border-bottom: 1px solid var(--surface); }
 
+/* ---------------- Wage calculation card (Attendance & Leave tab) ---------------- */
+.pr-wd-wagecalc-card { padding: 1.1rem 1.25rem 1.2rem; }
+.pr-wd-wagecalc-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.2rem; }
+.pr-wd-wagecalc-head h3 { margin: 0; font-size: 0.95rem; color: var(--text); }
+.pr-wd-wagecalc-strip { display: flex; align-items: stretch; gap: 0.6rem; flex-wrap: wrap; padding: 0.9rem 0 0.3rem; }
+.pr-wd-wagecalc-seg {
+  display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 0.3rem;
+  min-width: 108px; padding: 0.6rem 0.8rem; border-radius: 10px; background: var(--bg); border: 1px solid var(--pr-border);
+}
+.pr-wd-wagecalc-seg .l { font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--pr-muted); text-align: center; }
+.pr-wd-wagecalc-seg .v { font-size: 1.05rem; font-weight: 800; color: var(--text); }
+.pr-wd-wagecalc-op { display: flex; align-items: center; justify-content: center; font-size: 1.35rem; font-weight: 700; color: var(--pr-muted); flex: none; min-width: 1.4rem; }
+.pr-wd-wagecalc-seg.result { background: linear-gradient(120deg, var(--pr-brand-strong), var(--pr-brand)); border-color: transparent; }
+.pr-wd-wagecalc-seg.result .l { color: rgba(255,255,255,0.82); }
+.pr-wd-wagecalc-seg.result .v { color: #fff; font-size: 1.2rem; }
+.pr-wd-wagecalc-note { margin: 0.9rem 0 0; font-size: 0.79rem; color: var(--pr-text-secondary); line-height: 1.5; }
+.pr-wd-wagecalc-note b { color: var(--text); }
+
 /* ---------------- KPI tile color variants (extends .pr-kpi-icon) ---------------- */
 .pr-kpi-icon.blue { background: var(--pr-info-bg); color: var(--pr-info-text); }
 .pr-kpi-icon.green { background: var(--pr-good-bg); color: var(--pr-good-text); }
