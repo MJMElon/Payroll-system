@@ -1,0 +1,100 @@
+/* Styles scoped to the individual worker payroll detail screen only.
+   Reuses the --pr-* tokens and .pr-kpi-card / .pr-table-card / .pr-data /
+   .pr-status-pill classes already defined in SummaryReport.css (both files
+   are only ever mounted under the shared .pr-summary wrapper), and only
+   adds the pieces that screen doesn't already have. Nothing here can leak
+   into, or be affected by, the shared index.css used by the rest of the app. */
+
+/* ---------------- Banner + info row ---------------- */
+.pr-wd-banner {
+  background: linear-gradient(120deg, var(--pr-brand-strong), var(--pr-brand));
+  color: #fff; border-radius: var(--pr-radius) var(--pr-radius) 0 0;
+  padding: 0.9rem 1.25rem; display: flex; align-items: center; justify-content: space-between;
+}
+.pr-wd-banner h1 { margin: 0; font-size: 1.05rem; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 800; }
+.pr-wd-banner-back {
+  display: flex; align-items: center; gap: 0.35rem; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.3);
+  color: #fff; padding: 0.45rem 0.8rem; border-radius: 9px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+}
+.pr-wd-banner-back:hover { background: rgba(255,255,255,0.22); }
+.pr-wd-banner-back svg { width: 13px; height: 13px; }
+
+.pr-wd-card {
+  background: var(--surface); border: 1px solid var(--pr-border); border-radius: var(--pr-radius);
+  box-shadow: var(--pr-shadow); overflow: hidden;
+}
+.pr-wd-info-row { display: flex; align-items: center; gap: 1.4rem; flex-wrap: wrap; padding: 1rem 1.25rem; }
+.pr-wd-info-avatar {
+  width: 58px; height: 58px; border-radius: 50%; flex: none;
+  background: linear-gradient(150deg, #8d959f, #5b6570); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.2rem;
+}
+.pr-wd-info-field { display: flex; flex-direction: column; gap: 0.2rem; }
+.pr-wd-info-field .l { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--pr-muted); }
+.pr-wd-info-field .v { font-size: 0.87rem; font-weight: 700; color: var(--text); }
+.pr-wd-info-spacer { margin-left: auto; }
+
+/* ---------------- Body layout ---------------- */
+.pr-wd-body { display: flex; gap: 1rem; align-items: flex-start; }
+.pr-wd-sidebar { width: 300px; flex: none; display: flex; flex-direction: column; gap: 1rem; }
+.pr-wd-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.9rem; }
+@media (max-width: 900px) {
+  .pr-wd-body { flex-direction: column; }
+  .pr-wd-sidebar { width: 100%; }
+}
+
+/* ---------------- Sidebar cards ---------------- */
+.pr-wd-side-card { padding: 1.1rem 1.2rem; }
+.pr-wd-side-card h3 { margin: 0 0 0.8rem; font-size: 0.78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: var(--pr-brand-strong); }
+.pr-wd-side-row { display: flex; justify-content: space-between; align-items: baseline; padding: 0.4rem 0; font-size: 0.83rem; border-bottom: 1px dashed var(--pr-border); color: var(--text); }
+.pr-wd-side-row:last-of-type { border-bottom: none; }
+.pr-wd-side-row .amt { font-weight: 700; }
+.pr-wd-side-row .amt.negative { color: var(--pr-crit-text, #b23030); }
+.pr-wd-side-row.total { border-top: 2px solid var(--pr-border); border-bottom: none; margin-top: 0.3rem; padding-top: 0.6rem; font-weight: 700; }
+.pr-wd-net-pay-banner {
+  margin-top: 0.7rem; border-radius: 10px; padding: 0.8rem 1rem;
+  background: linear-gradient(120deg, var(--pr-brand-strong), var(--pr-brand)); color: #fff;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.pr-wd-net-pay-banner .l { font-size: 0.76rem; font-weight: 700; opacity: 0.9; }
+.pr-wd-net-pay-banner .v { font-size: 1.25rem; font-weight: 800; }
+
+/* ---------------- Tabs ---------------- */
+.pr-wd-tabs { display: flex; gap: 0.4rem; border-bottom: 1px solid var(--pr-border); padding: 0 0.2rem; }
+.pr-wd-tab {
+  padding: 0.65rem 1.1rem; font-size: 0.83rem; font-weight: 700; color: var(--pr-text-secondary);
+  background: none; border: 1px solid transparent; border-bottom: none; border-radius: 10px 10px 0 0; cursor: pointer;
+  position: relative; top: 1px;
+}
+.pr-wd-tab:hover { background: var(--bg); color: var(--text); }
+.pr-wd-tab.active { color: var(--pr-brand-strong); background: var(--surface); border-color: var(--pr-border); border-bottom: 1px solid var(--surface); }
+
+/* ---------------- KPI tile color variants (extends .pr-kpi-icon) ---------------- */
+.pr-kpi-icon.blue { background: var(--pr-info-bg); color: var(--pr-info-text); }
+.pr-kpi-icon.green { background: var(--pr-good-bg); color: var(--pr-good-text); }
+.pr-kpi-icon.amber { background: var(--pr-warn-bg); color: var(--pr-warn-text); }
+.pr-kpi-icon.red { background: #fbe4e4; color: #b23030; }
+
+/* ---------------- Filters row ---------------- */
+.pr-wd-filters {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--pr-border); border-radius: var(--pr-radius);
+  padding: 0.7rem 0.9rem; box-shadow: var(--pr-shadow);
+}
+.pr-wd-filters input, .pr-wd-filters select {
+  border: 1px solid var(--pr-border); background: var(--surface); color: var(--text);
+  padding: 0.45rem 0.65rem; border-radius: 9px; font-size: 0.8rem;
+}
+
+/* ---------------- Editable row cells ---------------- */
+.pr-icon-btn {
+  width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--pr-border); background: var(--surface);
+  color: var(--pr-text-secondary); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.pr-icon-btn:hover { background: var(--bg); color: var(--pr-brand-strong); border-color: var(--pr-brand); }
+.pr-icon-btn svg { width: 13px; height: 13px; }
+.pr-row-input {
+  border: 1px solid var(--pr-brand); border-radius: 6px; padding: 0.2rem 0.35rem; font-size: 0.76rem;
+  font-family: inherit; width: 100%; text-align: right; color: var(--text); background: var(--surface);
+}
+.pr-row-input[data-field="date"], .pr-row-input[data-field="time"] { text-align: left; }

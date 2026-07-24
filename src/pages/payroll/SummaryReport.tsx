@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import WorkerPayrollDetail from './WorkerPayrollDetail'
 import './SummaryReport.css'
 
 /**
@@ -9,10 +10,10 @@ import './SummaryReport.css'
  * Swapping in real queries later should only touch this file.
  */
 
-type Status = 'pending' | 'verified' | 'approved'
+export type Status = 'pending' | 'verified' | 'approved'
 type Nationality = 'Malaysian' | 'Indonesian'
 
-interface WorkerRow {
+export interface WorkerRow {
   name: string
   id: string
   nat: Nationality
@@ -45,18 +46,13 @@ const ROWS: WorkerRow[] = [
   { name: 'Amirul Hakim Bin Zulkifli', id: 'W-0512', nat: 'Malaysian', role: 'Ramp Operator', shift: 'B', days: 26, c14: 140, c4p: 315, piece: 6825.00, wages: 0, ot: 1820, incentive: 150, others: 30, ded: 730, status: 'approved' },
 ]
 
-const STATUS_LABEL: Record<Status, string> = {
+export const STATUS_LABEL: Record<Status, string> = {
   pending: 'Pending Verification',
   verified: 'Verified',
   approved: 'Approved',
 }
 
-const YTD_MONTHS = ['Jan 2026', 'Feb 2026', 'Mar 2026', 'Apr 2026', 'May 2026', 'Jun 2026', 'Jul 2026']
-const YTD_FACTORS = [0.78, 0.83, 0.88, 0.90, 0.94, 0.97, 1.00]
-
 const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const initialsOf = (name: string) =>
-  name.split(' ').filter((w) => /^[A-Z]/.test(w)).slice(0, 2).map((w) => w[0]).join('')
 const totalWagesOf = (r: WorkerRow) => r.wages + r.ot
 const grossOf = (r: WorkerRow) => totalWagesOf(r) + r.piece + r.incentive + r.others
 const netOf = (r: WorkerRow) => grossOf(r) - r.ded
@@ -68,7 +64,7 @@ export default function SummaryReport() {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
 
   if (selectedIdx != null) {
-    return <WorkerDetail row={ROWS[selectedIdx]} onBack={() => setSelectedIdx(null)} />
+    return <WorkerPayrollDetail row={ROWS[selectedIdx]} onBack={() => setSelectedIdx(null)} />
   }
 
   const totalWorkers = ROWS.length
@@ -318,74 +314,6 @@ export default function SummaryReport() {
           </span>
           <span className="muted small pr-hint">Click a worker's name to open their payroll detail</span>
         </div>
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-
-function WorkerDetail({ row, onBack }: { row: WorkerRow; onBack: () => void }) {
-  const gross = grossOf(row)
-  const net = netOf(row)
-  const seed = ROWS.indexOf(row) + 1
-  const history = YTD_FACTORS.map((f, i) => net * f * (0.95 + 0.03 * ((seed + i) % 3)))
-  const maxHist = Math.max(...history, 1)
-
-  return (
-    <div className="pr-summary">
-      <button className="pr-back-link" onClick={onBack}>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
-        Back to FFB Reception Summary
-      </button>
-
-      <div className="pr-detail-head">
-        <div className="pr-detail-avatar">{initialsOf(row.name)}</div>
-        <div>
-          <h1>{row.name}</h1>
-          <div className="pr-meta">{row.role} · Shift {row.shift} · FFB Reception</div>
-        </div>
-        <span className={`pr-status-pill ${row.status}`} style={{ marginLeft: 'auto' }}>{STATUS_LABEL[row.status]}</span>
-      </div>
-
-      <div className="pr-kpi-card">
-        <div className="pr-stat-row">
-          <div className="pr-stat-block"><div className="pr-label">1-4 Cages</div><div className="pr-value">{row.c14 == null ? '—' : num(row.c14)}</div></div>
-          <div className="pr-stat-block"><div className="pr-label">&gt; 4 Cages</div><div className="pr-value">{row.c4p == null ? '—' : num(row.c4p)}</div></div>
-          <div className="pr-stat-block"><div className="pr-label">Days Worked</div><div className="pr-value">{row.days}</div></div>
-          <div className="pr-stat-block"><div className="pr-label">Gross Pay</div><div className="pr-value">RM {fmt(gross)}</div></div>
-          <div className="pr-stat-block"><div className="pr-label">Net Pay</div><div className="pr-value">RM {fmt(net)}</div></div>
-        </div>
-      </div>
-
-      <div className="pr-table-card">
-        <div className="pr-table-card-head"><h3>Pay Breakdown — July 2026</h3></div>
-        <div className="pr-table-scroll">
-          <table className="pr-data">
-            <thead><tr><th>Component</th><th className="right">Amount (RM)</th></tr></thead>
-            <tbody>
-              <tr><td>Piece-Rate Pay</td><td className="right">{fmt(row.piece)}</td></tr>
-              <tr><td>Wages</td><td className="right">{fmt(row.wages)}</td></tr>
-              <tr><td>OT</td><td className="right">{fmt(row.ot)}</td></tr>
-              <tr><td>Incentive / Allowance</td><td className="right">{fmt(row.incentive)}</td></tr>
-              <tr><td>Others</td><td className="right">{fmt(row.others)}</td></tr>
-              <tr><td className="muted">Deduction</td><td className="right">−{fmt(row.ded)}</td></tr>
-              <tr className="pr-total-row"><td>Net Pay</td><td className="right">{fmt(net)}</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="pr-table-card" style={{ padding: '1rem 1.1rem' }}>
-        <h3 style={{ margin: '0 0 0.15rem' }}>Net Pay History — 2026</h3>
-        <p className="muted small" style={{ margin: '0 0 0.6rem' }}>Year to date, January through the current period</p>
-        {history.map((v, i) => (
-          <div className={`pr-history-row${i === history.length - 1 ? ' current' : ''}`} key={YTD_MONTHS[i]}>
-            <span className="pr-hist-label">{YTD_MONTHS[i]}{i === history.length - 1 ? ' (current)' : ''}</span>
-            <span className="pr-hist-track"><span className="pr-hist-bar" style={{ width: `${(v / maxHist) * 100}%` }} /></span>
-            <span className="pr-hist-val">RM {fmt(v)}</span>
-          </div>
-        ))}
       </div>
     </div>
   )
