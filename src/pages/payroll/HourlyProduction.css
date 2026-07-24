@@ -8,7 +8,11 @@
 /* ---------------- KPI icon color variants (extends .pr-kpi-icon) ---------------- */
 .pr-kpi-icon.blue { background: #e6f0fb; color: var(--pr-series-blue); }
 .pr-kpi-icon.orange { background: #fdece3; color: var(--pr-series-orange); }
-.pr-kpi-icon.amber { background: var(--pr-warn-bg); color: var(--pr-warn-text); }
+
+/* Only 3 KPI cards on this page (unlike Summary's 4-up grid) */
+.pr-kpi-grid.pr-kpi-grid-3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 900px) { .pr-kpi-grid.pr-kpi-grid-3 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px) { .pr-kpi-grid.pr-kpi-grid-3 { grid-template-columns: 1fr; } }
 
 /* ---------------- Chart head / legend ---------------- */
 .pr-chart-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }

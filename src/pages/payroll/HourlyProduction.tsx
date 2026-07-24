@@ -104,16 +104,10 @@ function buildRegister() {
   const monthTier1B = sumRecord(colTier1.b), monthTier2B = sumRecord(colTier2.b)
   const recordedDays = LAST_DAY - FIRST_DAY + 1
 
-  let peakH = 0, peakVal = -1
-  HOUR_LABELS.forEach((_, h) => {
-    const v = rowTotal.a[h] + rowTotal.b[h]
-    if (v > peakVal) { peakVal = v; peakH = h }
-  })
-
   return {
     grid, rowTotal, colTotal, colTier1, colTier2,
     monthTotalA, monthTotalB, monthTier1A, monthTier1B, monthTier2A, monthTier2B,
-    recordedDays, peakH, peakVal,
+    recordedDays,
   }
 }
 
@@ -212,11 +206,10 @@ export default function HourlyProduction() {
         </div>
       </div>
 
-      <div className="pr-kpi-grid">
+      <div className="pr-kpi-grid pr-kpi-grid-3">
         <KpiCard icon={<BarsIcon />} label="Total Cages Tipped" value={num(grandTotal)} foot="July 2026 (to date) · FFB Reception" />
         <KpiCard icon={<MinusCircleIcon />} iconClass="blue" label="Shift A Cages" value={num(totalA)} foot={`${((totalA / (totalA + totalB)) * 100).toFixed(1)}% of month total`} />
         <KpiCard icon={<MinusCircleIcon />} iconClass="orange" label="Shift B Cages" value={num(totalB)} foot={`${((totalB / (totalA + totalB)) * 100).toFixed(1)}% of month total`} />
-        <KpiCard icon={<ClockIcon />} iconClass="amber" label="Busiest Hour (avg)" value={HOUR_LABELS[REGISTER.peakH]} foot={`${(REGISTER.peakVal / REGISTER.recordedDays).toFixed(1)} cages/hr avg, combined`} />
       </div>
 
       <div className="pr-chart-card">
@@ -445,5 +438,4 @@ function KpiCard({
 }
 
 function BarsIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M7 15v3" /><path d="M12 10v8" /><path d="M17 6v12" /></svg> }
-function ClockIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg> }
 function MinusCircleIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M8.5 12h7" /></svg> }
