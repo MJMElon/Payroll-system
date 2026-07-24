@@ -122,8 +122,6 @@ const SummaryReport = forwardRef<SummaryReportHandle, { onWorkerDetailChange?: (
   const shiftACages = sum(ROWS.filter((r) => r.shift === 'A'), (r) => (r.c14 ?? 0) + (r.c4p ?? 0))
   const shiftBCages = sum(ROWS.filter((r) => r.shift === 'B'), (r) => (r.c14 ?? 0) + (r.c4p ?? 0))
 
-  const dayVals = [2.7, 3.1, 2.9, 3.8, 4.1, 3.9, 2.9, 2.5, 2.4, 3.0, 3.7, 4.1, 4.4, 4.2, 3.3, 2.8, 2.4, 2.7, 3.4, 4.0, 4.4, 4.2, 3.5, 2.9, 2.6, 2.5, 3.0, 3.6, 4.1, 4.5, 3.8]
-
   const query = searchQuery.trim().toLowerCase()
   const matchesQuery = (r: WorkerRow) =>
     query === '' ||
@@ -249,27 +247,20 @@ const SummaryReport = forwardRef<SummaryReportHandle, { onWorkerDetailChange?: (
         <KpiCard icon={<BanknoteIcon />} label="Net Payroll" value={`RM ${fmt(net)}`} foot={`${pctOfGross(net).toFixed(1)}% of gross payroll`} footGood />
       </div>
 
-      <div className="pr-charts-grid">
-        <div className="pr-chart-card">
-          <div className="pr-chart-title">Daily Payroll Trend (RM)</div>
-          <TrendChart dayVals={dayVals} />
-        </div>
-        <div className="pr-chart-card">
-          <div className="pr-chart-title">Cages Tipped — Shift A vs Shift B</div>
-          <Donut
-            segments={[
-              { name: 'Shift A', pct: (shiftACages / totalCages) * 100, valueLabel: `${num(shiftACages)} cages`, color: 'var(--pr-series-blue)' },
-              { name: 'Shift B', pct: (shiftBCages / totalCages) * 100, valueLabel: `${num(shiftBCages)} cages`, color: 'var(--pr-series-orange)' },
-            ]}
-          />
-          <div className="pr-chart-total-row"><span>Total</span><b>{num(totalCages)} cages</b></div>
-        </div>
+      <div className="pr-chart-card" style={{ maxWidth: 420 }}>
+        <div className="pr-chart-title">Cages Tipped — Shift A vs Shift B</div>
+        <Donut
+          segments={[
+            { name: 'Shift A', pct: (shiftACages / totalCages) * 100, valueLabel: `${num(shiftACages)} cages`, color: 'var(--pr-series-blue)' },
+            { name: 'Shift B', pct: (shiftBCages / totalCages) * 100, valueLabel: `${num(shiftBCages)} cages`, color: 'var(--pr-series-orange)' },
+          ]}
+        />
+        <div className="pr-chart-total-row"><span>Total</span><b>{num(totalCages)} cages</b></div>
       </div>
 
       <div className="pr-table-card">
         <div className="pr-table-card-head">
           <h3>Worker Payroll Summary</h3>
-          <span className="muted small">All amounts in RM</span>
         </div>
         <div className="pr-table-scroll">
           <table className="pr-data">
@@ -453,64 +444,6 @@ function Donut({ segments }: { segments: { name: string; pct: number; valueLabel
           </div>
         ))}
       </div>
-    </div>
-  )
-}
-
-function TrendChart({ dayVals }: { dayVals: number[] }) {
-  const [hover, setHover] = useState<number | null>(null)
-  const padL = 42, padR = 10, padT = 12, padB = 24, W = 620, H = 210
-  const plotW = W - padL - padR, plotH = H - padT - padB, yMax = 5
-  const xAt = (i: number) => padL + (i / (dayVals.length - 1)) * plotW
-  const yAt = (v: number) => padT + plotH - (v / yMax) * plotH
-
-  const linePath = dayVals.map((v, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yAt(v)}`).join(' ')
-  const areaPath = `${linePath} L ${xAt(dayVals.length - 1)} ${yAt(0)} L ${xAt(0)} ${yAt(0)} Z`
-
-  function onMove(e: React.MouseEvent<SVGRectElement>) {
-    const rect = e.currentTarget.ownerSVGElement!.getBoundingClientRect()
-    const mx = (e.clientX - rect.left) * (W / rect.width)
-    let idx = Math.round(((mx - padL) / plotW) * (dayVals.length - 1))
-    idx = Math.max(0, Math.min(dayVals.length - 1, idx))
-    setHover(idx)
-  }
-
-  return (
-    <div className="pr-line-wrap">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
-        <defs>
-          <linearGradient id="prLineGrad" x1={0} y1={0} x2={0} y2={1}>
-            <stop offset="0%" stopColor="var(--pr-series-blue)" stopOpacity={0.28} />
-            <stop offset="100%" stopColor="var(--pr-series-blue)" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        {[0, 1, 2, 3, 4, 5].map((v) => (
-          <g key={v}>
-            <line x1={padL} x2={W - padR} y1={yAt(v)} y2={yAt(v)} stroke="var(--pr-grid-line)" strokeWidth={1} />
-            <text x={padL - 8} y={yAt(v) + 3} fill="var(--pr-muted)" fontSize={9} textAnchor="end">{v}K</text>
-          </g>
-        ))}
-        {dayVals.map((_, i) => (i % 5 === 0 || i === dayVals.length - 1) && (
-          <text key={i} x={xAt(i)} y={206} fill="var(--pr-muted)" fontSize={9} textAnchor="middle">{i + 1} Jul</text>
-        ))}
-        <path d={areaPath} fill="url(#prLineGrad)" stroke="none" />
-        <path d={linePath} fill="none" stroke="var(--pr-series-blue)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
-        {hover != null && (
-          <g>
-            <line x1={xAt(hover)} x2={xAt(hover)} y1={padT} y2={padT + plotH} stroke="var(--pr-muted)" strokeWidth={1} strokeDasharray="3,3" />
-            <circle cx={xAt(hover)} cy={yAt(dayVals[hover])} r={4} fill="var(--pr-series-blue)" stroke="var(--surface)" strokeWidth={2} />
-          </g>
-        )}
-        <rect x={padL} y={padT} width={plotW} height={plotH} fill="transparent" onMouseMove={onMove} onMouseLeave={() => setHover(null)} />
-      </svg>
-      {hover != null && (
-        <div
-          className="pr-line-tooltip"
-          style={{ left: `${(xAt(hover) / W) * 100}%`, top: `${(yAt(dayVals[hover]) / H) * 100}%`, opacity: 1 }}
-        >
-          {hover + 1} Jul — RM {Math.round(dayVals[hover] * 1000).toLocaleString('en-US')}
-        </div>
-      )}
     </div>
   )
 }

@@ -104,23 +104,12 @@
 .pr-split-row .pr-amt { margin-left: auto; font-weight: 700; color: var(--text); }
 
 /* ---------------- Charts ---------------- */
-.pr-charts-grid { display: grid; grid-template-columns: 2.2fr 1fr; gap: 0.85rem; }
-@media (max-width: 900px) { .pr-charts-grid { grid-template-columns: 1fr; } }
-
 .pr-chart-card {
   background: var(--surface); border: 1px solid var(--pr-border); border-radius: var(--pr-radius);
   padding: 1rem 1.1rem 0.9rem; box-shadow: var(--pr-shadow);
   display: flex; flex-direction: column; gap: 0.6rem; min-width: 0;
 }
 .pr-chart-title { font-size: 0.87rem; font-weight: 700; color: var(--text); }
-
-.pr-line-wrap { position: relative; }
-.pr-line-tooltip {
-  position: absolute; pointer-events: none; opacity: 0; transition: opacity 0.1s;
-  background: var(--text); color: var(--bg); font-size: 0.72rem; font-weight: 600;
-  padding: 0.35rem 0.55rem; border-radius: 8px; white-space: nowrap; transform: translate(-50%, -115%);
-  z-index: 5;
-}
 
 .pr-donut-body { display: flex; align-items: center; gap: 0.9rem; }
 .pr-donut-legend { display: flex; flex-direction: column; gap: 0.4rem; flex: 1; min-width: 0; }
