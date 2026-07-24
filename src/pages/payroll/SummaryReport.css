@@ -180,36 +180,6 @@ table.pr-data tr.pr-total-row:hover { background: none; }
   font-size: 0.78rem; color: var(--pr-muted); flex-wrap: wrap; gap: 0.6rem;
 }
 
-/* ---------------- Worker detail screen ---------------- */
-.pr-back-link {
-  display: inline-flex; align-items: center; gap: 0.3rem; align-self: flex-start;
-  background: var(--surface); border: 1px solid var(--pr-border); color: var(--text);
-  padding: 0.5rem 0.85rem; border-radius: 10px; font-size: 0.83rem; cursor: pointer;
-}
-.pr-back-link:hover { background: var(--bg); }
-
-.pr-detail-head { display: flex; align-items: center; gap: 0.9rem; }
-.pr-detail-avatar {
-  width: 52px; height: 52px; border-radius: 50%; flex: none;
-  background: linear-gradient(150deg, #8d959f, #5b6570); color: #fff;
-  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.1rem;
-}
-.pr-detail-head h1 { margin: 0 0 0.2rem; font-size: 1.3rem; }
-.pr-detail-head .pr-meta { color: var(--pr-muted); font-size: 0.85rem; }
-
-.pr-stat-row { display: flex; gap: 1rem; flex-wrap: wrap; }
-.pr-stat-block { flex: 1; min-width: 140px; }
-.pr-stat-block .pr-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--pr-muted); font-weight: 700; }
-.pr-stat-block .pr-value { font-size: 1.5rem; font-weight: 800; margin-top: 0.15rem; letter-spacing: -0.02em; color: var(--text); }
-
-.pr-history-row { display: flex; align-items: center; gap: 0.7rem; padding: 0.3rem 0; font-size: 0.83rem; }
-.pr-history-row .pr-hist-label { width: 140px; flex: none; color: var(--pr-muted); }
-.pr-history-row .pr-hist-track { display: block; flex: 1; height: 8px; border-radius: 999px; background: var(--bg); overflow: hidden; }
-.pr-history-row .pr-hist-bar { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #8d959f, var(--pr-brand-strong)); }
-.pr-history-row .pr-hist-val { width: 110px; flex: none; text-align: right; font-weight: 700; color: var(--text); }
-.pr-history-row.current .pr-hist-label, .pr-history-row.current .pr-hist-val { color: var(--text); font-weight: 700; }
-.pr-history-row.current .pr-hist-bar { background: linear-gradient(90deg, var(--pr-brand), var(--pr-brand-strong)); }
-
 /* ---------------- Export PDF (window.print()) ---------------- */
 /* Named page, scoped to .pr-summary only via the `page` property below, so
    this can't change print orientation for any other page in the app. */
