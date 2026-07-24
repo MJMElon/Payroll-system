@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
   supabase,
@@ -11,7 +11,7 @@ import {
   type Profile,
   type Worker,
 } from '../lib/supabase'
-import SummaryReport from './payroll/SummaryReport'
+import SummaryReport, { type SummaryReportHandle } from './payroll/SummaryReport'
 import HourlyProduction from './payroll/HourlyProduction'
 import './payroll/module-sidebar.css'
 
@@ -53,6 +53,7 @@ function useShellWideStyle() {
 export default function Payroll() {
   const [tab, setTab] = useState<'summary' | 'hourly' | 'runs'>('summary')
   const [workerDetailOpen, setWorkerDetailOpen] = useState(false)
+  const summaryRef = useRef<SummaryReportHandle>(null)
   const shellWideStyle = useShellWideStyle()
   const [runs, setRuns] = useState<PayrollRun[]>([])
   const [openRun, setOpenRun] = useState<PayrollRun | null>(null)
@@ -90,7 +91,18 @@ export default function Payroll() {
   return (
     <div className="stack">
       <div className="pm-print-hide">
-        <Link to="/" className="small muted">← Back to main page</Link>
+        {tab === 'summary' && workerDetailOpen ? (
+          <button
+            type="button"
+            className="small muted backlink"
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}
+            onClick={() => summaryRef.current?.closeWorkerDetail()}
+          >
+            ← Back to Summary
+          </button>
+        ) : (
+          <Link to="/" className="small muted">← Back to main page</Link>
+        )}
         <div className="pm-brand-row">
           <MjmLogo />
           <h1>Payroll Report</h1>
@@ -117,7 +129,7 @@ export default function Payroll() {
 
         <div className="pm-content">
           {tab === 'summary' ? (
-            <SummaryReport onWorkerDetailChange={setWorkerDetailOpen} />
+            <SummaryReport ref={summaryRef} onWorkerDetailChange={setWorkerDetailOpen} />
           ) : tab === 'hourly' ? (
             <HourlyProduction />
           ) : (

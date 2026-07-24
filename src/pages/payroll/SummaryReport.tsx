@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { forwardRef, useImperativeHandle, useState } from 'react'
 import WorkerPayrollDetail from './WorkerPayrollDetail'
 import './SummaryReport.css'
 
@@ -57,15 +57,23 @@ const totalWagesOf = (r: WorkerRow) => r.wages + r.ot
 const grossOf = (r: WorkerRow) => totalWagesOf(r) + r.piece + r.incentive + r.others
 const netOf = (r: WorkerRow) => grossOf(r) - r.ded
 
-export default function SummaryReport({
-  onWorkerDetailChange,
-}: {
-  onWorkerDetailChange?: (open: boolean) => void
-} = {}) {
+export interface SummaryReportHandle {
+  closeWorkerDetail: () => void
+}
+
+const SummaryReport = forwardRef<SummaryReportHandle, { onWorkerDetailChange?: (open: boolean) => void }>(
+  function SummaryReport({ onWorkerDetailChange }, ref) {
   const [shiftFilter, setShiftFilter] = useState<'all' | 'A' | 'B'>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | Status>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
+
+  useImperativeHandle(ref, () => ({
+    closeWorkerDetail() {
+      setSelectedIdx(null)
+      onWorkerDetailChange?.(false)
+    },
+  }))
 
   if (selectedIdx != null) {
     return (
@@ -337,7 +345,10 @@ export default function SummaryReport({
       </div>
     </div>
   )
-}
+  },
+)
+
+export default SummaryReport
 
 /* ------------------------------------------------------------------ */
 
