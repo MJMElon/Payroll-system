@@ -228,13 +228,6 @@ export default function WorkerPayrollDetail({ row, onBack }: { row: WorkerRow; o
             <div className="pr-wd-side-row"><span>Effective From</span><span className="amt">01/01/2026</span></div>
           </div>
 
-          <div className="pr-wd-card pr-wd-side-card">
-            <h3>Payroll Summary</h3>
-            <div className="pr-wd-side-row"><span>Total Earnings</span><span className="amt">RM {fmt(gross)}</span></div>
-            <div className="pr-wd-side-row"><span>Total Deductions</span><span className="amt negative">−RM {fmt(row.ded)}</span></div>
-            <div className="pr-wd-side-row"><span>Net Pay</span><span className="amt">RM {fmt(net)}</span></div>
-            <div className="pr-wd-side-row"><span>Payment Month</span><span className="amt">July 2026</span></div>
-          </div>
         </div>
 
         <div className="pr-wd-main">
