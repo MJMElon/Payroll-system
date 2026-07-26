@@ -37,8 +37,9 @@ export default function App() {
 
           <Route path="/settings" element={<Settings />} />
 
-          {/* Role-restricted areas */}
-          <Route element={<ProtectedRoute allowedRoles={['admin', 'manager']} />}>
+          {/* Role-restricted areas. Engineers can open Payroll for the
+              report tabs; run data itself stays admin/manager-only via RLS. */}
+          <Route element={<ProtectedRoute allowedRoles={['admin', 'manager', 'engineer']} />}>
             <Route path="/payroll" element={<Payroll />} />
           </Route>
         </Route>

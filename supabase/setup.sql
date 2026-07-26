@@ -1064,3 +1064,61 @@ drop trigger if exists trg_audit_grades on public.grades;
 create trigger trg_audit_grades
   after insert or update or delete on public.grades
   for each row execute function public.log_audit();
+
+-- ---------------------------------------------------------------------------
+-- Capability-backed writes (review fixes). The grantable capabilities in
+-- Tags management were shown in the UI but not all backed by RLS, so a
+-- granted user's action could fail (or silently update 0 rows). Each
+-- capability now has a matching policy:
+--   rate-create           -> insert jobs / write piece_rates
+--   rate-verify / approve -> update jobs (verify/approve/reject flow)
+--   tag-add               -> insert grades
+--   tag-move              -> update grades (re-tiering)
+-- ---------------------------------------------------------------------------
+drop policy if exists "rate creators insert jobs" on public.jobs;
+create policy "rate creators insert jobs" on public.jobs
+  for insert with check ('rate-create' = any(public.my_capabilities()));
+
+drop policy if exists "approvers update jobs" on public.jobs;
+create policy "approvers update jobs" on public.jobs
+  for update using (
+    exists (
+      select 1 from public.access_profiles p
+      where p.id = auth.uid() and p.can_approve_rates
+    )
+    or public.my_capabilities() && array['verify', 'approve', 'rate-verify', 'rate-approve']
+  );
+
+drop policy if exists "rate creators write piece_rates" on public.piece_rates;
+create policy "rate creators write piece_rates" on public.piece_rates
+  for all using ('rate-create' = any(public.my_capabilities()));
+
+drop policy if exists "tag adders insert grades" on public.grades;
+create policy "tag adders insert grades" on public.grades
+  for insert with check ('tag-add' = any(public.my_capabilities()));
+
+drop policy if exists "tag movers update grades" on public.grades;
+create policy "tag movers update grades" on public.grades
+  for update using ('tag-move' = any(public.my_capabilities()));
+
+-- ---------------------------------------------------------------------------
+-- Module keys clean-up (review fixes). "daily-job-record" was replaced by
+-- the Operation module, and Worker Management never had a key in the seeds,
+-- so those Dashboard tiles were unreachable for non-admins. Also: per-user
+-- modules used to default to a fixed list, which silently narrowed every
+-- user; the default is now NULL = "follow the tier's module list".
+-- ---------------------------------------------------------------------------
+update public.grades set modules = array_replace(modules, 'daily-job-record', 'operation')
+  where 'daily-job-record' = any(modules);
+update public.grades set modules = array_append(modules, 'operation')
+  where not 'operation' = any(modules);
+update public.grades set modules = array_append(modules, 'worker-management')
+  where sort_order < public.bottom_tier()
+    and not 'worker-management' = any(modules);
+
+update public.access_profiles set modules = array_replace(modules, 'daily-job-record', 'operation')
+  where modules is not null and 'daily-job-record' = any(modules);
+alter table public.access_profiles alter column modules drop not null;
+alter table public.access_profiles alter column modules drop default;
+update public.access_profiles set modules = null
+  where modules = '{station-status,piece-rate,payroll,demo-mobile}'::text[];

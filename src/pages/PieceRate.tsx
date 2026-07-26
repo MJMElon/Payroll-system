@@ -344,14 +344,24 @@ function groupJobs(jobs: Job[]): JobGroup[] {
 const MASTER_TAG_ORDER = ['Operator', 'Assistant Station Head', 'Station Head']
 
 /** One pivoted column per tag in MASTER_TAG_ORDER that exists in `grades`,
- *  plus an "All positions" column when any listed job carries no tag. */
+ *  plus a column for any OTHER tag actually used by the listed jobs (custom
+ *  tags, Engineer, …), plus "All positions" when a job carries no tag. */
 function tagColumns(grades: Grade[], jobs?: Job[]): { key: string; label: string }[] {
   const byName = new Map(grades.map((g) => [g.name, g]))
   const cols = MASTER_TAG_ORDER
     .map((name) => byName.get(name))
     .filter((g): g is Grade => Boolean(g))
     .map((g) => ({ key: g.id, label: g.name }))
-  if (jobs?.some((j) => j.grade_id === null)) cols.push({ key: NO_TAG, label: 'All positions' })
+  if (jobs) {
+    const covered = new Set(cols.map((c) => c.key))
+    const extras = [...new Set(jobs.map((j) => j.grade_id).filter((id): id is string => Boolean(id)))]
+      .filter((id) => !covered.has(id))
+      .map((id) => grades.find((g) => g.id === id))
+      .filter((g): g is Grade => Boolean(g))
+      .sort((a, b) => a.sort_order - b.sort_order)
+    for (const g of extras) cols.push({ key: g.id, label: g.name })
+    if (jobs.some((j) => j.grade_id === null)) cols.push({ key: NO_TAG, label: 'All positions' })
+  }
   return cols
 }
 
@@ -417,7 +427,14 @@ function ApprovalModal({
     act(j, { approval_status: 'verified', verified_by: myEmail, verified_at: new Date().toISOString() } as never)
   const approve = (j: Job) =>
     act(j, { approval_status: 'approved', approved_by: myEmail, approved_at: new Date().toISOString() } as never)
-  const reject = (j: Job) => act(j, { approval_status: 'rejected' })
+  const reject = (j: Job) =>
+    act(j, {
+      approval_status: 'rejected',
+      verified_by: null,
+      verified_at: null,
+      approved_by: null,
+      approved_at: null,
+    } as never)
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -1159,6 +1176,22 @@ function ContractModal({
             { onConflict: 'job_id,effective_from' },
           )
         if (error) throw new Error(error.message)
+        // A price change on an APPROVED contract must go through verify +
+        // approve again — otherwise editing the rate would bypass the flow.
+        if (job && job.approval_status === 'approved') {
+          submitted = true
+          const { error: reErr } = await supabase
+            .from('jobs')
+            .update({
+              approval_status: 'pending',
+              verified_by: null,
+              verified_at: null,
+              approved_by: null,
+              approved_at: null,
+            } as never)
+            .eq('id', job.id)
+          if (reErr) throw new Error(reErr.message)
+        }
       }
       onSaved(submitted)
     } catch (err) {

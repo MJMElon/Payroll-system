@@ -757,13 +757,13 @@ function PerformanceTab({
   const cost = payable.reduce((s, e) => s + amountOf(e), 0)
   const mgmtWorkers = new Set(payable.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
   const activeStations = new Set(payable.map((e) => e.station_id)).size
-  const awaiting = mtd.filter(
-    (e) => (canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'),
-  )
+  // Never your own work — the same self-exclusion as the Approvals tab.
+  const needsMe = (e: ProductionEntry) =>
+    e.user_id !== profileId &&
+    ((canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'))
+  const awaiting = mtd.filter(needsMe)
   // Unscoped by month — an aging entry from further back still needs action.
-  const awaitingAll = entries.filter(
-    (e) => (canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'),
-  )
+  const awaitingAll = entries.filter(needsMe)
   const rejectedWk = entries.filter((e) => status(e) === 'rejected' && e.work_date >= weekStart)
   const fmtMoney = (v: number) => (v >= 1000 ? `RM ${Math.round(v).toLocaleString()}` : RM(v))
 
@@ -2657,7 +2657,20 @@ function ApprovalsScreen({
     act(e, { approval_status: 'verified', verified_by: myEmail, verified_at: new Date().toISOString() })
   const approve = (e: ProductionEntry) =>
     act(e, { approval_status: 'approved', approved_by: myEmail, approved_at: new Date().toISOString() })
-  const reject = (e: ProductionEntry) => act(e, { approval_status: 'rejected' })
+  const reject = (e: ProductionEntry) => {
+    // Same rule as the Approvals tab and the Operation page: a reject
+    // records WHY and wipes any verify stamp so the entry restarts clean.
+    const reason = window.prompt('Reason for rejecting (shown to the worker):')
+    if (reason === null) return
+    act(e, {
+      approval_status: 'rejected',
+      rejected_reason: reason || null,
+      verified_by: null,
+      verified_at: null,
+      approved_by: null,
+      approved_at: null,
+    })
+  }
 
   const pendingItems = items.filter((e) => (e.approval_status ?? 'approved') === 'pending')
   const verifiedItems = items.filter((e) => (e.approval_status ?? 'approved') === 'verified')

@@ -104,7 +104,10 @@ export default function MonthReport() {
   const workerRows: WorkerRow[] = useMemo(() => {
     const byPerson = new Map<string, { dates: Set<string>; qty: number; piece: number }>()
     for (const e of entries) {
-      const pid = e.user_id ?? e.created_by
+      // Credit the account the work belongs to. Legacy rows carry only a
+      // worker_id — those are paid via payroll runs, not this per-account
+      // table, so don't mis-credit the clerk who keyed them in.
+      const pid = e.user_id ?? (e.worker_id ? null : e.created_by)
       if (!pid) continue
       const cur = byPerson.get(pid) ?? { dates: new Set<string>(), qty: 0, piece: 0 }
       cur.dates.add(e.work_date)
@@ -144,7 +147,7 @@ export default function MonthReport() {
     for (const e of entries) {
       const cur = byStation.get(e.station_id) ?? { count: 0, people: new Set<string>(), qty: 0, piece: 0 }
       cur.count += 1
-      const pid = e.user_id ?? e.created_by
+      const pid = e.user_id ?? (e.worker_id ? `w:${e.worker_id}` : e.created_by)
       if (pid) cur.people.add(pid)
       cur.qty += Number(e.quantity)
       cur.piece += amountOf(e.job_id, Number(e.quantity))

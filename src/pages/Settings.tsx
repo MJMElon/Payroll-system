@@ -34,7 +34,11 @@ function roleForTier(tier: number | null, name?: string): Role {
 }
 
 export default function Settings() {
+  const { profile } = useAuth()
   const [tab, setTab] = useState<Tab>('access')
+  // The audit log's RLS only answers to admins/managers — showing the tab
+  // to anyone else would just render an empty (confusing) table.
+  const canAudit = profile?.role === 'admin' || profile?.role === 'manager'
 
   return (
     <div className="stack">
@@ -42,8 +46,7 @@ export default function Settings() {
         <Link to="/" className="small muted backlink">← Back to main page</Link>
         <h1>Settings</h1>
         <p className="muted">
-          User access and tags. Stations live in the{' '}
-          <Link to="/piece-rate">Piece Rate module</Link>.
+          User access and tags. Station tags are managed below, under Tags management.
         </p>
       </div>
 
@@ -54,14 +57,16 @@ export default function Settings() {
         <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
           Tags management
         </button>
-        <button className={`tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>
-          Audit log
-        </button>
+        {canAudit && (
+          <button className={`tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>
+            Audit log
+          </button>
+        )}
       </div>
 
       {tab === 'access' && <UserAccessTab />}
       {tab === 'tags' && <TagsTab />}
-      {tab === 'audit' && <AuditLogTab />}
+      {tab === 'audit' && canAudit && <AuditLogTab />}
     </div>
   )
 }

@@ -372,9 +372,20 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
     return j ? `${j.name} (${j.unit})` : '?'
   }
 
-  // Monthly basic salary from the worker's profile (Worker Management).
+  // Monthly basic salary from the worker's profile (Worker Management),
+  // prorated when the run is shorter than a month: fraction = period days /
+  // days in the month the period starts in, capped at 1 for full months.
+  const basicFraction = useMemo(() => {
+    const start = new Date(run.period_start + 'T00:00:00')
+    const end = new Date(run.period_end + 'T00:00:00')
+    const periodDays = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1
+    const daysInMonth = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate()
+    return Math.min(1, periodDays / daysInMonth)
+  }, [run.period_start, run.period_end])
   const basicOf = (key: string) =>
-    key.startsWith('w:') ? 0 : Number(users.find((u) => u.id === key)?.basic_salary ?? 0)
+    key.startsWith('w:')
+      ? 0
+      : Math.round(Number(users.find((u) => u.id === key)?.basic_salary ?? 0) * basicFraction * 100) / 100
 
   // Group lines by person (user, or legacy worker) for a payslip-style view.
   // People with a basic salary are included even with no piece work — the
@@ -503,7 +514,11 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
               <tbody>
                 {basic > 0 && (
                   <tr>
-                    <td className="muted">Basic salary (monthly)</td>
+                    <td className="muted">
+                      {basicFraction < 1
+                        ? `Basic salary (prorated ${Math.round(basicFraction * 100)}% of month)`
+                        : 'Basic salary (monthly)'}
+                    </td>
                     <td className="right" colSpan={2} />
                     <td className="right">{basic.toFixed(2)}</td>
                     <td />
@@ -592,7 +607,7 @@ function printPayslip(
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const rows: string[] = []
   if (basic > 0) {
-    rows.push(`<tr><td>Basic salary (monthly)</td><td></td><td></td><td class="r">${basic.toFixed(2)}</td></tr>`)
+    rows.push(`<tr><td>Basic salary</td><td></td><td></td><td class="r">${basic.toFixed(2)}</td></tr>`)
   }
   for (const l of group.lines) {
     rows.push(

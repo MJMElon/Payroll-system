@@ -224,9 +224,10 @@ function StationBoard() {
         supabase.from('stations').select('id, name, sort_order').order('sort_order'),
         supabase
           .from('production_entries')
-          .select('station_id, quantity, created_at')
+          .select('station_id, quantity, created_at, approval_status')
           .gte('created_at', start.toISOString())
-          .lt('created_at', end.toISOString()),
+          .lt('created_at', end.toISOString())
+          .neq('approval_status', 'rejected'),
       ])
       const err = s.error || e.error
       if (err) setError(err.message)

@@ -218,6 +218,9 @@ export default function AddJobRecord() {
           notes: notesParts.length ? notesParts.join(' · ') : null,
           shift,
           created_by: profile?.id ?? null,
+          // Desktop entries join the same verify -> approve queue as mobile
+          // ones (the DB column default would otherwise auto-approve them).
+          approval_status: 'pending',
         })
         .select()
         .single()
