@@ -151,6 +151,7 @@ export default function DemoMobile() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<PieceRate[]>([])
   const [tab, setTab] = useState<Tab>('performance')
+  const [signupPreview, setSignupPreview] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   // photo_records.job_id only exists once the hourly piece-work migration has
@@ -240,10 +241,21 @@ export default function DemoMobile() {
   // ("Work approval screen") — not tied to any tier. Admins and the
   // tier-1 super admin always have final-approval access.
   const myOwnGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
-  const approvalLevel: 'verify' | 'approve' | null =
+  const realApprovalLevel: 'verify' | 'approve' | null =
     profile?.role === 'admin' || myOwnGrade?.sort_order === 1
       ? 'approve'
       : profile?.mobile_approval ?? null
+  // In THIS demo the phone follows the previewed tier, so you can see each
+  // version of the one design. In the real app there is no selector — the
+  // Approvals page shows only for accounts granted the per-user
+  // "Work approval screen" in Settings -> User access.
+  const approvalLevel: 'verify' | 'approve' | null = signupPreview
+    ? null
+    : tierCaps.includes('approve')
+      ? 'approve'
+      : tierCaps.includes('verify')
+        ? 'verify'
+        : realApprovalLevel
 
   // Badge on the Approvals tab: how many entries wait for MY action.
   const [approvalsCount, setApprovalsCount] = useState(0)
@@ -295,8 +307,9 @@ export default function DemoMobile() {
         <Link to="/" className="small muted backlink">← Back to main page</Link>
         <h1>Demo Mobile View</h1>
         <p className="muted">
-          Pick a tier on the left to preview that tier's version of the app.
-          Station requirements are preset in Settings → Tags management.
+          One app, one design — each person's access decides what they see.
+          Use "View as" to preview any scenario, from a brand-new sign-up to
+          Management. Station requirements are preset in Settings → Tags management.
         </p>
       </div>
 
@@ -305,14 +318,27 @@ export default function DemoMobile() {
       <div className="demo-layout">
         {/* Tier rail — mirrors the tier tags in Tags management. */}
         <div className="card tier-rail">
-          <h3>Tier version</h3>
-          <p className="muted small">Loaded from Tags management — new tiers show up here automatically.</p>
+          <h3>View as</h3>
+          <p className="muted small">
+            It is ONE app — what each person sees comes from their access.
+            Pick a scenario to preview that person's version.
+          </p>
           <div className="tag-list">
+            <button
+              className={`tag-row ${signupPreview ? 'active' : ''}`}
+              onClick={() => setSignupPreview(true)}
+            >
+              <span className="tag-dot dot-grey" />
+              <span>New sign up (just registered)</span>
+            </button>
             {grades.map((g) => (
               <button
                 key={g.id}
-                className={`tag-row ${tier?.id === g.id ? 'active' : ''}`}
-                onClick={() => setTier(g)}
+                className={`tag-row ${!signupPreview && tier?.id === g.id ? 'active' : ''}`}
+                onClick={() => {
+                  setTier(g)
+                  setSignupPreview(false)
+                }}
               >
                 <span className={`tag-dot dot-${g.color}`} />
                 <span>{g.sort_order}. {g.name}</span>
@@ -332,7 +358,12 @@ export default function DemoMobile() {
                 <span>▮▮▮</span>
               </div>
 
-              {tier && (
+              {signupPreview ? (
+                <div className="mob-tier-ribbon">
+                  <span className="tag-dot dot-grey" />
+                  <span>New sign up view</span>
+                </div>
+              ) : tier && (
                 <div className="mob-tier-ribbon">
                   <span className={`tag-dot dot-${tier.color}`} />
                   <span>{tier.name} view</span>
@@ -342,6 +373,8 @@ export default function DemoMobile() {
               <div className="mob-content">
                 {loading ? (
                   <div className="mob-body"><p className="muted small">Loading…</p></div>
+                ) : signupPreview ? (
+                  <SignupWelcome myName={profileName(profile)} />
                 ) : tab === 'performance' ? (
                   <PerformanceTab
                     stations={scopedStations}
@@ -389,12 +422,15 @@ export default function DemoMobile() {
                   <ProfileTab
                     profile={profile}
                     tier={tier}
+                    grades={grades}
                     stations={stations}
                   />
                 )}
               </div>
 
-              <TabBar tab={tab} onTab={setTab} showApprovals={Boolean(approvalLevel)} badge={approvalsCount} />
+              {!signupPreview && (
+                <TabBar tab={tab} onTab={setTab} showApprovals={Boolean(approvalLevel)} badge={approvalsCount} />
+              )}
             </div>
           </div>
           <p className="muted small">
@@ -2026,6 +2062,66 @@ function EntryDetail({
 }
 
 /* ------------------------------------------------------------------ */
+/* NEW SIGN UP — what the app looks like right after registering,     */
+/* before a station head adds the person to a team.                   */
+/* ------------------------------------------------------------------ */
+
+function SignupWelcome({ myName }: { myName: string }) {
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+      </div>
+      <div className="mob-body">
+        <div className="mob-card" style={{ alignItems: 'center', textAlign: 'center' }}>
+          <span className="signup-check" aria-hidden="true">✓</span>
+          <div className="mob-role">Welcome, {myName}!</div>
+          <div className="mob-sub">Your account is created.</div>
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">Your starting access</div>
+          <div className="mob-row"><span className="mob-field-label">Tag</span><span>Operator (default)</span></div>
+          <div className="mob-row"><span className="mob-field-label">Team</span><span>Waiting for a leader</span></div>
+          <div className="mob-row"><span className="mob-field-label">Station</span><span>Not assigned yet</span></div>
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">What happens next</div>
+          <div className="mob-flow">
+            <div className="mob-step">
+              <span className="mob-step-dot done" />
+              <span>
+                <div className="mob-step-name">Account created</div>
+                <div className="mob-station-meta">You are on the new sign-up list</div>
+              </span>
+            </div>
+            <div className="mob-step">
+              <span className="mob-step-dot" />
+              <span>
+                <div className="mob-step-name">Your station head adds you to their team</div>
+                <div className="mob-station-meta">That assigns your station and leader</div>
+              </span>
+            </div>
+            <div className="mob-step">
+              <span className="mob-step-dot" />
+              <span>
+                <div className="mob-step-name">The app unlocks</div>
+                <div className="mob-station-meta">Record work, see your rates and earnings</div>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mob-sub" style={{ textAlign: 'center' }}>
+          Nothing else to do — this screen unlocks by itself once you are added.
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* TAB — APPROVALS (granted per user in Settings → User access).      */
 /* 'verify' level works the To-verify queue; 'approve' level gets     */
 /* both queues. Own submissions are never in either queue.            */
@@ -2469,12 +2565,17 @@ function ApprovalsScreen({
 function ProfileTab({
   profile,
   tier,
+  grades,
   stations,
 }: {
   profile: Profile | null
   tier: Grade | null
+  grades: Grade[]
   stations: Station[]
 }) {
+  // Leaders (any tier above the bottom) manage their team right here.
+  const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
+  const isLeader = tier !== null && grades.length > 0 && tier.sort_order < bottomTier
   const [workerName, setWorkerName] = useState<string | null>(null)
   const [supervisorName, setSupervisorName] = useState<string | null>(null)
 
@@ -2538,6 +2639,10 @@ function ProfileTab({
           <div className="mob-sub">{tier?.name ?? '—'}</div>
         </div>
 
+        {isLeader && (
+          <TeamSection profile={profile} grades={grades} stations={stations} />
+        )}
+
         <div className="mob-card">
           <div className="mob-title">Core identity</div>
           <Row label="Full name" value={profile?.full_name ?? '—'} />
@@ -2574,5 +2679,111 @@ function ProfileTab({
         </div>
       </div>
     </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* MY TEAM (leaders only): claim new sign-ups into your team and see  */
+/* who works under you — the same actions as Worker Management, on    */
+/* the phone.                                                         */
+/* ------------------------------------------------------------------ */
+
+function TeamSection({
+  profile,
+  grades,
+  stations,
+}: {
+  profile: Profile | null
+  grades: Grade[]
+  stations: Station[]
+}) {
+  const [people, setPeople] = useState<Profile[]>([])
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function load() {
+    const { data } = await supabase.from('access_profiles').select('*')
+    setPeople((data ?? []) as Profile[])
+  }
+  useEffect(() => {
+    load()
+  }, [])
+
+  const gradeOf = (p: Profile) => grades.find((g) => g.id === p.grade_id)
+  const stationLabel = (p: Profile) => {
+    const ids = p.station_ids && p.station_ids.length > 0
+      ? p.station_ids
+      : p.station_id ? [p.station_id] : []
+    if (ids.length === 0) return 'All stations'
+    return ids.map((id) => stations.find((st) => st.id === id)?.name ?? '?').join(', ')
+  }
+
+  const pending = people.filter((p) => !p.tags_confirmed)
+  const myTeam = people.filter((p) => p.supervisor_id === profile?.id)
+
+  async function claim(p: Profile) {
+    if (!profile) return
+    setBusy(p.id)
+    setError(null)
+    const { error } = await supabase
+      .from('access_profiles')
+      .update({
+        supervisor_id: profile.id,
+        station_ids: profile.station_ids ?? [],
+        station_id: profile.station_ids?.[0] ?? profile.station_id ?? null,
+        tags_confirmed: true,
+      })
+      .eq('id', p.id)
+    setBusy(null)
+    if (error) return setError(error.message)
+    load()
+  }
+
+  return (
+    <div className="mob-card">
+      <div className="mob-title">
+        My team{' '}
+        {pending.length > 0 && <span className="mob-chip warn">{pending.length} new</span>}
+      </div>
+      {error && <div className="mob-sub" style={{ color: '#b91c1c' }}>{error}</div>}
+
+      {pending.map((p) => (
+        <div className="mob-row" key={p.id}>
+          <span>
+            <span className="mob-entry-name">{p.full_name ?? p.email ?? '—'}</span>
+            <span className="mob-station-meta" style={{ display: 'block' }}>
+              new sign up · waiting for a team
+            </span>
+          </span>
+          <button
+            className="mob-mini"
+            disabled={busy === p.id}
+            onClick={() => claim(p)}
+          >
+            + Add to my team
+          </button>
+        </div>
+      ))}
+
+      {myTeam.length === 0 && pending.length === 0 && (
+        <div className="mob-sub">No team members yet.</div>
+      )}
+      {myTeam.map((p) => {
+        const g = gradeOf(p)
+        return (
+          <div className="mob-row" key={p.id}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
+              <span>
+                <span className="mob-entry-name">{p.full_name ?? p.email ?? '—'}</span>
+                <span className="mob-station-meta" style={{ display: 'block' }}>
+                  {g?.name ?? '—'} · {stationLabel(p)}
+                </span>
+              </span>
+            </span>
+          </div>
+        )
+      })}
+    </div>
   )
 }
