@@ -13,6 +13,7 @@ import {
 } from '../lib/supabase'
 import SummaryReport, { type SummaryReportHandle } from './payroll/SummaryReport'
 import HourlyProduction from './payroll/HourlyProduction'
+import MonthReport from './payroll/MonthReport'
 import './payroll/module-sidebar.css'
 
 /**
@@ -51,7 +52,7 @@ function useShellWideStyle() {
 }
 
 export default function Payroll() {
-  const [tab, setTab] = useState<'summary' | 'hourly' | 'runs'>('summary')
+  const [tab, setTab] = useState<'summary' | 'hourly' | 'month' | 'runs'>('summary')
   const [workerDetailOpen, setWorkerDetailOpen] = useState(false)
   const summaryRef = useRef<SummaryReportHandle>(null)
   const shellWideStyle = useShellWideStyle()
@@ -120,6 +121,10 @@ export default function Payroll() {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M7 15v3" /><path d="M12 10v8" /><path d="M17 6v12" /></svg>
               Hourly Production
             </button>
+            <button className={`pm-sidebar-item ${tab === 'month' ? 'active' : ''}`} onClick={() => setTab('month')}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4" /><path d="M8 2v4" /><path d="M3 10h18" /></svg>
+              Month Report
+            </button>
             <button className={`pm-sidebar-item ${tab === 'runs' ? 'active' : ''}`} onClick={() => setTab('runs')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /><path d="M9 15h6" /><path d="M9 11h2" /></svg>
               Runs
@@ -132,6 +137,8 @@ export default function Payroll() {
             <SummaryReport ref={summaryRef} onWorkerDetailChange={setWorkerDetailOpen} />
           ) : tab === 'hourly' ? (
             <HourlyProduction />
+          ) : tab === 'month' ? (
+            <MonthReport />
           ) : (
             <div className="stack">
               {error && <div className="error">{error}</div>}
