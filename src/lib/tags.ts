@@ -19,7 +19,6 @@ export function nextTagColor(usedColors: (string | null | undefined)[]): string 
 export const MODULE_OPTIONS = [
   { key: 'station-status', label: 'Station status board' },
   { key: 'operation', label: 'Operation module' },
-  { key: 'daily-job-record', label: 'Daily Job Record' },
   { key: 'piece-rate', label: 'Piece Rate module' },
   { key: 'payroll', label: 'Payroll module' },
   { key: 'worker-management', label: 'Worker Management' },

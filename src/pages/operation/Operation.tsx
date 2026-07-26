@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../../context/AuthContext'
 import {
   supabase,
   todayISO,
@@ -18,7 +18,7 @@ import {
   type ProductionEntry,
   type Profile,
   type Station,
-} from '../lib/supabase'
+} from '../../lib/supabase'
 
 const TIER1_UNIT_CAP = 4 // tiered hourly rates: tier-1 price covers the first 4 units
 
@@ -98,6 +98,8 @@ export default function Operation() {
     profile?.role === 'admin' || myGrade?.sort_order === 1
       ? 'approve'
       : profile?.mobile_approval ?? null
+  const canManage =
+    profile?.role === 'admin' || profile?.role === 'manager' || myGrade?.sort_order === 1
 
   const bestRate = useMemo(() => {
     const today = todayISO()
@@ -140,6 +142,48 @@ export default function Operation() {
     if (next === 'approved') Object.assign(fields, { approved_by: me, approved_at: now })
     if (next === 'rejected') fields.rejected_reason = reason || null
     const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    setBusy(null)
+    if (error) return setError(error.message)
+    loadEntries()
+  }
+
+  // Edit / delete: managers always; a worker may fix or remove their OWN
+  // entry while it is still pending (or was rejected — editing resubmits).
+  const canModify = (e: ProductionEntry) =>
+    canManage ||
+    ((e.created_by === profile?.id || e.user_id === profile?.id) &&
+      ['pending', 'rejected'].includes(stat(e)))
+
+  async function editEntry(e: ProductionEntry) {
+    const raw = window.prompt('New quantity:', String(e.quantity))
+    if (raw === null) return
+    const qty = Number(raw)
+    if (!Number.isFinite(qty) || qty <= 0) return setError('Quantity must be a positive number.')
+    setBusy(e.id)
+    setError(null)
+    const fields: Record<string, unknown> = { quantity: qty }
+    if (stat(e) === 'rejected') {
+      // Editing a rejected entry resubmits it for approval.
+      Object.assign(fields, {
+        approval_status: 'pending',
+        rejected_reason: null,
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      })
+    }
+    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    setBusy(null)
+    if (error) return setError(error.message)
+    loadEntries()
+  }
+
+  async function deleteEntry(e: ProductionEntry) {
+    if (!window.confirm(`Delete this entry (${e.quantity} × ${jobName(e.job_id)})?`)) return
+    setBusy(e.id)
+    setError(null)
+    const { error } = await supabase.from('production_entries').delete().eq('id', e.id)
     setBusy(null)
     if (error) return setError(error.message)
     loadEntries()
@@ -194,9 +238,12 @@ export default function Operation() {
           <div className="card stack">
             <div className="row-form spread">
               <h3>{current?.name ?? 'Station'} — work entries</h3>
-              <span className="muted small">
-                {filtered.length} entr{filtered.length === 1 ? 'y' : 'ies'}
-              </span>
+              <div className="row-form" style={{ gap: '0.6rem' }}>
+                <span className="muted small">
+                  {filtered.length} entr{filtered.length === 1 ? 'y' : 'ies'}
+                </span>
+                <Link to="/operation/add" className="btn">+ Add Job Record</Link>
+              </div>
             </div>
 
             {/* Filters: date range + status */}
@@ -232,13 +279,13 @@ export default function Operation() {
                     <th className="right">Amount</th>
                     <th>Status</th>
                     <th>By</th>
-                    {approvalLevel && <th className="right">Actions</th>}
+                    <th className="right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.length === 0 && (
                     <tr>
-                      <td colSpan={approvalLevel ? 8 : 7} className="muted">
+                      <td colSpan={8} className="muted">
                         No entries in this range.
                       </td>
                     </tr>
@@ -273,38 +320,54 @@ export default function Operation() {
                               ? e.verified_by ?? '—'
                               : '—'}
                         </td>
-                        {approvalLevel && (
-                          <td className="right op-actions">
-                            {canVerifyRow && (
+                        <td className="right op-actions">
+                          {canVerifyRow && (
+                            <button
+                              className="linkbtn"
+                              disabled={busy === e.id}
+                              onClick={() => act(e, 'verified')}
+                            >
+                              ✓ Verify
+                            </button>
+                          )}
+                          {canApproveRow && (
+                            <button
+                              className="linkbtn"
+                              disabled={busy === e.id}
+                              onClick={() => act(e, 'approved')}
+                            >
+                              ✓ Approve
+                            </button>
+                          )}
+                          {canRejectRow && (
+                            <button
+                              className="linkbtn danger"
+                              disabled={busy === e.id}
+                              onClick={() => act(e, 'rejected')}
+                            >
+                              ✗ Reject
+                            </button>
+                          )}
+                          {canModify(e) && (
+                            <>
                               <button
                                 className="linkbtn"
                                 disabled={busy === e.id}
-                                onClick={() => act(e, 'verified')}
+                                onClick={() => editEntry(e)}
+                                title={s === 'rejected' ? 'Edit & resubmit' : 'Edit quantity'}
                               >
-                                ✓ Verify
+                                ✎ Edit
                               </button>
-                            )}
-                            {canApproveRow && (
-                              <button
-                                className="linkbtn"
-                                disabled={busy === e.id}
-                                onClick={() => act(e, 'approved')}
-                              >
-                                ✓ Approve
-                              </button>
-                            )}
-                            {canRejectRow && (
                               <button
                                 className="linkbtn danger"
                                 disabled={busy === e.id}
-                                onClick={() => act(e, 'rejected')}
+                                onClick={() => deleteEntry(e)}
                               >
-                                ✗ Reject
+                                🗑 Delete
                               </button>
-                            )}
-                            {own && <span className="muted small">own entry</span>}
-                          </td>
-                        )}
+                            </>
+                          )}
+                        </td>
                       </tr>
                     )
                   })}

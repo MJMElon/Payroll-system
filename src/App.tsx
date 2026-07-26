@@ -3,12 +3,11 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
-import DailyJobRecord from './pages/DailyJobRecord'
-import AddJobRecord from './pages/AddJobRecord'
+import AddJobRecord from './pages/operation/AddJobRecord'
 import StationDetail from './pages/StationDetail'
 import DemoMobile from './pages/DemoMobile'
-import Operation from './pages/Operation'
-import WorkerManagement from './pages/WorkerManagement'
+import Operation from './pages/operation/Operation'
+import WorkerManagement from './pages/workers/WorkerManagement'
 import Payroll from './pages/Payroll'
 import PieceRate from './pages/PieceRate'
 import Settings from './pages/Settings'
@@ -23,11 +22,12 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/daily-job-record" element={<DailyJobRecord />} />
-          <Route path="/daily-job-record/add" element={<AddJobRecord />} />
+          <Route path="/daily-job-record" element={<Navigate to="/operation" replace />} />
+          <Route path="/daily-job-record/add" element={<Navigate to="/operation/add" replace />} />
           <Route path="/station/:stationId" element={<StationDetail />} />
           <Route path="/demo-mobile" element={<DemoMobile />} />
           <Route path="/operation" element={<Operation />} />
+          <Route path="/operation/add" element={<AddJobRecord />} />
           <Route path="/workers" element={<WorkerManagement />} />
           <Route path="/piece-rate" element={<PieceRate />} />
           <Route path="/unauthorized" element={<Unauthorized />} />
