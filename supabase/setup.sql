@@ -919,3 +919,10 @@ alter table public.access_profiles add column if not exists phone text;
 alter table public.access_profiles add column if not exists bank_name text;
 alter table public.access_profiles add column if not exists bank_account text;
 alter table public.access_profiles add column if not exists joined_on date;
+
+-- ---------------------------------------------------------------------------
+-- Named teams. A team is a leader plus everyone reporting to them; the
+-- leader's profile carries the team's display name (e.g. "Team A"), set in
+-- Worker Management -> worker profile.
+-- ---------------------------------------------------------------------------
+alter table public.access_profiles add column if not exists team_name text;

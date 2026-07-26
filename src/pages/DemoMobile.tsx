@@ -2721,16 +2721,27 @@ function TeamSection({
   const pending = people.filter((p) => !p.tags_confirmed)
   const myTeam = people.filter((p) => p.supervisor_id === profile?.id)
 
-  async function claim(p: Profile) {
-    if (!profile) return
+  // Every team = a leader (any tier above the bottom) — labelled with the
+  // team name, the leader and their station, so a sign-up can be assigned
+  // to ANY team, not just your own.
+  const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
+  const leaders = people.filter((p) => {
+    if (!p.tags_confirmed) return false
+    const t = gradeOf(p)?.sort_order
+    return t != null && t < bottomTier
+  })
+  const teamLabel = (l: Profile) =>
+    `${l.team_name ?? `${l.full_name ?? l.email ?? '?'}'s team`} — ${l.full_name ?? l.email ?? '?'} · ${stationLabel(l)}`
+
+  async function claimTo(p: Profile, leader: Profile) {
     setBusy(p.id)
     setError(null)
     const { error } = await supabase
       .from('access_profiles')
       .update({
-        supervisor_id: profile.id,
-        station_ids: profile.station_ids ?? [],
-        station_id: profile.station_ids?.[0] ?? profile.station_id ?? null,
+        supervisor_id: leader.id,
+        station_ids: leader.station_ids ?? [],
+        station_id: leader.station_ids?.[0] ?? leader.station_id ?? null,
         tags_confirmed: true,
       })
       .eq('id', p.id)
@@ -2739,29 +2750,51 @@ function TeamSection({
     load()
   }
 
+  function claim(p: Profile) {
+    if (profile) claimTo(p, profile)
+  }
+
   return (
     <div className="mob-card">
       <div className="mob-title">
-        My team{' '}
+        My team{profile?.team_name ? ` — ${profile.team_name}` : ''}{' '}
         {pending.length > 0 && <span className="mob-chip warn">{pending.length} new</span>}
       </div>
       {error && <div className="mob-sub" style={{ color: '#b91c1c' }}>{error}</div>}
 
       {pending.map((p) => (
-        <div className="mob-row" key={p.id}>
-          <span>
-            <span className="mob-entry-name">{p.full_name ?? p.email ?? '—'}</span>
-            <span className="mob-station-meta" style={{ display: 'block' }}>
-              new sign up · waiting for a team
+        <div key={p.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+          <div className="mob-row">
+            <span>
+              <span className="mob-entry-name">{p.full_name ?? p.email ?? '—'}</span>
+              <span className="mob-station-meta" style={{ display: 'block' }}>
+                new sign up · waiting for a team
+              </span>
             </span>
-          </span>
-          <button
-            className="mob-mini"
+            <button
+              className="mob-mini"
+              disabled={busy === p.id}
+              onClick={() => claim(p)}
+            >
+              + My team
+            </button>
+          </div>
+          <select
+            className="mob-select"
+            value=""
             disabled={busy === p.id}
-            onClick={() => claim(p)}
+            onChange={(e) => {
+              const leader = leaders.find((l) => l.id === e.target.value)
+              if (leader) claimTo(p, leader)
+            }}
           >
-            + Add to my team
-          </button>
+            <option value="">…or assign to another team</option>
+            {leaders
+              .filter((l) => l.id !== profile?.id)
+              .map((l) => (
+                <option key={l.id} value={l.id}>{teamLabel(l)}</option>
+              ))}
+          </select>
         </div>
       ))}
 

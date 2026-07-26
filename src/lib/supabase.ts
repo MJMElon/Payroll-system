@@ -49,6 +49,8 @@ export interface Profile {
   bank_name?: string | null
   bank_account?: string | null
   joined_on?: string | null
+  // Display name of the team this person LEADS (e.g. "Team A").
+  team_name?: string | null
 }
 
 // Rows of the work tables (see supabase/setup.sql).

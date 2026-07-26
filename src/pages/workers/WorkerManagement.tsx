@@ -91,21 +91,35 @@ export default function WorkerManagement() {
     (seesAll && (isAdmin || myTier === 1 || (tierOf(p) ?? 99) > (myTier ?? 0))) ||
     p.supervisor_id === profile?.id
 
-  async function claim(p: Profile) {
-    if (!profile) return
+  // Every team = a leader; labelled "Team name — Leader · Station" so a
+  // sign-up can be placed into ANY team, not only your own.
+  const leaders = confirmed.filter((p) => {
+    const t = tierOf(p)
+    return t !== null && t < bottomTier
+  })
+  const teamLabel = (l: Profile) =>
+    `${l.team_name ?? `${profileName(l)}'s team`} — ${profileName(l)} · ${stationLabel(l)}`
+
+  async function claimTo(p: Profile, leader: Profile) {
     setError(null)
     const { error } = await supabase
       .from('access_profiles')
       .update({
-        supervisor_id: profile.id,
-        station_ids: profile.station_ids ?? [],
-        station_id: profile.station_ids?.[0] ?? profile.station_id ?? null,
+        supervisor_id: leader.id,
+        station_ids: leader.station_ids ?? [],
+        station_id: leader.station_ids?.[0] ?? leader.station_id ?? null,
         tags_confirmed: true,
       })
       .eq('id', p.id)
     if (error) return setError(error.message)
-    setNotice(`${profileName(p)} added to your team.`)
+    setNotice(
+      `${profileName(p)} added to ${leader.id === profile?.id ? 'your team' : (leader.team_name ?? `${profileName(leader)}'s team`)}.`,
+    )
     load()
+  }
+
+  function claim(p: Profile) {
+    if (profile) claimTo(p, profile)
   }
 
   async function saveSalary(p: Profile) {
@@ -182,6 +196,7 @@ export default function WorkerManagement() {
           <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
           <span className="tree-name">{p.full_name ?? p.email ?? '—'}</span>
           {g && <span className={tagClass(g.color)}>{g.name}</span>}
+          {p.team_name && <span className="badge off">{p.team_name}</span>}
           <span className="tree-meta">
             {p.employee_code ? `${p.employee_code} · ` : ''}{stationLabel(p)}
             {kids.length > 0 && ` · ${kids.length} under`}
@@ -233,13 +248,28 @@ export default function WorkerManagement() {
               <strong>{p.full_name ?? '—'}</strong> <span className="badge new">new</span>
               <span className="muted small"> · {p.email}</span>
             </span>
-            <button className="btn" onClick={() => claim(p)}>+ Add to my team</button>
+            <span className="row-form" style={{ gap: '0.5rem' }}>
+              <select
+                value=""
+                onChange={(e) => {
+                  const leader = leaders.find((l) => l.id === e.target.value)
+                  if (leader) claimTo(p, leader)
+                }}
+              >
+                <option value="">Assign to a team…</option>
+                {leaders.map((l) => (
+                  <option key={l.id} value={l.id}>{teamLabel(l)}</option>
+                ))}
+              </select>
+              <button className="btn" onClick={() => claim(p)}>+ Add to my team</button>
+            </span>
           </div>
         ))}
         {pending.length > 0 && (
           <p className="muted small">
-            Claiming sets you as their direct upper, copies your station tags and
-            confirms the account (they stay Operator — tiers are changed in Settings).
+            Adding sets the chosen leader as their direct upper, copies that
+            leader's station tags and confirms the account (they stay Operator —
+            tiers are changed in Settings).
           </p>
         )}
       </div>
@@ -370,6 +400,7 @@ function WorkerProfileModal({
   const [bankName, setBankName] = useState(worker.bank_name ?? '')
   const [bankAccount, setBankAccount] = useState(worker.bank_account ?? '')
   const [joinedOn, setJoinedOn] = useState(worker.joined_on ?? '')
+  const [teamName, setTeamName] = useState(worker.team_name ?? '')
   const [salary, setSalary] = useState(worker.basic_salary != null ? String(worker.basic_salary) : '')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -392,6 +423,7 @@ function WorkerProfileModal({
         bank_name: bankName.trim() || null,
         bank_account: bankAccount.trim() || null,
         joined_on: joinedOn || null,
+        team_name: teamName.trim() || null,
         basic_salary: salaryValue,
       })
       .eq('id', worker.id)
@@ -442,6 +474,11 @@ function WorkerProfileModal({
             <input value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} />
           </label>
         </div>
+
+        <label className="field">
+          <span>Team name (shown when this person leads a team)</span>
+          <input value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="e.g. Team A" />
+        </label>
 
         <div className="row-form">
           <label className="field">
