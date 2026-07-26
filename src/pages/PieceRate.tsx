@@ -205,10 +205,11 @@ export default function PieceRate() {
                 <SubmissionsList
                   stations={stations}
                   grades={grades}
-                  jobs={notYetApproved}
+                  jobs={notYetApproved.filter(visibleTo)}
                   currentRate={latestRate}
                   pendingCount={openApprovals.length}
                   canManage={canManage}
+                  canResubmit={canManage || canCreate || isApprover}
                   onEdit={(j) => setModal(j)}
                   onChanged={load}
                   onError={setError}
@@ -342,13 +343,16 @@ function groupJobs(jobs: Job[]): JobGroup[] {
 // order — other tags (e.g. Management, Manager, Engineer) are left out.
 const MASTER_TAG_ORDER = ['Operator', 'Assistant Station Head', 'Station Head']
 
-/** One pivoted column per tag in MASTER_TAG_ORDER that exists in `grades`. */
-function tagColumns(grades: Grade[]): { key: string; label: string }[] {
+/** One pivoted column per tag in MASTER_TAG_ORDER that exists in `grades`,
+ *  plus an "All positions" column when any listed job carries no tag. */
+function tagColumns(grades: Grade[], jobs?: Job[]): { key: string; label: string }[] {
   const byName = new Map(grades.map((g) => [g.name, g]))
-  return MASTER_TAG_ORDER
+  const cols = MASTER_TAG_ORDER
     .map((name) => byName.get(name))
     .filter((g): g is Grade => Boolean(g))
     .map((g) => ({ key: g.id, label: g.name }))
+  if (jobs?.some((j) => j.grade_id === null)) cols.push({ key: NO_TAG, label: 'All positions' })
+  return cols
 }
 
 function addDays(dateStr: string, delta: number) {
@@ -501,6 +505,7 @@ function SubmissionsList({
   currentRate,
   pendingCount,
   canManage,
+  canResubmit,
   onEdit,
   onChanged,
   onError,
@@ -511,6 +516,7 @@ function SubmissionsList({
   currentRate: Map<string, Rate>
   pendingCount: number
   canManage: boolean
+  canResubmit: boolean
   onEdit: (j: Job) => void
   onChanged: () => void
   onError: (m: string | null) => void
@@ -523,6 +529,22 @@ function SubmissionsList({
   async function remove(j: Job) {
     if (!window.confirm(`Delete "${j.name}"? This fails if it's already used in production or payroll records.`)) return
     const { error } = await supabase.from('jobs').delete().eq('id', j.id)
+    if (error) onError(error.message)
+    else onChanged()
+  }
+
+  // A rejected proposal goes back into the approval queue from the start.
+  async function resubmit(j: Job) {
+    const { error } = await supabase
+      .from('jobs')
+      .update({
+        approval_status: 'pending',
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      } as never)
+      .eq('id', j.id)
     if (error) onError(error.message)
     else onChanged()
   }
@@ -567,13 +589,13 @@ function SubmissionsList({
               <th className="right">Proposed rate</th>
               <th>Effective date</th>
               <th>Status</th>
-              {canManage && <th className="right">Actions</th>}
+              {(canManage || canResubmit) && <th className="right">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {list.length === 0 && (
               <tr>
-                <td colSpan={canManage ? 8 : 7} className="muted">Nothing waiting for approval.</td>
+                <td colSpan={canManage || canResubmit ? 8 : 7} className="muted">Nothing waiting for approval.</td>
               </tr>
             )}
             {list.map((j) => {
@@ -590,10 +612,19 @@ function SubmissionsList({
                   </td>
                   <td className="muted">{rate ? rate.effective_from : '—'}</td>
                   <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
-                  {canManage && (
+                  {(canManage || canResubmit) && (
                     <td className="right">
-                      <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
-                      <button className="linkbtn danger" onClick={() => remove(j)}>Delete</button>
+                      {j.approval_status === 'rejected' && canResubmit && (
+                        <>
+                          <button className="linkbtn" onClick={() => resubmit(j)}>Resubmit</button>{' '}
+                        </>
+                      )}
+                      {canManage && (
+                        <>
+                          <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
+                          <button className="linkbtn danger" onClick={() => remove(j)}>Delete</button>
+                        </>
+                      )}
                     </td>
                   )}
                 </tr>
@@ -646,8 +677,41 @@ function RatesList({
   const groups = groupJobs(filtered).sort(
     (a, b) => stationName(a.station_id).localeCompare(stationName(b.station_id)) || a.name.localeCompare(b.name),
   )
-  const tagCols = tagColumns(grades)
+  const tagCols = tagColumns(grades, filtered)
   const colCount = 3 + tagCols.length + 2 + (canManage ? 1 : 0)
+
+  // Download the visible masterlist as CSV (opens directly in Excel).
+  function exportCsv() {
+    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`
+    const head = ['Station', 'Work description', 'Unit', ...tagCols.map((c) => `${c.label} (RM)`), 'Effective date', 'Status']
+    const lines = [head.map(esc).join(',')]
+    for (const g of groups) {
+      const dates = g.jobs
+        .map((j) => currentRate.get(j.id)?.effective_from)
+        .filter((d): d is string => Boolean(d))
+        .sort()
+      const cells = [
+        stationName(g.station_id),
+        g.name,
+        g.jobs[0]?.unit ?? '',
+        ...tagCols.map((c) => {
+          const j = g.jobs.find((x) => (x.grade_id ?? NO_TAG) === c.key)
+          const r = j ? currentRate.get(j.id) : undefined
+          if (!r) return ''
+          return r.tier2_rate != null ? `${r.rate} / ${r.tier2_rate}` : String(r.rate)
+        }),
+        dates.length ? dates[dates.length - 1] : '',
+        g.jobs.some((j) => j.active) ? 'Active' : 'Inactive',
+      ]
+      lines.push(cells.map(esc).join(','))
+    }
+    const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `piece-rate-masterlist-${todayISO()}.csv`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
 
   return (
     <div className="card stack">
@@ -671,6 +735,7 @@ function RatesList({
             placeholder="Search work description…"
             style={{ minWidth: '220px' }}
           />
+          <button className="btn ghost" onClick={exportCsv}>Export CSV</button>
         </div>
       </div>
       <div className="table-scroll">
@@ -903,7 +968,7 @@ function HistoryList({
   const groups = buildHistory(filteredJobs, rates).sort(
     (a, b) => stationName(a.station_id).localeCompare(stationName(b.station_id)) || a.name.localeCompare(b.name),
   )
-  const tagCols = tagColumns(grades)
+  const tagCols = tagColumns(grades, filteredJobs)
   const colCount = 5 + tagCols.length + 1
   const rowCount = groups.reduce((n, g) => n + g.rows.length, 0)
 
