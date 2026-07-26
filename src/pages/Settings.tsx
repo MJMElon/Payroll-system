@@ -21,7 +21,9 @@ import {
   tagClass,
 } from '../lib/tags'
 
-type Tab = 'access' | 'tags'
+import AuditLogTab from './settings/AuditLogTab'
+
+type Tab = 'access' | 'tags' | 'audit'
 
 // Role (route access) follows the tier tag so the panel only needs tags.
 function roleForTier(tier: number | null, name?: string): Role {
@@ -52,10 +54,14 @@ export default function Settings() {
         <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
           Tags management
         </button>
+        <button className={`tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>
+          Audit log
+        </button>
       </div>
 
       {tab === 'access' && <UserAccessTab />}
       {tab === 'tags' && <TagsTab />}
+      {tab === 'audit' && <AuditLogTab />}
     </div>
   )
 }

@@ -976,3 +976,91 @@ create policy "own payroll lines" on public.payroll_lines
 drop policy if exists "own payroll adjustments" on public.payroll_adjustments;
 create policy "own payroll adjustments" on public.payroll_adjustments
   for select using (user_id = auth.uid());
+
+-- ---------------------------------------------------------------------------
+-- Audit log. A generic AFTER trigger records who changed what, when, on the
+-- tables that matter (work entries, piece rates, payroll, user access).
+-- UPDATEs store only the changed fields to keep rows small. Admins /
+-- managers / tier-1 read it in Settings -> Audit log.
+-- ---------------------------------------------------------------------------
+create table if not exists public.audit_log (
+  id uuid primary key default gen_random_uuid(),
+  at timestamptz not null default now(),
+  actor uuid,
+  action text not null,
+  target text not null,
+  target_id uuid,
+  detail jsonb
+);
+
+alter table public.audit_log enable row level security;
+
+drop policy if exists "admins read audit log" on public.audit_log;
+create policy "admins read audit log" on public.audit_log
+  for select using (
+    public.my_role() in ('admin', 'manager') or public.my_tag_tier() = 1
+  );
+
+create or replace function public.log_audit()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  d jsonb;
+  tid uuid;
+begin
+  if tg_op = 'DELETE' then
+    tid := old.id;
+    d := to_jsonb(old);
+  elsif tg_op = 'INSERT' then
+    tid := new.id;
+    d := to_jsonb(new);
+  else
+    tid := new.id;
+    select coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb) into d
+      from jsonb_each(to_jsonb(new)) e
+      where to_jsonb(old) -> e.key is distinct from e.value;
+    if d = '{}'::jsonb then
+      return new; -- nothing actually changed; keep the log quiet
+    end if;
+  end if;
+  insert into public.audit_log (actor, action, target, target_id, detail)
+  values (auth.uid(), lower(tg_op), tg_table_name, tid, d);
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_audit_production_entries on public.production_entries;
+create trigger trg_audit_production_entries
+  after insert or update or delete on public.production_entries
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_jobs on public.jobs;
+create trigger trg_audit_jobs
+  after insert or update or delete on public.jobs
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_piece_rates on public.piece_rates;
+create trigger trg_audit_piece_rates
+  after insert or update or delete on public.piece_rates
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_payroll_runs on public.payroll_runs;
+create trigger trg_audit_payroll_runs
+  after insert or update or delete on public.payroll_runs
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_payroll_adjustments on public.payroll_adjustments;
+create trigger trg_audit_payroll_adjustments
+  after insert or update or delete on public.payroll_adjustments
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_access_profiles on public.access_profiles;
+create trigger trg_audit_access_profiles
+  after update or delete on public.access_profiles
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_grades on public.grades;
+create trigger trg_audit_grades
+  after insert or update or delete on public.grades
+  for each row execute function public.log_audit();
