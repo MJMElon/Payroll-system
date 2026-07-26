@@ -926,3 +926,53 @@ alter table public.access_profiles add column if not exists joined_on date;
 -- Worker Management -> worker profile.
 -- ---------------------------------------------------------------------------
 alter table public.access_profiles add column if not exists team_name text;
+
+-- ---------------------------------------------------------------------------
+-- Payroll period locking. Once a payroll run covering a work date is
+-- FINALIZED, production entries in that period are frozen: no new entries,
+-- edits, or deletes — the books for that period are closed.
+-- ---------------------------------------------------------------------------
+create or replace function public.entry_period_locked(d date)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.payroll_runs
+    where status = 'finalized' and period_start <= d and period_end >= d
+  );
+$$;
+
+create or replace function public.block_locked_entry_changes()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op in ('UPDATE', 'DELETE') and public.entry_period_locked(old.work_date) then
+    raise exception 'Locked: this entry''s date falls in a finalized payroll period.';
+  end if;
+  if tg_op in ('INSERT', 'UPDATE') and public.entry_period_locked(new.work_date) then
+    raise exception 'Locked: that work date falls in a finalized payroll period.';
+  end if;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_block_locked_entries on public.production_entries;
+create trigger trg_block_locked_entries
+  before insert or update or delete on public.production_entries
+  for each row execute function public.block_locked_entry_changes();
+
+-- Everyone signed in may see finalized run periods (the app uses them to
+-- grey out locked entries); drafts stay admin/manager-only via the policy
+-- above. Workers may also read their OWN payroll lines and adjustments so
+-- the phone Profile tab can show a payslip.
+drop policy if exists "finalized runs readable" on public.payroll_runs;
+create policy "finalized runs readable" on public.payroll_runs
+  for select using (status = 'finalized');
+
+drop policy if exists "own payroll lines" on public.payroll_lines;
+create policy "own payroll lines" on public.payroll_lines
+  for select using (user_id = auth.uid());
+
+drop policy if exists "own payroll adjustments" on public.payroll_adjustments;
+create policy "own payroll adjustments" on public.payroll_adjustments
+  for select using (user_id = auth.uid());

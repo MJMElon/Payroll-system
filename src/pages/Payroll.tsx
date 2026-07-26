@@ -187,35 +187,67 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
     setError(null)
     setWorking(true)
     try {
-      // 1. Production in the period.
+      // 0. Refuse a period that overlaps a finalized run — those days are
+      // already paid out and locked.
+      const { data: clash, error: clashErr } = await supabase
+        .from('payroll_runs')
+        .select('period_start, period_end')
+        .eq('status', 'finalized')
+        .lte('period_start', end)
+        .gte('period_end', start)
+      if (clashErr) throw new Error(clashErr.message)
+      if (clash && clash.length > 0) {
+        throw new Error(
+          `That period overlaps the finalized run ${clash[0].period_start} → ${clash[0].period_end}.`,
+        )
+      }
+
+      // 1. Production in the period — APPROVED entries only. Pending,
+      // waiting-approval and rejected work is left out of the pay run.
       const { data: entries, error: entErr } = await supabase
         .from('production_entries')
-        .select('worker_id, user_id, job_id, quantity')
+        .select('worker_id, user_id, job_id, quantity, approval_status')
         .gte('work_date', start)
         .lte('work_date', end)
+        .eq('approval_status', 'approved')
       if (entErr) throw new Error(entErr.message)
       if (!entries || entries.length === 0) {
-        throw new Error('No production entries in that period — nothing to pay.')
+        throw new Error('No APPROVED production entries in that period — nothing to pay.')
       }
 
       // 2. Rate per job: newest rate effective on or before the period end.
       const jobIds = [...new Set(entries.map((e) => e.job_id))]
       const { data: rates, error: rateErr } = await supabase
         .from('piece_rates')
-        .select('job_id, rate, effective_from')
+        .select('job_id, rate, effective_from, tier2_rate')
         .in('job_id', jobIds)
         .lte('effective_from', end)
         .order('effective_from', { ascending: false })
       if (rateErr) throw new Error(rateErr.message)
-      const rateByJob = new Map<string, number>()
+      const rateByJob = new Map<string, { rate: number; tier2: number | null }>()
       for (const r of rates ?? []) {
-        if (!rateByJob.has(r.job_id)) rateByJob.set(r.job_id, Number(r.rate))
+        if (!rateByJob.has(r.job_id)) {
+          rateByJob.set(r.job_id, {
+            rate: Number(r.rate),
+            tier2: r.tier2_rate == null ? null : Number(r.tier2_rate),
+          })
+        }
+      }
+      // Tiered rates pay tier 1 for the first 4 units of an entry and tier 2
+      // beyond — same rule as the Operation screen and the mobile entry flow.
+      const TIER1_CAP = 4
+      const amountOf = (jobId: string, qty: number) => {
+        const r = rateByJob.get(jobId)
+        if (!r) return 0
+        if (r.tier2 == null) return qty * r.rate
+        return Math.min(qty, TIER1_CAP) * r.rate + Math.max(0, qty - TIER1_CAP) * r.tier2
       }
 
-      // 3. Sum quantities per person (user, or legacy worker) + job.
+      // 3. Sum quantities AND per-entry amounts per person + job (amounts are
+      // computed entry by entry so tiered rates come out right).
       const sums = new Map<
         string,
-        { user_id: string | null; worker_id: string | null; job_id: string; quantity: number }
+        { user_id: string | null; worker_id: string | null; job_id: string; quantity: number; amount: number }
       >()
       for (const en of entries) {
         const key = `${en.user_id ?? 'w:' + en.worker_id}|${en.job_id}`
@@ -224,8 +256,10 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
           worker_id: en.user_id ? null : en.worker_id ?? null,
           job_id: en.job_id,
           quantity: 0,
+          amount: 0,
         }
         cur.quantity += Number(en.quantity)
+        cur.amount += amountOf(en.job_id, Number(en.quantity))
         sums.set(key, cur)
       }
 
@@ -237,18 +271,15 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
         .single()
       if (runErr) throw new Error(runErr.message)
 
-      const lines = [...sums.values()].map((s) => {
-        const rate = rateByJob.get(s.job_id) ?? 0
-        return {
-          run_id: run.id,
-          user_id: s.user_id,
-          worker_id: s.worker_id,
-          job_id: s.job_id,
-          quantity: s.quantity,
-          rate,
-          amount: Math.round(s.quantity * rate * 100) / 100,
-        }
-      })
+      const lines = [...sums.values()].map((s) => ({
+        run_id: run.id,
+        user_id: s.user_id,
+        worker_id: s.worker_id,
+        job_id: s.job_id,
+        quantity: s.quantity,
+        rate: rateByJob.get(s.job_id)?.rate ?? 0,
+        amount: Math.round(s.amount * 100) / 100,
+      }))
       const { error: lineErr } = await supabase.from('payroll_lines').insert(lines)
       if (lineErr) throw new Error(lineErr.message)
 

@@ -41,6 +41,7 @@ export default function Operation() {
   const [stationId, setStationId] = useState<string | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
+  const [lockedPeriods, setLockedPeriods] = useState<{ period_start: string; period_end: string }[]>([])
   const [from, setFrom] = useState(monthStartISO())
   const [to, setTo] = useState(todayISO())
   const [status, setStatus] = useState<StatusFilter>('all')
@@ -66,6 +67,12 @@ export default function Operation() {
       setJobs(j.data ?? [])
       setRates(r.data ?? [])
       setPeople((p.data ?? []) as Profile[])
+      // Finalized payroll periods freeze their entries (visible to everyone).
+      const { data: lp } = await supabase
+        .from('payroll_runs')
+        .select('period_start, period_end')
+        .eq('status', 'finalized')
+      setLockedPeriods(lp ?? [])
       // Land on the user's own station first; else the first station.
       const list = (s.data ?? []) as Station[]
       const mine = list.find((st) => myStationIds.includes(st.id))
@@ -163,12 +170,18 @@ export default function Operation() {
     loadEntries()
   }
 
+  // An entry whose date falls inside a finalized payroll run is frozen —
+  // the books for that period are closed (also enforced by a DB trigger).
+  const isLocked = (e: ProductionEntry) =>
+    lockedPeriods.some((p) => p.period_start <= e.work_date && e.work_date <= p.period_end)
+
   // Edit / delete: managers always; a worker may fix or remove their OWN
   // entry while it is still pending (or was rejected — editing resubmits).
   const canModify = (e: ProductionEntry) =>
-    canManage ||
-    ((e.created_by === profile?.id || e.user_id === profile?.id) &&
-      ['pending', 'rejected'].includes(stat(e)))
+    !isLocked(e) &&
+    (canManage ||
+      ((e.created_by === profile?.id || e.user_id === profile?.id) &&
+        ['pending', 'rejected'].includes(stat(e))))
 
   async function editEntry(e: ProductionEntry) {
     const raw = window.prompt('New quantity:', String(e.quantity))
@@ -310,8 +323,9 @@ export default function Operation() {
                   {filtered.map((e) => {
                     const s = stat(e)
                     const own = e.user_id === profile?.id
-                    const canVerifyRow = approvalLevel && s === 'pending' && !own
-                    const canApproveRow = approvalLevel === 'approve' && s === 'verified' && !own
+                    const locked = isLocked(e)
+                    const canVerifyRow = approvalLevel && s === 'pending' && !own && !locked
+                    const canApproveRow = approvalLevel === 'approve' && s === 'verified' && !own && !locked
                     const canRejectRow = (canVerifyRow || canApproveRow) && !own
                     return (
                       <tr key={e.id}>
@@ -341,6 +355,11 @@ export default function Operation() {
                         </td>
                         <td>
                           {badge(s)}
+                          {locked && (
+                            <span className="mob-chip" title="Date falls in a finalized payroll period" style={{ marginLeft: '0.3rem' }}>
+                              🔒
+                            </span>
+                          )}
                           {s === 'rejected' && e.rejected_reason && (
                             <div className="muted small">{e.rejected_reason}</div>
                           )}

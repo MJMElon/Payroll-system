@@ -187,6 +187,16 @@ export default function AddJobRecord() {
       return setError('Quantity must be a positive number.')
     }
     if (workDate > todayISO()) return setError('Work date cannot be in the future.')
+    // Dates inside a finalized payroll run are closed (DB enforces this too).
+    const { data: lockClash } = await supabase
+      .from('payroll_runs')
+      .select('period_start, period_end')
+      .eq('status', 'finalized')
+      .lte('period_start', workDate)
+      .gte('period_end', workDate)
+    if (lockClash && lockClash.length > 0) {
+      return setError('That work date falls in a finalized payroll period and is locked.')
+    }
     // Guard against fat-finger quantities (e.g. 400 instead of 40).
     if (qty > 200 && !window.confirm(`Quantity ${qty} looks unusually large. Save anyway?`)) {
       return
