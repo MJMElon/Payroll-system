@@ -43,6 +43,12 @@ export interface Profile {
   mobile_approval?: 'verify' | 'approve' | null
   // Monthly basic salary (RM), edited in Worker Management.
   basic_salary?: number | null
+  // Worker profile details (Worker Management; used by payroll later).
+  ic_number?: string | null
+  phone?: string | null
+  bank_name?: string | null
+  bank_account?: string | null
+  joined_on?: string | null
 }
 
 // Rows of the work tables (see supabase/setup.sql).

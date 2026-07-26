@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 
-type Mode = 'signin' | 'signup'
+type Mode = 'signin' | 'signup' | 'forgot'
 
 export default function Login() {
   const { session, signIn, loading } = useAuth()
@@ -22,7 +22,13 @@ export default function Login() {
     setError(null)
     setInfo(null)
     setSubmitting(true)
-    if (mode === 'signin') {
+    if (mode === 'forgot') {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin + window.location.pathname,
+      })
+      if (error) setError(error.message)
+      else setInfo('Reset link sent — check your email, open the link, then set a new password.')
+    } else if (mode === 'signin') {
       const { error } = await signIn(email, password)
       if (error) setError(error)
     } else {
@@ -90,41 +96,41 @@ export default function Login() {
           autoComplete="email"
           required
         />
-        <input
-          className="login-input"
-          type="password"
-          placeholder="Password"
-          aria-label="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-          required
-        />
+        {mode !== 'forgot' && (
+          <input
+            className="login-input"
+            type="password"
+            placeholder="Password"
+            aria-label="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+            required
+          />
+        )}
 
         {error && <div className="login-msg error">{error}</div>}
         {info && <div className="login-msg info">{info}</div>}
 
         <button className="login-btn" type="submit" disabled={submitting}>
-          {submitting ? 'PLEASE WAIT…' : mode === 'signin' ? 'LOGIN' : 'CREATE ACCOUNT'}
+          {submitting
+            ? 'PLEASE WAIT…'
+            : mode === 'signin' ? 'LOGIN' : mode === 'signup' ? 'CREATE ACCOUNT' : 'SEND RESET LINK'}
         </button>
 
         <div className="login-links">
-          <button
-            type="button"
-            className="forgot"
-            onClick={() =>
-              setInfo('Password reset is not set up yet — ask your administrator to reset it in Supabase.')
-            }
-          >
-            FORGOT PASSWORD?
-          </button>
           {mode === 'signin' ? (
-            <button type="button" className="create" onClick={() => switchMode('signup')}>
-              CREATE ACCOUNT
+            <button type="button" className="forgot" onClick={() => switchMode('forgot')}>
+              FORGOT PASSWORD?
             </button>
           ) : (
-            <button type="button" className="create" onClick={() => switchMode('signin')}>
+            <button type="button" className="forgot" onClick={() => switchMode('signin')}>
               BACK TO LOGIN
+            </button>
+          )}
+          {mode === 'signin' && (
+            <button type="button" className="create" onClick={() => switchMode('signup')}>
+              CREATE ACCOUNT
             </button>
           )}
         </div>

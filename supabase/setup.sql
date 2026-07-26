@@ -909,3 +909,13 @@ create policy "delete production" on public.production_entries
       and approval_status in ('pending', 'rejected')
     )
   );
+
+-- ---------------------------------------------------------------------------
+-- Worker profile details, edited in Worker Management (needed later by
+-- payroll: payslips, bank transfer files).
+-- ---------------------------------------------------------------------------
+alter table public.access_profiles add column if not exists ic_number text;
+alter table public.access_profiles add column if not exists phone text;
+alter table public.access_profiles add column if not exists bank_name text;
+alter table public.access_profiles add column if not exists bank_account text;
+alter table public.access_profiles add column if not exists joined_on date;

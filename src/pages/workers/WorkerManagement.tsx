@@ -28,6 +28,8 @@ export default function WorkerManagement() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [stations, setStations] = useState<Station[]>([])
   const [salaryDraft, setSalaryDraft] = useState<Record<string, string>>({})
+  const [editWorker, setEditWorker] = useState<Profile | null>(null)
+  const [dragId, setDragId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -123,6 +125,29 @@ export default function WorkerManagement() {
     load()
   }
 
+  // Drag a worker row onto a leader's row to move them under that leader.
+  // Target must be a strictly HIGHER tier (so the chain stays loop-free)
+  // and the dragged worker must be someone I may edit.
+  async function moveUnder(draggedId: string, targetId: string) {
+    const dragged = profiles.find((p) => p.id === draggedId)
+    const target = profiles.find((p) => p.id === targetId)
+    if (!dragged || !target || dragged.id === target.id) return
+    if (!canEdit(dragged)) return setError('You can only move workers in your own team (or below your tier).')
+    const dt = tierOf(dragged)
+    const tt = tierOf(target)
+    if (dt === null || tt === null || tt >= dt) {
+      return setError('A worker can only be placed under a strictly higher tier.')
+    }
+    setError(null)
+    const { error } = await supabase
+      .from('access_profiles')
+      .update({ supervisor_id: target.id })
+      .eq('id', dragged.id)
+    if (error) return setError(error.message)
+    setNotice(`${profileName(dragged)} moved under ${profileName(target)}.`)
+    load()
+  }
+
   /* Team chart node (same idea as the Settings tree). */
   const childrenOf = (id: string) =>
     visible
@@ -139,7 +164,20 @@ export default function WorkerManagement() {
     const kids = childrenOf(p.id)
     return (
       <div key={p.id}>
-        <div className="tree-row" style={{ marginLeft: depth * 26 }}>
+        <div
+          className={`tree-row ${canEdit(p) ? 'drag-row' : ''} ${dragId === p.id ? 'dragging' : ''}`}
+          style={{ marginLeft: depth * 26 }}
+          draggable={canEdit(p)}
+          onDragStart={() => canEdit(p) && setDragId(p.id)}
+          onDragEnd={() => setDragId(null)}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            if (dragId) moveUnder(dragId, p.id)
+            setDragId(null)
+          }}
+          title={canEdit(p) ? 'Drag onto a leader to move teams' : undefined}
+        >
           {depth > 0 && <span className="tree-elbow" aria-hidden="true">└</span>}
           <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
           <span className="tree-name">{p.full_name ?? p.email ?? '—'}</span>
@@ -209,6 +247,10 @@ export default function WorkerManagement() {
       {/* 2 — team chart */}
       <div className="card stack">
         <h3>{seesAll ? 'Team chart — all teams' : 'My team chart'}</h3>
+        <p className="muted small" style={{ margin: 0 }}>
+          Drag a worker onto a leader to move them into that team (only into a
+          strictly higher tier).
+        </p>
         {roots.length === 0 && <p className="muted small">No team members yet.</p>}
         <div className="stack" style={{ gap: '0.1rem' }}>
           {roots.map((p) => renderNode(p, 0))}
@@ -227,11 +269,12 @@ export default function WorkerManagement() {
               <th>Tier</th>
               <th>Station</th>
               <th className="right">Monthly basic salary (RM)</th>
+              <th className="right">Profile</th>
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 && (
-              <tr><td colSpan={6} className="muted">No workers yet.</td></tr>
+              <tr><td colSpan={7} className="muted">No workers yet.</td></tr>
             )}
             {visible
               .slice()
@@ -266,16 +309,169 @@ export default function WorkerManagement() {
                         </span>
                       )}
                     </td>
+                    <td className="right">
+                      {editable && (
+                        <button
+                          className="icon-btn sm"
+                          title="Edit worker profile"
+                          aria-label={`Edit profile of ${profileName(p)}`}
+                          onClick={() => setEditWorker(p)}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                          </svg>
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 )
               })}
           </tbody>
         </table>
         <p className="muted small">
-          Salary saves when you click away from the box. More profile fields will
-          be editable here in the future.
+          Salary saves when you click away from the box. Open the pencil to edit
+          the full worker profile.
         </p>
       </div>
+
+      {editWorker && (
+        <WorkerProfileModal
+          worker={editWorker}
+          onClose={() => setEditWorker(null)}
+          onSaved={() => {
+            setEditWorker(null)
+            load()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Worker profile pop-out: personal + payroll details for one worker. */
+/* Tags/tier/access stay in Settings -> User access.                  */
+/* ------------------------------------------------------------------ */
+
+function WorkerProfileModal({
+  worker,
+  onClose,
+  onSaved,
+}: {
+  worker: Profile
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [name, setName] = useState(worker.full_name ?? '')
+  const [code, setCode] = useState(worker.employee_code ?? '')
+  const [ic, setIc] = useState(worker.ic_number ?? '')
+  const [phone, setPhone] = useState(worker.phone ?? '')
+  const [bankName, setBankName] = useState(worker.bank_name ?? '')
+  const [bankAccount, setBankAccount] = useState(worker.bank_account ?? '')
+  const [joinedOn, setJoinedOn] = useState(worker.joined_on ?? '')
+  const [salary, setSalary] = useState(worker.basic_salary != null ? String(worker.basic_salary) : '')
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    const salaryValue = salary.trim() === '' ? null : Number(salary)
+    if (salaryValue !== null && (!Number.isFinite(salaryValue) || salaryValue < 0)) {
+      return setError('Basic salary must be a positive number.')
+    }
+    setSaving(true)
+    const { error } = await supabase
+      .from('access_profiles')
+      .update({
+        full_name: name.trim() || null,
+        employee_code: code.trim() || null,
+        ic_number: ic.trim() || null,
+        phone: phone.trim() || null,
+        bank_name: bankName.trim() || null,
+        bank_account: bankAccount.trim() || null,
+        joined_on: joinedOn || null,
+        basic_salary: salaryValue,
+      })
+      .eq('id', worker.id)
+    setSaving(false)
+    if (error) return setError(error.message)
+    onSaved()
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+        <div className="row-form spread">
+          <h2>Worker profile</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        {error && <div className="error">{error}</div>}
+        <p className="muted small" style={{ margin: 0 }}>{worker.email ?? '—'}</p>
+
+        <div className="row-form">
+          <label className="field grow">
+            <span>Full name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} required />
+          </label>
+          <label className="field">
+            <span>Employee code</span>
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="EMP001" />
+          </label>
+        </div>
+
+        <div className="row-form">
+          <label className="field grow">
+            <span>IC / passport number</span>
+            <input value={ic} onChange={(e) => setIc(e.target.value)} />
+          </label>
+          <label className="field grow">
+            <span>Phone</span>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="row-form">
+          <label className="field grow">
+            <span>Bank</span>
+            <input value={bankName} onChange={(e) => setBankName(e.target.value)} />
+          </label>
+          <label className="field grow">
+            <span>Bank account no.</span>
+            <input value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} />
+          </label>
+        </div>
+
+        <div className="row-form">
+          <label className="field">
+            <span>Joined on</span>
+            <input type="date" value={joinedOn} onChange={(e) => setJoinedOn(e.target.value)} />
+          </label>
+          <label className="field grow">
+            <span>Monthly basic salary (RM)</span>
+            <input
+              type="number"
+              min="0"
+              step="50"
+              value={salary}
+              onChange={(e) => setSalary(e.target.value)}
+              placeholder="—"
+            />
+          </label>
+        </div>
+
+        <p className="muted small" style={{ margin: 0 }}>
+          Tier tag, station tag and access settings stay in Settings → User access.
+        </p>
+
+        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : 'Save profile'}
+          </button>
+        </div>
+      </form>
     </div>
   )
 }
