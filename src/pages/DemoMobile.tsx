@@ -251,11 +251,13 @@ export default function DemoMobile() {
   // "Work approval screen" in Settings -> User access.
   const approvalLevel: 'verify' | 'approve' | null = signupPreview
     ? null
-    : tierCaps.includes('approve')
-      ? 'approve'
-      : tierCaps.includes('verify')
-        ? 'verify'
-        : realApprovalLevel
+    : tier
+      ? tierCaps.includes('approve')
+        ? 'approve'
+        : tierCaps.includes('verify')
+          ? 'verify'
+          : null
+      : realApprovalLevel
 
   // Badge on the Approvals tab: how many entries wait for MY action.
   const [approvalsCount, setApprovalsCount] = useState(0)
@@ -407,17 +409,28 @@ export default function DemoMobile() {
                     jobColumnReady={jobColumnReady}
                     onError={setError}
                   />
-                ) : tab === 'approvals' && approvalLevel ? (
-                  <ApprovalsTab
-                    profileId={profile?.id ?? null}
-                    myEmail={profile?.email ?? 'unknown'}
-                    level={approvalLevel}
-                    tier={tier}
-                    stations={stations}
-                    jobs={jobs}
-                    amountFor={amountFor}
-                    onError={setError}
-                  />
+                ) : tab === 'approvals' ? (
+                  approvalLevel ? (
+                    <ApprovalsTab
+                      profileId={profile?.id ?? null}
+                      myEmail={profile?.email ?? 'unknown'}
+                      level={approvalLevel}
+                      tier={tier}
+                      stations={stations}
+                      jobs={jobs}
+                      amountFor={amountFor}
+                      onError={setError}
+                    />
+                  ) : (
+                    <MyWorkTab
+                      profileId={profile?.id ?? null}
+                      tier={tier}
+                      stations={stations}
+                      jobs={jobs}
+                      amountFor={amountFor}
+                      onError={setError}
+                    />
+                  )
                 ) : (
                   <ProfileTab
                     profile={profile}
@@ -429,7 +442,12 @@ export default function DemoMobile() {
               </div>
 
               {!signupPreview && (
-                <TabBar tab={tab} onTab={setTab} showApprovals={Boolean(approvalLevel)} badge={approvalsCount} />
+                <TabBar
+                  tab={tab}
+                  onTab={setTab}
+                  workLabel={approvalLevel ? 'Verify work' : 'My work'}
+                  badge={approvalLevel ? approvalsCount : 0}
+                />
               )}
             </div>
           </div>
@@ -449,23 +467,27 @@ export default function DemoMobile() {
 function TabBar({
   tab,
   onTab,
-  showApprovals,
+  workLabel,
   badge,
 }: {
   tab: Tab
   onTab: (t: Tab) => void
-  showApprovals: boolean
+  workLabel: string
   badge: number
 }) {
+  // The pen (Record) sits EXACTLY in the centre: both side groups flex
+  // equally around it. Work (verify / my work) is right beside the pen.
   return (
-    <div className="mob-tabbar">
-      <button className={`mob-tab ${tab === 'performance' ? 'active' : ''}`} onClick={() => onTab('performance')}>
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          strokeWidth="2.2" strokeLinecap="round">
-          <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-        </svg>
-        <span>Performance</span>
-      </button>
+    <div className="mob-tabbar centered">
+      <div className="mob-tab-side">
+        <button className={`mob-tab ${tab === 'performance' ? 'active' : ''}`} onClick={() => onTab('performance')}>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2.2" strokeLinecap="round">
+            <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+          </svg>
+          <span>Performance</span>
+        </button>
+      </div>
       <button
         className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
         onClick={() => onTab('record')}
@@ -477,25 +499,25 @@ function TabBar({
           <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
         </svg>
       </button>
-      {showApprovals && (
+      <div className="mob-tab-side">
         <button className={`mob-tab ${tab === 'approvals' ? 'active' : ''}`} onClick={() => onTab('approvals')}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 11l3 3 8-8" />
             <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" />
           </svg>
-          <span>Approvals</span>
+          <span>{workLabel}</span>
           {badge > 0 && <span className="mob-tab-badge">{badge > 99 ? '99+' : badge}</span>}
         </button>
-      )}
-      <button className={`mob-tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => onTab('profile')}>
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="8" r="4" />
-          <path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" />
-        </svg>
-        <span>Profile</span>
-      </button>
+        <button className={`mob-tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => onTab('profile')}>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" />
+          </svg>
+          <span>Profile</span>
+        </button>
+      </div>
     </div>
   )
 }
@@ -2056,6 +2078,101 @@ function EntryDetail({
             </div>
           </div>
         </div>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* MY WORK (operators / tiers without verify rights): the same Work   */
+/* button, but read-only — every entry they recorded with its status  */
+/* through the verify -> approve flow.                                */
+/* ------------------------------------------------------------------ */
+
+function MyWorkTab({
+  profileId,
+  tier,
+  stations,
+  jobs,
+  amountFor,
+  onError,
+}: {
+  profileId: string | null
+  tier: Grade | null
+  stations: Station[]
+  jobs: Job[]
+  amountFor: (jobId: string, quantity: number) => number
+  onError: (m: string | null) => void
+}) {
+  const [entries, setEntries] = useState<ProductionEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!profileId) return
+    supabase
+      .from('production_entries')
+      .select('*')
+      .eq('user_id', profileId)
+      .order('created_at', { ascending: false })
+      .limit(30)
+      .then(({ data, error }) => {
+        if (error) onError(error.message)
+        else setEntries(data ?? [])
+        setLoading(false)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileId])
+
+  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
+  const stationName = (id: string) => stations.find((st) => st.id === id)?.name ?? '?'
+  const stat = (e: ProductionEntry) => e.approval_status ?? 'approved'
+  const count = (k: string) => entries.filter((e) => stat(e) === k).length
+
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+        <TierBadge tier={tier} />
+      </div>
+
+      <div className="mob-body">
+        <div style={{ padding: '0 0.2rem' }}>
+          <div className="mob-role">My work</div>
+          <div className="mob-sub">Everything you recorded and where it stands</div>
+        </div>
+
+        <div className="mob-queue-chips" aria-hidden="true">
+          <button className="on">Pending ({count('pending') + count('verified')})</button>
+          <button>Approved ({count('approved')})</button>
+          <button>Rejected ({count('rejected')})</button>
+        </div>
+
+        {loading ? (
+          <p className="muted small">Loading…</p>
+        ) : entries.length === 0 ? (
+          <div className="mob-card"><div className="mob-sub">Nothing recorded yet — use the pen button to add work.</div></div>
+        ) : (
+          entries.map((e) => (
+            <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
+              <span className="perf-top">
+                <span>{jobName(e.job_id)}</span>
+                <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+              </span>
+              <span className="perf-top">
+                <span className="mob-station-meta">
+                  {stationName(e.station_id)} · {e.quantity} ·{' '}
+                  {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                </span>
+                {statusChip(e.approval_status)}
+              </span>
+              {stat(e) === 'rejected' && e.rejected_reason && (
+                <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
+                  Rejected: {e.rejected_reason}
+                </span>
+              )}
+            </div>
+          ))
+        )}
       </div>
     </>
   )

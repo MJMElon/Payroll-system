@@ -591,6 +591,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .signup-row:first-of-type { border-top: none; padding-top: 0; }
 .salary-input { width: 120px; text-align: right; padding: 0.4rem 0.5rem; font-size: 0.9rem; }
 
+/* Centered bottom bar: side groups flex equally around the centre pen */
+.mob-tabbar.centered { display: flex; align-items: flex-end; justify-content: center; gap: 0.2rem; }
+.mob-tab-side {
+  flex: 1 1 0; min-width: 0;
+  display: flex; align-items: flex-end; justify-content: space-evenly;
+}
+.mob-tabbar.centered .mob-tab { width: auto; min-width: 74px; max-width: none; }
+
 /* New sign-up welcome check */
 .signup-check {
   width: 54px; height: 54px; border-radius: 50%;
