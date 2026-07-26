@@ -12,15 +12,15 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
-import { effectiveCapabilities, tagClass } from '../lib/tags'
+import { useAuth } from '../../context/AuthContext'
+import { effectiveCapabilities, tagClass } from '../../lib/tags'
 import {
   profileName,
   supabase,
   type Grade,
   type Profile,
   type Station,
-} from '../lib/supabase'
+} from '../../lib/supabase'
 
 export default function WorkerManagement() {
   const { profile } = useAuth()

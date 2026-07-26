@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// ADD JOB RECORD — dedicated entry form for the Daily Job Record module.
+// ADD JOB RECORD — the "add new record" form of the OPERATION module.
 // Kept as its own page (separate from the records list) per the approved
 // mockup: pick station + work description, pick who did it, key in the
 // quantity, and the rate/amount are pulled from Piece Rate Master and
@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from '../../context/AuthContext'
 import {
   profileName,
   supabase,
@@ -17,7 +17,7 @@ import {
   type PieceRate as Rate,
   type Profile,
   type Station,
-} from '../lib/supabase'
+} from '../../lib/supabase'
 
 const SHIFTS = [
   { key: 'a', label: 'Shift A' },
@@ -239,7 +239,7 @@ export default function AddJobRecord() {
     <div className="stack">
       <div>
         <nav className="breadcrumb">
-          <Link to="/daily-job-record">Daily Job Record</Link>
+          <Link to="/operation">Operation</Link>
           <span className="sep">›</span>
           <span className="current">Add Job Record</span>
         </nav>

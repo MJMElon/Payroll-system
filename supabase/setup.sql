@@ -886,3 +886,26 @@ create policy "upper tier manages lower signups" on public.access_profiles
     or public.grade_tier(grade_id) > public.my_tag_tier()
     or supervisor_id = auth.uid()
   );
+
+-- ---------------------------------------------------------------------------
+-- Operation module: workers may fix or remove their OWN entry while it is
+-- still pending (or was rejected — editing resubmits it). Managers and the
+-- super admin keep full edit/delete.
+-- ---------------------------------------------------------------------------
+drop policy if exists "own pending entries editable" on public.production_entries;
+create policy "own pending entries editable" on public.production_entries
+  for update using (
+    (created_by = auth.uid() or user_id = auth.uid())
+    and approval_status in ('pending', 'rejected')
+  );
+
+drop policy if exists "delete production" on public.production_entries;
+create policy "delete production" on public.production_entries
+  for delete using (
+    public.my_role() in ('admin', 'manager')
+    or public.my_tag_tier() = 1
+    or (
+      (created_by = auth.uid() or user_id = auth.uid())
+      and approval_status in ('pending', 'rejected')
+    )
+  );
