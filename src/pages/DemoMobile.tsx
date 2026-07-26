@@ -1636,6 +1636,10 @@ function RecordTab({
     } else if (!profileId || !stationId || !jobId || !Number(qty)) {
       return
     }
+    const n = isASH ? pulledQty : Number(qty)
+    if (n <= 0) return onError('Quantity must be a positive number.')
+    // Guard against fat-finger quantities (e.g. 400 instead of 40).
+    if (n > 200 && !window.confirm(`Quantity ${n} looks unusually large. Submit anyway?`)) return
     setSubmitting(true)
     onError(null)
     try {
@@ -2106,8 +2110,9 @@ function MyWorkTab({
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<string | null>(null)
 
-  useEffect(() => {
+  function load() {
     if (!profileId) return
     supabase
       .from('production_entries')
@@ -2120,8 +2125,36 @@ function MyWorkTab({
         else setEntries(data ?? [])
         setLoading(false)
       })
+  }
+  useEffect(() => {
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId])
+
+  // A rejected entry can be fixed and sent back into the approval queue.
+  async function fixResubmit(e: ProductionEntry) {
+    const raw = window.prompt('Corrected quantity:', String(e.quantity))
+    if (raw === null) return
+    const qty = Number(raw)
+    if (!Number.isFinite(qty) || qty <= 0) return onError('Quantity must be a positive number.')
+    setBusy(e.id)
+    onError(null)
+    const { error } = await supabase
+      .from('production_entries')
+      .update({
+        quantity: qty,
+        approval_status: 'pending',
+        rejected_reason: null,
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      })
+      .eq('id', e.id)
+    setBusy(null)
+    if (error) return onError(error.message)
+    load()
+  }
 
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
   const stationName = (id: string) => stations.find((st) => st.id === id)?.name ?? '?'
@@ -2169,6 +2202,17 @@ function MyWorkTab({
                 <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
                   Rejected: {e.rejected_reason}
                 </span>
+              )}
+              {stat(e) === 'rejected' && (
+                <button
+                  type="button"
+                  className="mob-mini"
+                  style={{ alignSelf: 'flex-start' }}
+                  disabled={busy === e.id}
+                  onClick={() => fixResubmit(e)}
+                >
+                  ✎ Fix &amp; resubmit
+                </button>
               )}
             </div>
           ))

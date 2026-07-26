@@ -14,6 +14,7 @@ import {
   todayISO,
   type Grade,
   type Job,
+  type PhotoRecord,
   type PieceRate,
   type ProductionEntry,
   type Profile,
@@ -39,6 +40,7 @@ export default function Operation() {
   const [people, setPeople] = useState<Profile[]>([])
   const [stationId, setStationId] = useState<string | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
+  const [photos, setPhotos] = useState<PhotoRecord[]>([])
   const [from, setFrom] = useState(monthStartISO())
   const [to, setTo] = useState(todayISO())
   const [status, setStatus] = useState<StatusFilter>('all')
@@ -86,6 +88,12 @@ export default function Operation() {
       .order('created_at', { ascending: false })
     if (error) setError(error.message)
     else setEntries(data ?? [])
+    // Attached photo/PDF evidence for this station's entries.
+    const { data: ph } = await supabase
+      .from('photo_records')
+      .select('id, station_id, photo_path, taken_at, entry_id')
+      .eq('station_id', stationId)
+    setPhotos((ph ?? []) as PhotoRecord[])
   }
   useEffect(() => {
     loadEntries()
@@ -122,6 +130,14 @@ export default function Operation() {
   const personName = (e: ProductionEntry) => {
     const p = people.find((x) => x.id === (e.user_id ?? e.created_by))
     return p ? p.full_name ?? p.email ?? '?' : '—'
+  }
+
+  // Evidence link for an entry (photo/PDF uploaded with the job record).
+  const evidenceUrl = (entryId: string) => {
+    const rec = photos.find((p) => p.entry_id === entryId)
+    return rec?.photo_path
+      ? supabase.storage.from('records').getPublicUrl(rec.photo_path).data.publicUrl
+      : null
   }
 
   const stat = (e: ProductionEntry) => e.approval_status ?? 'approved'
@@ -277,6 +293,7 @@ export default function Operation() {
                     <th>Job</th>
                     <th className="right">Qty</th>
                     <th className="right">Amount</th>
+                    <th>Photo</th>
                     <th>Status</th>
                     <th>By</th>
                     <th className="right">Actions</th>
@@ -285,7 +302,7 @@ export default function Operation() {
                 <tbody>
                   {filtered.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="muted">
+                      <td colSpan={9} className="muted">
                         No entries in this range.
                       </td>
                     </tr>
@@ -307,6 +324,21 @@ export default function Operation() {
                         <td className="muted small">{jobName(e.job_id)}</td>
                         <td className="right">{e.quantity}</td>
                         <td className="right">{RM(amountFor(e.job_id, e.quantity))}</td>
+                        <td>
+                          {evidenceUrl(e.id) ? (
+                            <a
+                              className="linkbtn"
+                              href={evidenceUrl(e.id)!}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Open attached evidence"
+                            >
+                              📷 View
+                            </a>
+                          ) : (
+                            <span className="muted small">—</span>
+                          )}
+                        </td>
                         <td>
                           {badge(s)}
                           {s === 'rejected' && e.rejected_reason && (

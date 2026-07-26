@@ -186,6 +186,11 @@ export default function AddJobRecord() {
     if (quantity.trim() === '' || Number.isNaN(qty) || qty <= 0) {
       return setError('Quantity must be a positive number.')
     }
+    if (workDate > todayISO()) return setError('Work date cannot be in the future.')
+    // Guard against fat-finger quantities (e.g. 400 instead of 40).
+    if (qty > 200 && !window.confirm(`Quantity ${qty} looks unusually large. Save anyway?`)) {
+      return
+    }
     setSaving(true)
     try {
       const notesParts = [
@@ -256,7 +261,7 @@ export default function AddJobRecord() {
           <div className="row-form">
             <label className="field inline">
               <span>Work Date *</span>
-              <input type="date" value={workDate} onChange={(e) => setWorkDate(e.target.value)} required />
+              <input type="date" value={workDate} max={todayISO()} onChange={(e) => setWorkDate(e.target.value)} required />
             </label>
             <label className="field inline">
               <span>Station *</span>
