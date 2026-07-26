@@ -20,6 +20,9 @@ import {
   todayISO,
   type Grade,
   type Job,
+  type PayrollAdjustment,
+  type PayrollLine,
+  type PayrollRun,
   type PhotoRecord,
   type PieceRate,
   type ProductionEntry,
@@ -2804,6 +2807,8 @@ function ProfileTab({
           <TeamSection profile={profile} grades={grades} stations={stations} />
         )}
 
+        <PayslipSection profile={profile} />
+
         <div className="mob-card">
           <div className="mob-title">Core identity</div>
           <Row label="Full name" value={profile?.full_name ?? '—'} />
@@ -2840,6 +2845,99 @@ function ProfileTab({
         </div>
       </div>
     </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* MY PAYSLIP: the person's latest FINALIZED payroll — basic salary,  */
+/* piece-work lines, adjustments and total. RLS only lets people see  */
+/* their own lines, so this is safe for every tier.                   */
+/* ------------------------------------------------------------------ */
+
+function PayslipSection({ profile }: { profile: Profile | null }) {
+  const [run, setRun] = useState<PayrollRun | null>(null)
+  const [lines, setLines] = useState<PayrollLine[]>([])
+  const [adjs, setAdjs] = useState<PayrollAdjustment[]>([])
+  const [jobNames, setJobNames] = useState<Map<string, string>>(new Map())
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!profile?.id) return
+    ;(async () => {
+      const [{ data: runs }, { data: l }, { data: a }] = await Promise.all([
+        supabase
+          .from('payroll_runs')
+          .select('id, period_start, period_end, status, created_at, finalized_at')
+          .eq('status', 'finalized')
+          .order('period_end', { ascending: false })
+          .limit(12),
+        supabase.from('payroll_lines').select('*').eq('user_id', profile.id),
+        supabase.from('payroll_adjustments').select('*').eq('user_id', profile.id),
+      ])
+      const finalized = (runs ?? []) as PayrollRun[]
+      const mine = (r: PayrollRun) =>
+        (l ?? []).some((x) => x.run_id === r.id) || (a ?? []).some((x) => x.run_id === r.id)
+      const picked =
+        finalized.find(mine) ??
+        (Number(profile.basic_salary ?? 0) > 0 ? finalized[0] ?? null : null)
+      setRun(picked)
+      setLines(picked ? ((l ?? []) as PayrollLine[]).filter((x) => x.run_id === picked.id) : [])
+      setAdjs(picked ? ((a ?? []) as PayrollAdjustment[]).filter((x) => x.run_id === picked.id) : [])
+      const jobIds = [...new Set((l ?? []).map((x) => x.job_id))]
+      if (jobIds.length > 0) {
+        const { data: j } = await supabase.from('jobs').select('id, name').in('id', jobIds)
+        setJobNames(new Map((j ?? []).map((x) => [x.id as string, x.name as string])))
+      }
+      setLoading(false)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id])
+
+  const basic = Number(profile?.basic_salary ?? 0)
+  const total =
+    (run ? basic : 0) +
+    lines.reduce((s, x) => s + Number(x.amount), 0) +
+    adjs.reduce((s, x) => s + Number(x.amount), 0)
+
+  return (
+    <div className="mob-card">
+      <div className="mob-title">My payslip</div>
+      {loading ? (
+        <div className="mob-sub">Loading…</div>
+      ) : !run ? (
+        <div className="mob-sub">No finalized payroll yet.</div>
+      ) : (
+        <>
+          <div className="mob-sub">
+            {run.period_start} → {run.period_end}
+          </div>
+          {basic > 0 && (
+            <div className="mob-breakrow">
+              <span>Basic salary (monthly)</span>
+              <span>{basic.toFixed(2)}</span>
+            </div>
+          )}
+          {lines.map((x) => (
+            <div className="mob-breakrow" key={x.id}>
+              <span>
+                {jobNames.get(x.job_id) ?? 'Piece work'} × {Number(x.quantity)}
+              </span>
+              <span>{Number(x.amount).toFixed(2)}</span>
+            </div>
+          ))}
+          {adjs.map((x) => (
+            <div className="mob-breakrow" key={x.id}>
+              <span>Adjustment — {x.reason}</span>
+              <span>{Number(x.amount).toFixed(2)}</span>
+            </div>
+          ))}
+          <div className="mob-breakrow total">
+            <span>Total pay</span>
+            <span>RM {total.toFixed(2)}</span>
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 

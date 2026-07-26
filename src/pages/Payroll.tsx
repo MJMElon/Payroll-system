@@ -365,7 +365,13 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
     return j ? `${j.name} (${j.unit})` : '?'
   }
 
+  // Monthly basic salary from the worker's profile (Worker Management).
+  const basicOf = (key: string) =>
+    key.startsWith('w:') ? 0 : Number(users.find((u) => u.id === key)?.basic_salary ?? 0)
+
   // Group lines by person (user, or legacy worker) for a payslip-style view.
+  // People with a basic salary are included even with no piece work — the
+  // payslip still owes them their basic.
   const byWorker = useMemo(() => {
     const m = new Map<string, { lines: PayrollLine[]; adjustments: PayrollAdjustment[] }>()
     for (const l of lines) {
@@ -378,13 +384,19 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
       if (!m.has(k)) m.set(k, { lines: [], adjustments: [] })
       m.get(k)!.adjustments.push(a)
     }
+    for (const u of users) {
+      if (Number(u.basic_salary ?? 0) > 0 && !m.has(u.id)) {
+        m.set(u.id, { lines: [], adjustments: [] })
+      }
+    }
     return [...m.entries()].sort((x, y) => personName(x[0]).localeCompare(personName(y[0])))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, adjustments, workers, users])
 
   const grandTotal =
     lines.reduce((s, l) => s + Number(l.amount), 0) +
-    adjustments.reduce((s, a) => s + Number(a.amount), 0)
+    adjustments.reduce((s, a) => s + Number(a.amount), 0) +
+    byWorker.reduce((s, [k]) => s + basicOf(k), 0)
 
   const missingRates = lines.filter((l) => Number(l.rate) === 0)
 
@@ -457,11 +469,20 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
       )}
 
       {byWorker.map(([personId, group]) => {
+        const basic = basicOf(personId)
         const lineTotal = group.lines.reduce((s, l) => s + Number(l.amount), 0)
         const adjTotal = group.adjustments.reduce((s, a) => s + Number(a.amount), 0)
         return (
           <div className="card" key={personId}>
-            <h3>{personName(personId)}</h3>
+            <div className="row-form spread">
+              <h3>{personName(personId)}</h3>
+              <button
+                className="linkbtn pm-print-hide"
+                onClick={() => printPayslip(run, personName(personId), basic, group, jobLabel)}
+              >
+                🖨 Print payslip
+              </button>
+            </div>
             <table className="table">
               <thead>
                 <tr>
@@ -473,6 +494,14 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
                 </tr>
               </thead>
               <tbody>
+                {basic > 0 && (
+                  <tr>
+                    <td className="muted">Basic salary (monthly)</td>
+                    <td className="right" colSpan={2} />
+                    <td className="right">{basic.toFixed(2)}</td>
+                    <td />
+                  </tr>
+                )}
                 {group.lines.map((l) => (
                   <tr key={l.id}>
                     <td>{jobLabel(l.job_id)}</td>
@@ -496,7 +525,7 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
                 ))}
                 <tr className="total-row">
                   <td colSpan={3}>Total</td>
-                  <td className="right">{(lineTotal + adjTotal).toFixed(2)}</td>
+                  <td className="right">{(basic + lineTotal + adjTotal).toFixed(2)}</td>
                   <td />
                 </tr>
               </tbody>
@@ -543,6 +572,61 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
 }
 
 /* ------------------------------------------------------------------ */
+
+/** Opens a minimal printable payslip for one person in a new window. */
+function printPayslip(
+  run: PayrollRun,
+  name: string,
+  basic: number,
+  group: { lines: PayrollLine[]; adjustments: PayrollAdjustment[] },
+  jobLabel: (id: string) => string,
+) {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const rows: string[] = []
+  if (basic > 0) {
+    rows.push(`<tr><td>Basic salary (monthly)</td><td></td><td></td><td class="r">${basic.toFixed(2)}</td></tr>`)
+  }
+  for (const l of group.lines) {
+    rows.push(
+      `<tr><td>${esc(jobLabel(l.job_id))}</td><td class="r">${Number(l.quantity)}</td>` +
+        `<td class="r">${Number(l.rate).toFixed(4)}</td><td class="r">${Number(l.amount).toFixed(2)}</td></tr>`,
+    )
+  }
+  for (const a of group.adjustments) {
+    rows.push(
+      `<tr><td>Adjustment — ${esc(a.reason)}</td><td></td><td></td><td class="r">${Number(a.amount).toFixed(2)}</td></tr>`,
+    )
+  }
+  const total =
+    basic +
+    group.lines.reduce((s, l) => s + Number(l.amount), 0) +
+    group.adjustments.reduce((s, a) => s + Number(a.amount), 0)
+  const w = window.open('', '_blank', 'width=640,height=800')
+  if (!w) return
+  w.document.write(`<!doctype html><html><head><title>Payslip — ${esc(name)}</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; margin: 2rem; color: #1c2733; }
+  h1 { font-size: 1.15rem; margin: 0 0 0.2rem; }
+  .muted { color: #66707c; font-size: 0.85rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid #dde3ea; font-size: 0.9rem; }
+  th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: #66707c; }
+  .r { text-align: right; }
+  .total td { font-weight: 700; border-top: 2px solid #1c2733; }
+</style></head><body>
+<h1>MJM Group — Payslip</h1>
+<div class="muted">${esc(name)} · Period ${run.period_start} → ${run.period_end} · ${run.status === 'finalized' ? 'FINAL' : 'DRAFT'}</div>
+<table>
+  <thead><tr><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount (RM)</th></tr></thead>
+  <tbody>${rows.join('')}
+    <tr class="total"><td colspan="3">Total pay</td><td class="r">${total.toFixed(2)}</td></tr>
+  </tbody>
+</table>
+<script>window.print()</script>
+</body></html>`)
+  w.document.close()
+}
 
 function MjmLogo() {
   return (
