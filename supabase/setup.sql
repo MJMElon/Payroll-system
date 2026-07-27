@@ -1122,3 +1122,34 @@ alter table public.access_profiles alter column modules drop not null;
 alter table public.access_profiles alter column modules drop default;
 update public.access_profiles set modules = null
   where modules = '{station-status,piece-rate,payroll,demo-mobile}'::text[];
+
+-- ---------------------------------------------------------------------------
+-- Worker Management functions (granted per tier in Tags management).
+--   worker-edit        -> edit the profile/salary of any LOWER tier
+--   worker-assign-any  -> place a worker into someone else's team
+-- Claiming a new sign-up into YOUR OWN team stays open to every leader and
+-- is already covered by the "upper tier manages lower signups" policy.
+-- ---------------------------------------------------------------------------
+drop policy if exists "worker managers edit lower profiles" on public.access_profiles;
+create policy "worker managers edit lower profiles" on public.access_profiles
+  for update using (
+    public.my_capabilities() && array['worker-edit', 'worker-assign-any']
+    and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
+  )
+  with check (
+    public.my_capabilities() && array['worker-edit', 'worker-assign-any']
+    and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
+  );
+
+-- Leaders that already manage a team keep the profile-edit right they had
+-- before this split, so nothing regresses for existing station heads.
+update public.grades set capabilities = capabilities || '{worker-edit}'
+  where 'user-access' = any(capabilities) and not 'worker-edit' = any(capabilities);
+update public.grades set capabilities = capabilities || '{worker-assign-any}'
+  where 'user-access' = any(capabilities) and not 'worker-assign-any' = any(capabilities);
+
+-- Tier 1 (Management) is the SUPER ADMIN: re-assert the full ability list
+-- now that Worker Management added two more functions.
+update public.grades set capabilities =
+  '{data-entry,verify,approve,rate-create,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,worker-edit,worker-assign-any,station-create,report-view}'
+  where sort_order = 1;

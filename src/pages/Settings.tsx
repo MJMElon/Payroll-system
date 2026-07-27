@@ -1317,6 +1317,15 @@ function TagEditModal({
           </div>
         </div>
 
+        <div className="tag-section">
+          <div className="tag-section-title">Worker management setting</div>
+          {capBoxes('Worker management setting')}
+          <p className="tag-section-hint">
+            Adding a new sign-up to their OWN team needs no tick — every leader
+            can do that. These open up the wider functions.
+          </p>
+        </div>
+
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn" type="submit" disabled={saving}>

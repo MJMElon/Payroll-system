@@ -1095,3 +1095,116 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(52, 227, 154, 0.4);
   color: #6fe3af;
 }
+
+/* ------------------------------------------------------------------ */
+/* WORKER MANAGEMENT — three columns: new sign-ups, the block-style    */
+/* team chart (one lane per tier tag), and the selected worker's panel.*/
+/* ------------------------------------------------------------------ */
+.wm-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr) 320px;
+  gap: 1rem;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .wm-layout { grid-template-columns: 1fr; }
+}
+
+.wm-col {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.wm-col-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+}
+.wm-col-head h3 { margin: 0; }
+.wm-signups { border-left: 4px solid var(--accent-strong); }
+.wm-detail { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
+
+/* New sign-up cards — drag sources. */
+.wm-signup-card {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.55rem 0.65rem; display: flex; flex-direction: column; gap: 0.35rem;
+  cursor: grab; background: var(--bg);
+}
+.wm-signup-card:active { cursor: grabbing; }
+.wm-signup-card.dragging { opacity: 0.45; }
+.wm-signup-top { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; }
+.wm-signup-card .btn.sm { padding: 0.3rem 0.5rem; font-size: 0.74rem; }
+
+/* Tier lanes — one per tag, drawn from the grades table. */
+.wm-lane { border-top: 1px solid var(--border); padding-top: 0.55rem; }
+.wm-lane:first-of-type { border-top: none; padding-top: 0; }
+.wm-lane-head { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.45rem; }
+.wm-lane-title { font-weight: 800; font-size: 0.82rem; }
+.wm-lane-count {
+  background: var(--accent-soft); color: var(--accent-strong);
+  border-radius: 999px; padding: 0.05rem 0.45rem; font-size: 0.7rem; font-weight: 700;
+}
+.wm-lane-body { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.wm-lane-empty { padding: 0.2rem 0.1rem; }
+
+/* A person block. */
+.wm-block {
+  width: 168px; border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.5rem 0.6rem; background: var(--bg); cursor: pointer;
+  display: flex; flex-direction: column; gap: 0.15rem;
+  transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+}
+.wm-block:hover { border-color: var(--accent-strong); }
+.wm-block.selected {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.wm-block.me { background: var(--accent-soft); }
+.wm-block.dragging { opacity: 0.45; }
+.wm-block.droppable {
+  border-color: var(--accent-strong); border-style: dashed;
+  transform: translateY(-2px);
+}
+.wm-block[draggable='true'] { cursor: grab; }
+
+.wm-block-name {
+  font-weight: 700; font-size: 0.85rem; display: flex; align-items: center; gap: 0.3rem;
+}
+.wm-block-meta { color: var(--muted); font-size: 0.72rem; }
+.wm-block-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;
+  color: var(--muted); font-size: 0.68rem; margin-top: 0.15rem;
+}
+.wm-under {
+  background: var(--accent-soft); color: var(--accent-strong);
+  border-radius: 999px; padding: 0 0.35rem; font-weight: 700;
+}
+
+/* Selected-worker panel. */
+.wm-detail-id { display: flex; flex-direction: column; gap: 0.25rem; }
+.wm-stat {
+  display: flex; flex-direction: column; gap: 0.1rem;
+  background: var(--accent-soft); border-radius: 10px; padding: 0.55rem 0.7rem;
+}
+.wm-stat-label {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--accent-strong); font-weight: 700;
+}
+.wm-stat-value { font-size: 1.1rem; font-weight: 800; }
+.wm-detail-block {
+  border-top: 1px solid var(--border); padding-top: 0.6rem;
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+.wm-detail-title { font-weight: 800; font-size: 0.8rem; }
+.wm-line {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem;
+  font-size: 0.78rem;
+}
+.wm-line.total {
+  border-top: 1px solid var(--border); padding-top: 0.35rem;
+  font-weight: 800; font-size: 0.85rem;
+}
+.wm-line-amt { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 700; }
+.wm-line-date { color: var(--muted); font-variant-numeric: tabular-nums; }
