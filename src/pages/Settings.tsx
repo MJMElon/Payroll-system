@@ -4,10 +4,12 @@ import { useAuth } from '../context/AuthContext'
 import { supabase, type Grade, type Station } from '../lib/supabase'
 import {
   ALL_CAPABILITIES,
+  CAPABILITY_GROUPS,
   CAPABILITY_OPTIONS,
   DEFAULT_MODULES,
+  GROUP_MODULE,
+  MANAGEMENT_ONLY_GROUPS,
   MODULE_OPTIONS,
-  effectiveCapabilities,
   nextTagColor,
   sortCapabilities,
   tagClass,
@@ -118,23 +120,18 @@ function TagsTab() {
     load()
   }, [])
 
-  // Each admin function is granted separately per tier by the super admin
-  // (tier 1): add new tag, move tag tiers, edit tags' settings, manage
-  // stations. Admins and tier 1 always have everything.
+  // Creating tier tags and station tags, and setting what a tier may do,
+  // is Management's alone — tier 1 (or an admin account). It is not a
+  // per-tier function any more, so no capability opens it up.
   const myGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
   const myTier = myGrade?.sort_order ?? null
-  const myCaps = effectiveCapabilities(myGrade)
   const isSuperUser = profile?.role === 'admin' || myTier === 1
-  const canAddTag = isSuperUser || myCaps.includes('tag-add')
-  const canMoveTags = isSuperUser || myCaps.includes('tag-move')
-  const canEditTags = isSuperUser || myCaps.includes('tag-edit')
-  // A granted (non-super) user may only touch tags BELOW their own tier —
-  // they can never promote themselves or change their superiors.
-  const rowEditable = (g: Grade) =>
-    g.sort_order !== 1 && (isSuperUser || (myTier !== null && g.sort_order > myTier))
-  const canManageStations =
-    profile?.role === 'admin' || profile?.role === 'manager' ||
-    myTier === 1 || myCaps.includes('station-create')
+  const canAddTag = isSuperUser
+  const canMoveTags = isSuperUser
+  const canEditTags = isSuperUser
+  // The tier-1 tag itself is the super admin and is never edited away.
+  const rowEditable = (g: Grade) => g.sort_order !== 1 && isSuperUser
+  const canManageStations = isSuperUser
 
   // Drop a dragged tag onto another: reorder locally, then renumber every
   // tier 1..n so tier numbers always run top-down with no gaps.
@@ -464,16 +461,10 @@ function TierAccessSheet({ grade }: { grade: Grade }) {
         <span className="muted small">tier {grade.sort_order}</span>
       </div>
 
-      {isSuper && (
-        <p className="muted small" style={{ margin: 0 }}>
-          The super admin tier — every module and every ability, always.
-        </p>
-      )}
-
       <div className="tag-section">
-        <div className="tag-section-title">Can see</div>
+        <div className="tag-section-title">Access to module</div>
         {mods.length === 0 ? (
-          <p className="tag-section-hint">No web modules — this tier sees the mobile view only.</p>
+          <span className="small muted">None</span>
         ) : (
           <div className="cap-cols">
             {MODULE_OPTIONS.filter((m) => mods.includes(m.key)).map((m) => (
@@ -481,16 +472,12 @@ function TierAccessSheet({ grade }: { grade: Grade }) {
             ))}
           </div>
         )}
-        <p className="tag-section-hint">
-          Data always follows the fixed rule: this tier and every tier below it;
-          station tags narrow it to those stations.
-        </p>
       </div>
 
       <div className="tag-section">
         <div className="tag-section-title">Can do</div>
         {caps.length === 0 ? (
-          <p className="tag-section-hint">Nothing granted — this tier can view only.</p>
+          <span className="small muted">None</span>
         ) : (
           <div className="cap-cols">
             {Object.entries(groups).map(([group, labels]) => (
@@ -599,13 +586,9 @@ function StationModal({
                     · Min {station.hourly_min_prev ?? 0} done in the previous hour
                   </span>
                   <span className="small">· Max {station.hourly_target ?? 6} in this hour</span>
-                  <p className="tag-section-hint">
-                    When the previous hour reaches its minimum, this hour's stamps
-                    become bonus reward stamps.
-                  </p>
                 </>
               ) : (
-                <p className="tag-section-hint">No hourly requirement — plain records.</p>
+                <span className="small muted">None</span>
               )}
             </div>
 
@@ -656,13 +639,6 @@ function StationModal({
                 </label>
               </div>
             )}
-            {hourly && (
-              <p className="muted small" style={{ margin: 0 }}>
-                When the previous hour reaches its minimum, this hour's stamps become
-                bonus reward stamps.
-              </p>
-            )}
-
             <div className="row-form" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>
               <button className="btn" type="submit" disabled={saving}>
@@ -748,6 +724,14 @@ function TagModal({
     onSaved()
   }
 
+  // Groups still worth showing: never a Management-only one, and — where a
+  // group governs a module — only once that module is ticked above.
+  const openGroups = CAPABILITY_GROUPS.filter((group) => {
+    if (MANAGEMENT_ONLY_GROUPS.includes(group)) return false
+    const owner = GROUP_MODULE[group]
+    return !owner || modules.includes(owner)
+  })
+
   // One checkbox row per capability of a group — shared by every section.
   const capBoxes = (group: string) =>
     CAPABILITY_OPTIONS.filter((c) => c.group === group).map((c) => (
@@ -807,17 +791,18 @@ function TagModal({
         </div>
 
         {error && <div className="error">{error}</div>}
-        {isSuper && (
-          <p className="muted small" style={{ margin: 0 }}>
-            This tag is the super admin — it always has every ability, sees every
-            module, and stays at tier 1.
-          </p>
-        )}
 
         <div className="row-form">
           <label className="field grow">
             <span>Tag name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              /* Only a tag being created opens with the cursor here — an
+                 edit should land on the sheet, not in the name box. */
+              autoFocus={!grade}
+              required
+            />
           </label>
           <div className="field">
             <span>Colour (auto-issued)</span>
@@ -827,23 +812,8 @@ function TagModal({
           </div>
         </div>
 
-        {/* Right below the tag name, as requested: who this tier may manage. */}
         <div className="tag-section">
-          <div className="tag-section-title">User setting</div>
-          {capBoxes('User setting')}
-          <p className="tag-section-hint">
-            Lets this tier manage people in every team from Worker Management,
-            not just their own.
-          </p>
-        </div>
-
-        <div className="tag-section">
-          <div className="tag-section-title">Can see</div>
-          <p className="tag-section-hint">
-            Data always follows the fixed rule: this tier and every tier below it;
-            station tags narrow it to those stations. Tick the web modules this
-            tier sees.
-          </p>
+          <div className="tag-section-title">Access to module</div>
           <div className="cap-cols">
             {MODULE_OPTIONS.map((m) => (
               <label key={m.key} className="checkbox small" style={{ margin: 0 }}>
@@ -856,42 +826,25 @@ function TagModal({
                 {m.label}
               </label>
             ))}
-            {capBoxes('View setting')}
           </div>
         </div>
 
-        <div className="tag-cols">
-          <div className="tag-section">
-            <div className="tag-section-title">Work entry setting</div>
-            {capBoxes('Work entry setting')}
+        {/* A module's own settings only appear once the tier can open that
+            module — there is nothing to set on a module it cannot reach. */}
+        {openGroups.map((group) => (
+          <div className="tag-section" key={group}>
+            <div className="tag-section-title">{group}</div>
+            {capBoxes(group)}
           </div>
-          <div className="tag-section">
-            <div className="tag-section-title">Piece rate setting</div>
-            {capBoxes('Piece rate setting')}
-          </div>
-        </div>
-
-        <div className="tag-cols">
-          <div className="tag-section">
-            <div className="tag-section-title">Tag management setting</div>
-            {capBoxes('Tag management setting')}
-          </div>
-          <div className="tag-section">
-            <div className="tag-section-title">Station setting</div>
-            {capBoxes('Station setting')}
-            <p className="tag-section-hint">
-              Only tags and users below this tier can be added, moved or edited.
-            </p>
-          </div>
-        </div>
+        ))}
 
         <div className="tag-section">
-          <div className="tag-section-title">Worker management setting</div>
-          {capBoxes('Worker management setting')}
-          <p className="tag-section-hint">
-            Adding a new sign-up to their OWN team needs no tick — every leader
-            can do that. These open up the wider functions.
-          </p>
+          <div className="tag-section-title">Management only</div>
+          <span className="small muted">
+            Creating tier tags and station tags, setting what a tier may do, and
+            changing other users' settings belong to Management (tier 1). They
+            are not handed out per tier, so there is nothing to tick here.
+          </span>
         </div>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>

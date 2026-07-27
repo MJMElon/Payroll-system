@@ -15,12 +15,14 @@ export function nextTagColor(usedColors: (string | null | undefined)[]): string 
   return TAG_COLORS.find((c) => !usedColors.includes(c)) ?? TAG_COLORS[usedColors.length % TAG_COLORS.length]
 }
 
-// Module keys a tag can be allowed to see on the web.
+// Module keys a tag can be allowed to see on the web. Labels are the
+// module's own name in Title Case — no "module" suffix on some and not
+// others, so the list reads evenly.
 export const MODULE_OPTIONS = [
-  { key: 'station-status', label: 'Station status board' },
-  { key: 'operation', label: 'Operation module' },
-  { key: 'piece-rate', label: 'Piece Rate module' },
-  { key: 'payroll', label: 'Payroll module' },
+  { key: 'station-status', label: 'Station Status' },
+  { key: 'operation', label: 'Operation' },
+  { key: 'piece-rate', label: 'Piece Rate' },
+  { key: 'payroll', label: 'Payroll' },
   { key: 'worker-management', label: 'Worker Management' },
   { key: 'demo-mobile', label: 'Demo Mobile View' },
 ] as const
@@ -56,6 +58,27 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
 
 export const ALL_CAPABILITIES: string[] = CAPABILITY_OPTIONS.map((c) => c.key)
 export const CAPABILITY_GROUPS: string[] = Array.from(new Set(CAPABILITY_OPTIONS.map((c) => c.group)))
+
+/**
+ * Which module each capability group belongs to. A group is only worth
+ * setting when the tier can open the module it governs, so the tag editor
+ * shows a group only once its module is ticked under "Access to module".
+ * A group missing from here has no owning web module and always shows.
+ */
+export const GROUP_MODULE: Record<string, string> = {
+  'Work entry setting': 'operation',
+  'Piece rate setting': 'piece-rate',
+  'Worker management setting': 'worker-management',
+}
+
+/**
+ * Groups that are NOT handed out per tier at all: creating tier tags and
+ * station tags, and changing other users' settings, belong to Management
+ * (tier 1) alone. They stay in CAPABILITY_OPTIONS because stored tags and
+ * the database policies still name these keys — they simply have no
+ * checkbox in the tag editor any more.
+ */
+export const MANAGEMENT_ONLY_GROUPS = ['User setting', 'Tag management setting', 'Station setting']
 
 export function capabilityLabel(key: string) {
   return CAPABILITY_OPTIONS.find((c) => c.key === key)?.label ?? key

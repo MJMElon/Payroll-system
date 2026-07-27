@@ -154,7 +154,6 @@ export default function AuditLogTab() {
           </table>
         </div>
       )}
-      <p className="muted small">Latest 200 events shown.</p>
     </div>
   )
 }
