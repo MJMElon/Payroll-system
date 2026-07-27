@@ -114,3 +114,35 @@
   font-family: inherit; width: 100%; text-align: right; color: var(--text); background: var(--surface);
 }
 .pr-row-input[data-field="date"], .pr-row-input[data-field="time"] { text-align: left; }
+
+/* ---------------- Clock-in/out photo record ---------------- */
+.pr-wd-clock-cell { display: inline-flex; align-items: center; gap: 0.4rem; }
+.pr-wd-photo-thumb {
+  width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--pr-border); background: var(--bg);
+  color: var(--pr-muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none;
+}
+.pr-wd-photo-thumb:hover { background: var(--pr-brand-soft); color: var(--pr-brand-strong); border-color: var(--pr-brand); }
+.pr-wd-photo-thumb svg { width: 13px; height: 13px; }
+
+.pr-wd-photo-backdrop {
+  position: fixed; inset: 0; background: rgba(20, 30, 24, 0.55); display: flex; align-items: center; justify-content: center;
+  z-index: 50; padding: 1rem;
+}
+.pr-wd-photo-modal {
+  position: relative; background: var(--surface); border-radius: var(--pr-radius); box-shadow: var(--pr-shadow);
+  padding: 1.4rem; display: flex; flex-direction: column; align-items: center; gap: 0.9rem; max-width: 320px; width: 100%;
+}
+.pr-wd-photo-close {
+  position: absolute; top: 0.7rem; right: 0.7rem; width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--pr-border);
+  background: var(--surface); color: var(--pr-text-secondary); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.pr-wd-photo-close:hover { background: var(--bg); color: var(--text); }
+.pr-wd-photo-close svg { width: 12px; height: 12px; }
+.pr-wd-photo-large {
+  width: 160px; height: 160px; border-radius: 14px; background: var(--bg); border: 1px solid var(--pr-border);
+  display: flex; align-items: center; justify-content: center; color: var(--pr-muted);
+}
+.pr-wd-photo-large svg { width: 64px; height: 64px; }
+.pr-wd-photo-caption { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; text-align: center; }
+.pr-wd-photo-caption b { font-size: 0.9rem; color: var(--text); }
+.pr-wd-photo-caption span { font-size: 0.78rem; color: var(--pr-text-secondary); }

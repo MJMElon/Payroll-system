@@ -131,6 +131,7 @@ export default function WorkerPayrollDetail({ row, onBack }: { row: WorkerRow; o
   const [appliedFilter, setAppliedFilter] = useState({ from: '2026-07-01', to: '2026-07-26', status: 'all' as 'all' | CageStatus })
 
   const attendance = useMemo(() => genAttendance(row), [row])
+  const [photoPreview, setPhotoPreview] = useState<{ date: string; label: string; time: string } | null>(null)
 
   const [incentiveRows, setIncentiveRows] = useState(() => [
     { key: 'allowance', label: 'Allowance', amt: row.incentive },
@@ -348,8 +349,34 @@ export default function WorkerPayrollDetail({ row, onBack }: { row: WorkerRow; o
                       {attendance.map((a) => (
                         <tr key={a.date}>
                           <td>{a.date}</td>
-                          <td>{a.clockIn}</td>
-                          <td>{a.clockOut}</td>
+                          <td>
+                            <span className="pr-wd-clock-cell">
+                              {a.clockIn}
+                              {a.clockIn !== '—' && (
+                                <button
+                                  className="pr-wd-photo-thumb"
+                                  onClick={() => setPhotoPreview({ date: a.date, label: 'Clock In', time: a.clockIn })}
+                                  aria-label={`View clock-in photo for ${a.date}`}
+                                >
+                                  <PhotoIcon />
+                                </button>
+                              )}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="pr-wd-clock-cell">
+                              {a.clockOut}
+                              {a.clockOut !== '—' && (
+                                <button
+                                  className="pr-wd-photo-thumb"
+                                  onClick={() => setPhotoPreview({ date: a.date, label: 'Clock Out', time: a.clockOut })}
+                                  aria-label={`View clock-out photo for ${a.date}`}
+                                >
+                                  <PhotoIcon />
+                                </button>
+                              )}
+                            </span>
+                          </td>
                           <td className="right">{a.hours.toFixed(1)}</td>
                           <td><span className={`pr-status-pill ${a.status === 'present' ? 'approved' : a.status === 'late' ? 'pending' : 'verified'}`}>{a.status === 'present' ? 'Present' : a.status === 'late' ? 'Late' : 'On Leave'}</span></td>
                           <td className="wrap">{a.remarks || '—'}</td>
@@ -360,6 +387,20 @@ export default function WorkerPayrollDetail({ row, onBack }: { row: WorkerRow; o
                   </table>
                 </div>
               </div>
+
+              {photoPreview && (
+                <div className="pr-wd-photo-backdrop" onClick={() => setPhotoPreview(null)}>
+                  <div className="pr-wd-photo-modal" onClick={(e) => e.stopPropagation()}>
+                    <button className="pr-wd-photo-close" onClick={() => setPhotoPreview(null)} aria-label="Close photo preview"><XIcon /></button>
+                    <div className="pr-wd-photo-large"><PersonIcon /></div>
+                    <div className="pr-wd-photo-caption">
+                      <b>{row.name}</b>
+                      <span>{photoPreview.label} · {photoPreview.date} · {photoPreview.time}</span>
+                      <span className="muted small">No photo captured yet — placeholder until selfie capture is wired up</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -605,3 +646,5 @@ function CalendarIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="cu
 function ClockIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg> }
 function DollarIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v10" /><path d="M15 9.5c0-1.4-1.3-2.5-3-2.5s-3 1-3 2.3c0 3 6 1.5 6 4.4 0 1.4-1.3 2.3-3 2.3s-3-1-3-2.3" /></svg> }
 function ReceiptIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /><path d="M9 15h6" /></svg> }
+function PhotoIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z" /><circle cx="12" cy="13" r="4" /></svg> }
+function PersonIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a8 8 0 0 1 16 0v1" /></svg> }
