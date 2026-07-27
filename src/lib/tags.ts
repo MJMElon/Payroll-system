@@ -71,6 +71,11 @@ export const GROUP_MODULE: Record<string, string> = {
   'Worker management setting': 'worker-management',
 }
 
+/** The same link read the other way: module key → the group it opens. */
+export const MODULE_GROUP: Record<string, string> = Object.fromEntries(
+  Object.entries(GROUP_MODULE).map(([group, module]) => [module, group]),
+)
+
 /**
  * Groups that are NOT handed out per tier at all: creating tier tags and
  * station tags, and changing other users' settings, belong to Management

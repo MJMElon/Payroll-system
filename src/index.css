@@ -823,6 +823,43 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .tag-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; align-items: stretch; }
 .tag-cols .tag-section { min-width: 0; }
 .cap-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.9rem; }
+/* The tag IS the name field — one thing, not a box plus a preview. It
+   wears the tier's own colour and grows with what is typed. */
+.tag-name-input {
+  appearance: none;
+  align-self: flex-start;
+  font: inherit; font-family: 'Montserrat', system-ui, sans-serif;
+  font-size: 1.3rem; font-weight: 800; letter-spacing: -0.01em;
+  padding: 0.35rem 1.1rem; border-radius: 999px;
+  border: 2px dashed transparent;
+  min-width: 0;
+}
+.tag-name-input:hover:not(:disabled) { border-color: rgba(25, 32, 42, 0.18); }
+.tag-name-input:focus-visible {
+  outline: none; border-color: currentColor; border-style: solid;
+}
+.tag-name-input::placeholder { color: currentColor; opacity: 0.45; }
+
+/* Access to module — tick a module and it opens to its own functions. */
+.module-table { display: flex; flex-direction: column; gap: 0.3rem; }
+.module-row {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.45rem 0.7rem; background: var(--surface);
+}
+.module-row.on { border-color: var(--accent); background: var(--surface); }
+.module-head { margin: 0; gap: 0.5rem; width: 100%; cursor: pointer; }
+.module-name { font-weight: 600; font-size: 0.9rem; }
+.module-count {
+  margin-left: auto; font-size: 0.7rem; font-weight: 700;
+  color: var(--accent-strong); background: var(--accent-soft);
+  border-radius: 999px; padding: 0.05rem 0.45rem;
+}
+.module-caps {
+  display: flex; flex-direction: column; gap: 0.25rem;
+  margin: 0.4rem 0 0.15rem; padding-left: 1.5rem;
+  border-left: 2px solid var(--accent-soft);
+}
+
 /* Read-only access sheet (the eye button on a tier tag) */
 .cap-group { display: flex; flex-direction: column; gap: 0.1rem; margin-bottom: 0.5rem; }
 .cap-group:last-child { margin-bottom: 0; }
