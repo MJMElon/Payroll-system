@@ -14,10 +14,14 @@ import { useLayoutEffect, useState } from 'react'
  * every other page; pass a larger value for a page that reads better with
  * the window edges kept at arm's length.
  *
+ * `cap` stops the shell growing past a readable width on a very large
+ * screen — beyond it the extra room goes to the margins instead. Without
+ * one the shell tracks the window however wide it gets.
+ *
  * Returns a style object to spread onto the shell, or undefined when the
  * window is too narrow to be worth widening.
  */
-export function useWideShell(gutter = 20) {
+export function useWideShell(gutter = 20, cap = Number.POSITIVE_INFINITY) {
   const [style, setStyle] = useState<{ width: number; marginLeft: number } | undefined>()
 
   useLayoutEffect(() => {
@@ -26,7 +30,7 @@ export function useWideShell(gutter = 20) {
       const maxw =
         parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--maxw')) || 1080
       const contentInner = maxw - 40 // .content's own 1.25rem left+right padding
-      const wide = vw - gutter * 2
+      const wide = Math.min(vw - gutter * 2, cap)
       if (wide > contentInner) {
         setStyle({ width: wide, marginLeft: (contentInner - wide) / 2 })
       } else {
@@ -37,7 +41,7 @@ export function useWideShell(gutter = 20) {
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
-  }, [gutter])
+  }, [gutter, cap])
 
   return style
 }

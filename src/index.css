@@ -368,6 +368,9 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 
 /* Wider pop-out for the approval list */
 .modal.modal-wide { max-width: 620px; }
+/* Row pop-outs that carry a view face as well as a form — roughly a
+   third wider again, so the access sheet reads in columns. */
+.modal.modal-view { max-width: 810px; }
 .approval-item {
   border: 1px solid var(--border); border-radius: 12px; padding: 0.8rem 0.9rem;
 }

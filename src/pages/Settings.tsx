@@ -17,13 +17,46 @@ import { useWideShell } from '../lib/useWideShell'
 import AuditLogTab from './settings/AuditLogTab'
 
 type Tab = 'tags' | 'audit'
+/** Which face of a row's pop-out is showing. */
+type Mode = 'view' | 'edit'
+
+/* Row action icons — shared by the tier tag and station tag tables. */
+const iconProps = {
+  width: 15,
+  height: 15,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+} as const
+
+const EyeIcon = () => (
+  <svg {...iconProps}>
+    <path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+)
+const PencilIcon = () => (
+  <svg {...iconProps}>
+    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+  </svg>
+)
+const TrashIcon = () => (
+  <svg {...iconProps}>
+    <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+  </svg>
+)
 
 export default function Settings() {
   const { profile } = useAuth()
   const [tab, setTab] = useState<Tab>('tags')
-  // Settings holds wide tables, so it reaches past the narrow page cap —
-  // but with a real margin left on each side, not hard against the window.
-  const wideStyle = useWideShell(64)
+  // Settings reaches past the narrow page cap, but only so far: wide
+  // margins, and a ceiling so the cards stop stretching on a big screen.
+  const wideStyle = useWideShell(96, 1280)
   // The audit log's RLS only answers to admins/managers — showing the tab
   // to anyone else would just render an empty (confusing) table.
   const canAudit = profile?.role === 'admin' || profile?.role === 'manager'
@@ -32,9 +65,7 @@ export default function Settings() {
     <div className="stack" style={wideStyle}>
       <div>
         <Link to="/" className="small muted backlink">← Back to main page</Link>
-        {/* The top bar carries the module name ("Settings"), so the page
-            heading carries the system name — the two swapped places. */}
-        <h1>Piece Rate &amp; Payroll System</h1>
+        <h1>Settings</h1>
       </div>
 
       <div className="tabs glass">
@@ -61,14 +92,14 @@ function TagsTab() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [stations, setStations] = useState<Station[]>([])
   const [dragId, setDragId] = useState<string | null>(null)
-  const [editor, setEditor] = useState<'closed' | 'new' | Grade>('closed')
-  // Read-only look at one tier's access — the "Can do" list left the table
-  // so the summary stays short.
-  const [viewer, setViewer] = useState<Grade | null>(null)
+  // One pop-out per row, opening on either face: `view` is read-only and
+  // closes with the × alone, `edit` has Cancel (back to view) and Save.
+  // A null grade is a tag being created, which has no view to fall back to.
+  const [tagModal, setTagModal] = useState<{ grade: Grade | null; mode: Mode } | null>(null)
   const [addingStation, setAddingStation] = useState(false)
   const [stationName, setStationName] = useState('')
   const [dragStation, setDragStation] = useState<string | null>(null)
-  const [stationEditor, setStationEditor] = useState<Station | null>(null)
+  const [stationModal, setStationModal] = useState<{ station: Station; mode: Mode } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -188,7 +219,9 @@ function TagsTab() {
         <div className="row-form spread">
           <h3>Tier tags</h3>
           {canAddTag && (
-            <button className="btn" onClick={() => setEditor('new')}>+ Add tag</button>
+            <button className="btn" onClick={() => setTagModal({ grade: null, mode: 'edit' })}>
+              + Add tag
+            </button>
           )}
         </div>
 
@@ -235,26 +268,19 @@ function TagsTab() {
                         className="icon-btn sm"
                         title="View what this tier can see and do"
                         aria-label={`View access of ${g.name}`}
-                        onClick={() => setViewer(g)}
+                        onClick={() => setTagModal({ grade: g, mode: 'view' })}
                       >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z" />
-                          <circle cx="12" cy="12" r="3" />
-                        </svg>
+                        <EyeIcon />
                       </button>
-                      {canEditTags && editable && (
+                      {editable && (
                         <>
                           <button
                             className="icon-btn sm"
                             title="Edit tag"
                             aria-label={`Edit ${g.name}`}
-                            onClick={() => setEditor(g)}
+                            onClick={() => setTagModal({ grade: g, mode: 'edit' })}
                           >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                            </svg>
+                            <PencilIcon />
                           </button>
                           {!isSuper && (
                             <button
@@ -263,12 +289,7 @@ function TagsTab() {
                               aria-label={`Delete ${g.name}`}
                               onClick={() => removeTag(g)}
                             >
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
-                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                                <path d="M10 11v6M14 11v6" />
-                              </svg>
+                              <TrashIcon />
                             </button>
                           )}
                         </>
@@ -316,7 +337,7 @@ function TagsTab() {
               <th>#</th>
               <th>Station</th>
               <th>Requirement</th>
-              {canManageStations && <th className="right">Actions</th>}
+              <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -343,52 +364,74 @@ function TagsTab() {
                     ? `Hourly · min ${st.hourly_min_prev ?? 0} prev hr · max ${st.hourly_target ?? 6}/hr`
                     : '—'}
                 </td>
-                {canManageStations && (
-                  <td className="right">
+                <td className="right">
+                  <span className="row-actions">
                     <button
                       className="icon-btn sm"
-                      title="Edit station"
-                      aria-label={`Edit ${st.name}`}
-                      onClick={() => setStationEditor(st)}
+                      title="View this station's settings"
+                      aria-label={`View ${st.name}`}
+                      onClick={() => setStationModal({ station: st, mode: 'view' })}
                     >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                      </svg>
+                      <EyeIcon />
                     </button>
-                  </td>
-                )}
+                    {canManageStations && (
+                      <>
+                        <button
+                          className="icon-btn sm"
+                          title="Edit station"
+                          aria-label={`Edit ${st.name}`}
+                          onClick={() => setStationModal({ station: st, mode: 'edit' })}
+                        >
+                          <PencilIcon />
+                        </button>
+                        <button
+                          className="icon-btn sm danger"
+                          title="Delete station"
+                          aria-label={`Delete ${st.name}`}
+                          onClick={() => removeStation(st)}
+                        >
+                          <TrashIcon />
+                        </button>
+                      </>
+                    )}
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {stationEditor && (
-        <StationEditModal
-          station={stationEditor}
-          onClose={() => setStationEditor(null)}
+      {stationModal && (
+        <StationModal
+          station={stationModal.station}
+          mode={stationModal.mode}
+          canEdit={canManageStations}
+          onMode={(mode) => setStationModal((s) => (s ? { ...s, mode } : s))}
+          onClose={() => setStationModal(null)}
           onSaved={() => {
-            setStationEditor(null)
+            setStationModal(null)
             load()
-          }}
-          onDelete={async () => {
-            await removeStation(stationEditor)
-            setStationEditor(null)
           }}
         />
       )}
 
-      {viewer && <TagViewModal grade={viewer} onClose={() => setViewer(null)} />}
-
-      {editor !== 'closed' && (
-        <TagEditModal
-          grade={editor === 'new' ? null : editor}
+      {tagModal && (
+        <TagModal
+          grade={tagModal.grade}
+          mode={tagModal.mode}
+          canEdit={
+            tagModal.grade
+              ? canEditTags &&
+                (tagModal.grade.sort_order === 1 ? isSuperUser : rowEditable(tagModal.grade))
+              : true
+          }
           nextTier={Math.max(0, ...grades.map((g) => g.sort_order)) + 1}
           usedColors={grades.map((g) => g.color)}
-          onClose={() => setEditor('closed')}
+          onMode={(mode) => setTagModal((s) => (s ? { ...s, mode } : s))}
+          onClose={() => setTagModal(null)}
           onSaved={() => {
-            setEditor('closed')
+            setTagModal(null)
             load()
           }}
         />
@@ -398,11 +441,11 @@ function TagsTab() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Tag view pop-out: what ONE tier can see and do, read only. Opened  */
-/* by the eye button — the tier tags table stays a short summary.     */
+/* Read-only sheet of ONE tier's access — the body of the tag pop-out */
+/* in view mode, and the reason the table needs no "Can do" column.   */
 /* ------------------------------------------------------------------ */
 
-function TagViewModal({ grade, onClose }: { grade: Grade; onClose: () => void }) {
+function TierAccessSheet({ grade }: { grade: Grade }) {
   // Tier 1 is the super admin: every module, every ability, always.
   const isSuper = grade.sort_order === 1
   const caps = isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade.capabilities ?? [])
@@ -416,80 +459,76 @@ function TagViewModal({ grade, onClose }: { grade: Grade; onClose: () => void })
   }, {})
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="row-form spread">
-          <h2>Tier access</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
+    <>
+      <div className="row-form" style={{ gap: '0.5rem', alignItems: 'center' }}>
+        <span className={tagClass(grade.color)}>{grade.name}</span>
+        <span className="muted small">tier {grade.sort_order}</span>
+      </div>
 
-        <div className="row-form" style={{ gap: '0.5rem', alignItems: 'center' }}>
-          <span className={tagClass(grade.color)}>{grade.name}</span>
-          <span className="muted small">tier {grade.sort_order}</span>
-        </div>
+      {isSuper && (
+        <p className="muted small" style={{ margin: 0 }}>
+          The super admin tier — every module and every ability, always.
+        </p>
+      )}
 
-        {isSuper && (
-          <p className="muted small" style={{ margin: 0 }}>
-            The super admin tier — every module and every ability, always.
-          </p>
+      <div className="tag-section">
+        <div className="tag-section-title">Can see</div>
+        {mods.length === 0 ? (
+          <p className="tag-section-hint">No web modules — this tier sees the mobile view only.</p>
+        ) : (
+          <div className="cap-cols">
+            {MODULE_OPTIONS.filter((m) => mods.includes(m.key)).map((m) => (
+              <span key={m.key} className="small">· {m.label}</span>
+            ))}
+          </div>
         )}
+        <p className="tag-section-hint">
+          Data always follows the fixed rule: this tier and every tier below it;
+          station tags narrow it to those stations.
+        </p>
+      </div>
 
-        <div className="tag-section">
-          <div className="tag-section-title">Can see</div>
-          {mods.length === 0 ? (
-            <p className="tag-section-hint">No web modules — this tier sees the mobile view only.</p>
-          ) : (
-            <div className="cap-cols">
-              {MODULE_OPTIONS.filter((m) => mods.includes(m.key)).map((m) => (
-                <span key={m.key} className="small">· {m.label}</span>
-              ))}
-            </div>
-          )}
-          <p className="tag-section-hint">
-            Data always follows the fixed rule: this tier and every tier below it;
-            station tags narrow it to those stations.
-          </p>
-        </div>
-
-        <div className="tag-section">
-          <div className="tag-section-title">Can do</div>
-          {caps.length === 0 ? (
-            <p className="tag-section-hint">Nothing granted — this tier can view only.</p>
-          ) : (
-            Object.entries(groups).map(([group, labels]) => (
+      <div className="tag-section">
+        <div className="tag-section-title">Can do</div>
+        {caps.length === 0 ? (
+          <p className="tag-section-hint">Nothing granted — this tier can view only.</p>
+        ) : (
+          <div className="cap-cols">
+            {Object.entries(groups).map(([group, labels]) => (
               <div key={group} className="cap-group">
                 <div className="cap-group-name">{group}</div>
                 {labels.map((l) => (
                   <span key={l} className="small">· {l}</span>
                 ))}
               </div>
-            ))
-          )}
-        </div>
-
-        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost" onClick={onClose}>Close</button>
-        </div>
+            ))}
+          </div>
+        )}
       </div>
-    </div>
+    </>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/* Station edit pop-out: name + the work requirement preset shown in  */
-/* the mobile view (hourly stamp card).                               */
+/* Station pop-out. View shows the settings read-only and closes with */
+/* the × alone; Edit adds the form, with Cancel dropping back to view */
+/* rather than shutting the window.                                   */
 /* ------------------------------------------------------------------ */
 
-function StationEditModal({
+function StationModal({
   station,
+  mode,
+  canEdit,
+  onMode,
   onClose,
   onSaved,
-  onDelete,
 }: {
   station: Station
+  mode: Mode
+  canEdit: boolean
+  onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
-  onDelete: () => void
 }) {
   const [name, setName] = useState(station.name)
   const [hourly, setHourly] = useState(Boolean(station.hourly_count))
@@ -524,76 +563,116 @@ function StationEditModal({
     onSaved()
   }
 
+  // Cancelling an edit puts the untouched values back, so reopening the
+  // form does not show what was typed and then abandoned.
+  function cancel() {
+    setName(station.name)
+    setHourly(Boolean(station.hourly_count))
+    setMinPrevInput(String(station.hourly_min_prev ?? 0))
+    setTargetInput(String(station.hourly_target ?? 6))
+    setError(null)
+    onMode('view')
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+      <div className="modal modal-view" onClick={(e) => e.stopPropagation()}>
         <div className="row-form spread">
-          <h2>Edit station</h2>
+          <h2>{mode === 'view' ? 'Station' : 'Edit station'}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         {error && <div className="error">{error}</div>}
 
-        <label className="field">
-          <span>Station name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-        </label>
+        {mode === 'view' ? (
+          <>
+            <div className="tag-section">
+              <div className="tag-section-title">Station name</div>
+              <span>{station.name}</span>
+            </div>
 
-        <div className="field">
-          <span>Work requirement (shown in the mobile view)</span>
-          <label className="checkbox small" style={{ margin: 0 }}>
-            <input type="checkbox" checked={hourly} onChange={(e) => setHourly(e.target.checked)} />{' '}
-            Hourly count — records are counted per hour (stamp card)
-          </label>
-        </div>
+            <div className="tag-section">
+              <div className="tag-section-title">Work requirement (mobile view)</div>
+              {station.hourly_count ? (
+                <>
+                  <span className="small">· Hourly count — records are counted per hour</span>
+                  <span className="small">
+                    · Min {station.hourly_min_prev ?? 0} done in the previous hour
+                  </span>
+                  <span className="small">· Max {station.hourly_target ?? 6} in this hour</span>
+                  <p className="tag-section-hint">
+                    When the previous hour reaches its minimum, this hour's stamps
+                    become bonus reward stamps.
+                  </p>
+                </>
+              ) : (
+                <p className="tag-section-hint">No hourly requirement — plain records.</p>
+              )}
+            </div>
 
-        {hourly && (
-          <div className="row-form">
-            <label className="field inline grow">
-              <span>1. Min work done from previous hour</span>
-              <input
-                inputMode="numeric"
-                value={minPrevInput}
-                onChange={(e) => setMinPrevInput(e.target.value)}
-                placeholder="0"
-                required
-              />
+            {canEdit && (
+              <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+                <button type="button" className="btn" onClick={() => onMode('edit')}>
+                  Edit station
+                </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <form className="stack" style={{ gap: '0.9rem' }} onSubmit={save}>
+            <label className="field">
+              <span>Station name</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
             </label>
-            <label className="field inline grow">
-              <span>2. Work done in this hour (max)</span>
-              <input
-                inputMode="numeric"
-                value={targetInput}
-                onChange={(e) => setTargetInput(e.target.value)}
-                placeholder="6"
-                required
-              />
-            </label>
-          </div>
-        )}
-        {hourly && (
-          <p className="muted small" style={{ margin: 0 }}>
-            When the previous hour reaches its minimum, this hour's stamps become
-            bonus reward stamps.
-          </p>
-        )}
 
-        <div className="row-form spread">
-          <button
-            type="button"
-            className="btn ghost danger"
-            onClick={onDelete}
-          >
-            Delete station
-          </button>
-          <span className="row-form">
-            <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-            <button className="btn" type="submit" disabled={saving}>
-              {saving ? 'Saving…' : 'Save station'}
-            </button>
-          </span>
-        </div>
-      </form>
+            <div className="field">
+              <span>Work requirement (shown in the mobile view)</span>
+              <label className="checkbox small" style={{ margin: 0 }}>
+                <input type="checkbox" checked={hourly} onChange={(e) => setHourly(e.target.checked)} />{' '}
+                Hourly count — records are counted per hour (stamp card)
+              </label>
+            </div>
+
+            {hourly && (
+              <div className="row-form">
+                <label className="field inline grow">
+                  <span>1. Min work done from previous hour</span>
+                  <input
+                    inputMode="numeric"
+                    value={minPrevInput}
+                    onChange={(e) => setMinPrevInput(e.target.value)}
+                    placeholder="0"
+                    required
+                  />
+                </label>
+                <label className="field inline grow">
+                  <span>2. Work done in this hour (max)</span>
+                  <input
+                    inputMode="numeric"
+                    value={targetInput}
+                    onChange={(e) => setTargetInput(e.target.value)}
+                    placeholder="6"
+                    required
+                  />
+                </label>
+              </div>
+            )}
+            {hourly && (
+              <p className="muted small" style={{ margin: 0 }}>
+                When the previous hour reaches its minimum, this hour's stamps become
+                bonus reward stamps.
+              </p>
+            )}
+
+            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+              <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>
+              <button className="btn" type="submit" disabled={saving}>
+                {saving ? 'Saving…' : 'Save station'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   )
 }
@@ -603,16 +682,22 @@ function StationEditModal({
 /* do.                                                                */
 /* ------------------------------------------------------------------ */
 
-function TagEditModal({
+function TagModal({
   grade,
+  mode,
+  canEdit,
   nextTier,
   usedColors,
+  onMode,
   onClose,
   onSaved,
 }: {
   grade: Grade | null
+  mode: Mode
+  canEdit: boolean
   nextTier: number
   usedColors: string[]
+  onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
 }) {
@@ -678,9 +763,45 @@ function TagEditModal({
       </label>
     ))
 
+  // Cancelling drops what was typed and shows the saved tag again. A tag
+  // being created has no saved face to return to, so Cancel closes.
+  function cancel() {
+    if (!grade) return onClose()
+    setName(grade.name)
+    setModules(isSuper ? MODULE_OPTIONS.map((m) => m.key) : grade.modules ?? [...DEFAULT_MODULES])
+    setCapabilities(
+      isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade.capabilities ?? ['data-entry']),
+    )
+    setError(null)
+    onMode('view')
+  }
+
+  if (mode === 'view' && grade) {
+    return (
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal modal-view" onClick={(e) => e.stopPropagation()}>
+          <div className="row-form spread">
+            <h2>Tier access</h2>
+            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          </div>
+
+          <TierAccessSheet grade={grade} />
+
+          {canEdit && (
+            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+              <button type="button" className="btn" onClick={() => onMode('edit')}>
+                Edit tag
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal modal-wide" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+      <form className="modal modal-view" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="row-form spread">
           <h2>{grade ? 'Edit tag' : 'New tag'}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
@@ -775,7 +896,7 @@ function TagEditModal({
         </div>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>
           <button className="btn" type="submit" disabled={saving}>
             {saving ? 'Saving…' : grade ? 'Save tag' : 'Create tag'}
           </button>
