@@ -50,7 +50,26 @@ export interface Profile {
   bank_account?: string | null
   joined_on?: string | null
   // Display name of the team this person LEADS (e.g. "Team A").
+  // Legacy: kept so older rows keep reading, superseded by team_id.
   team_name?: string | null
+  // The team this person belongs to (Worker Management board).
+  team_id?: string | null
+}
+
+/**
+ * A team box on the Worker Management board. It is created ON a tier row
+ * (grade_id = that tier) and groups people from that tier downward, so a
+ * team made by a Station Head also holds that team's assistant station
+ * heads and operators one row below. station_id is null for teams created
+ * above the station-head tier — those belong to every station.
+ */
+export interface Team {
+  id: string
+  name: string
+  grade_id: string | null
+  station_id: string | null
+  created_by: string | null
+  sort_order: number
 }
 
 // Rows of the work tables (see supabase/setup.sql).
