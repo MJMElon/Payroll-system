@@ -1,23 +1,26 @@
 // ---------------------------------------------------------------------------
-// WORKER MANAGEMENT MODULE — the day-to-day team tool (Settings → User
-// access stays the SYSTEM setting for engineer tier and above).
+// WORKER MANAGEMENT — the team floor plan.
 //
-// Three sections, left to right:
-//   1. NEW SIGN UPS  — accounts waiting for a team; drag one into the chart.
-//   2. TEAM CHART    — one lane per tier tag (Management excluded), drawn
-//                      straight from the grades table, so adding or
-//                      removing a tier reshapes the chart automatically.
-//                      Blocks show name / tier / station only, and drag &
-//                      drop moves someone under a new leader.
-//   3. WORKER PANEL  — opens when a block is clicked: monthly basic salary,
-//                      the piece-rate contracts that person is entitled to,
-//                      and the work they have done (this month for now —
-//                      history filters come later).
+// The page is a board, read top to bottom:
 //
-// Access: ANY leader may drag a new sign-up into THEIR OWN team — that
-// needs no capability. Editing a profile needs "Edit worker profile &
-// salary", and assigning into someone else's team needs "Assign workers to
-// ANY team"; both are granted per tier in Settings → Tags management.
+//   TIER NAME                        one row per tier tag (Management aside)
+//     Station name                   from the station-head tier downward only
+//       [ Team A ][ Team B ][ + ]    teams, with their people inside
+//
+// A team is created ON a tier row ("+ Team") and groups people from that
+// tier DOWNWARD — so the teams a Station Head makes at their station also
+// hold that team's assistant station heads and operators one row below.
+// Only the tier that owns a team (and the tiers above it) may rename or
+// remove it; an assistant station head can still drop a new sign-up into
+// the team they themselves sit in, at their own station.
+//
+// New sign-ups live behind the header button, which carries an app-style
+// red counter. Open it and drag a card straight into a team box.
+//
+// Access: any leader may fill a team they own or belong to — that needs no
+// capability. Editing a profile needs "Edit worker profile & salary", and
+// filling someone else's team needs "Assign workers to ANY team"; both are
+// granted per tier in Settings → Tags management.
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -34,10 +37,36 @@ import {
   type ProductionEntry,
   type Profile,
   type Station,
+  type Team,
 } from '../../lib/supabase'
 
 const TIER1_UNIT_CAP = 4
 const RM = (n: number) => `RM ${n.toFixed(2)}`
+// Section key used for "no station" / "every station" groups.
+const ALL_STATIONS = '__all__'
+
+/** A team box drawn in one tier row; `team: null` is the loose box. */
+type TeamBox = { key: string; team: Team | null; people: Profile[] }
+/** A station group inside a tier row (station null = belongs to all). */
+type BoardSection = { key: string; station: Station | null; boxes: TeamBox[]; count: number }
+/** One tier row of the board. */
+type BoardRow = {
+  key: string
+  grade: Grade | null
+  tier: number
+  stationScoped: boolean
+  sections: BoardSection[]
+  count: number
+}
+
+/** First unused "Team A", "Team B", … for a box that has just been added. */
+function nextTeamName(taken: string[]): string {
+  for (let i = 0; i < 26; i++) {
+    const name = `Team ${String.fromCharCode(65 + i)}`
+    if (!taken.includes(name)) return name
+  }
+  return `Team ${taken.length + 1}`
+}
 
 export default function WorkerManagement() {
   const { profile } = useAuth()
@@ -45,31 +74,38 @@ export default function WorkerManagement() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [stations, setStations] = useState<Station[]>([])
+  const [teams, setTeams] = useState<Team[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<PieceRate[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editWorker, setEditWorker] = useState<Profile | null>(null)
+  const [signupsOpen, setSignupsOpen] = useState(false)
+  const [closedRows, setClosedRows] = useState<Record<string, boolean>>({})
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
   const [dragId, setDragId] = useState<string | null>(null)
-  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const [dropKey, setDropKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   async function load() {
-    const [p, g, s, j, r] = await Promise.all([
+    const [p, g, s, t, j, r] = await Promise.all([
       supabase.from('access_profiles').select('*').order('full_name'),
       supabase.from('grades').select('*').order('sort_order'),
       supabase.from('stations').select('*').order('sort_order'),
+      supabase.from('teams').select('*').order('sort_order'),
       supabase
         .from('jobs')
         .select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
       supabase.from('piece_rates').select('id, job_id, rate, effective_from, tier2_rate'),
     ])
-    const err = p.error || g.error || s.error
+    const err = p.error || g.error || s.error || t.error
     if (err) setError(err.message)
     setProfiles((p.data ?? []) as Profile[])
     setGrades(((g.data ?? []) as Grade[]).sort((a, b) => a.sort_order - b.sort_order))
     setStations(s.data ?? [])
+    setTeams((t.data ?? []) as Team[])
     setJobs((j.data ?? []) as Job[])
     setRates(r.data ?? [])
     setLoading(false)
@@ -83,11 +119,13 @@ export default function WorkerManagement() {
   const myTier = myGrade?.sort_order ?? null
   const myCaps = effectiveCapabilities(myGrade)
   const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
+  // An admin without a tier tag still outranks everyone on the board.
+  const myTierEff = myTier ?? (isAdmin ? 0 : Number.MAX_SAFE_INTEGER)
 
-  // Who sees every team vs. only their own subtree.
+  // Who sees every team vs. only their own corner of the board.
   const seesAll = isAdmin || myTier === 1 || myCaps.includes('user-access')
   const isLeader = seesAll || (myTier !== null && myTier < bottomTier)
-  // Granted functions. Claiming into your OWN team is always allowed.
+  // Granted functions. Filling a team you own or belong to is always allowed.
   const canEditProfile = isAdmin || myTier === 1 || myCaps.includes('worker-edit')
   const canAssignAnywhere =
     isAdmin || myTier === 1 || myCaps.includes('user-access') || myCaps.includes('worker-assign-any')
@@ -95,12 +133,34 @@ export default function WorkerManagement() {
   const tierOf = (p: Profile) =>
     p.grade_id ? grades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
   const gradeOf = (p: Profile) => grades.find((g) => g.id === p.grade_id)
+  const teamOf = (p: Profile) => (p.team_id ? teams.find((t) => t.id === p.team_id) ?? null : null)
+  const teamTier = (t: Team) => grades.find((g) => g.id === t.grade_id)?.sort_order ?? 0
   const stationLabel = (p: Profile) => {
     const ids =
       p.station_ids && p.station_ids.length > 0 ? p.station_ids : p.station_id ? [p.station_id] : []
     if (ids.length === 0) return 'All stations'
     return ids.map((id) => stations.find((st) => st.id === id)?.name ?? '?').join(', ')
   }
+
+  const myStationIds = useMemo(
+    () =>
+      profile?.station_ids && profile.station_ids.length > 0
+        ? profile.station_ids
+        : profile?.station_id
+          ? [profile.station_id]
+          : [],
+    [profile],
+  )
+  // Stations I work with. Holding no station tag means "all of them".
+  const scopeStations = useMemo(
+    () =>
+      seesAll || myStationIds.length === 0
+        ? stations
+        : stations.filter((s) => myStationIds.includes(s.id)),
+    [seesAll, myStationIds, stations],
+  )
+  const stationInScope = (id: string | null) =>
+    id === null || seesAll || myStationIds.length === 0 || myStationIds.includes(id)
 
   const confirmed = profiles.filter((p) => p.tags_confirmed)
   const pending = profiles.filter((p) => !p.tags_confirmed)
@@ -114,254 +174,523 @@ export default function WorkerManagement() {
     }
     return false
   }
-  const visible = seesAll ? confirmed : confirmed.filter(inMyTeam)
+  // A leader sees their reporting line, the teams they may fill, and the
+  // lower tiers at their own stations — the people they can actually place.
+  const visible = seesAll
+    ? confirmed
+    : confirmed.filter((p) => {
+        if (inMyTeam(p)) return true
+        if (p.team_id && (p.team_id === profile?.team_id || canFillTeamId(p.team_id))) return true
+        const t = tierOf(p)
+        if (t !== null && myTier !== null && t > myTier) {
+          const ids = p.station_ids?.length ? p.station_ids : p.station_id ? [p.station_id] : []
+          return ids.length === 0 || ids.some((id) => stationInScope(id))
+        }
+        return false
+      })
 
-  // May I move this person into a different team?
-  const canMove = (p: Profile) =>
-    p.id !== profile?.id &&
-    (canAssignAnywhere || p.supervisor_id === profile?.id || inMyTeam(p))
-  // May a dragged person be dropped onto this block? Default is your own
-  // block only — "upper picks lower", into your own team.
-  const canDropOn = (target: Profile) => canAssignAnywhere || target.id === profile?.id
+  function canFillTeamId(id: string): boolean {
+    const t = teams.find((x) => x.id === id)
+    return t ? canFillTeam(t) : false
+  }
+  /** May I rename / remove / add boxes at this tier + station? */
+  function canOwnTeamsAt(tier: number, stationId: string | null): boolean {
+    if (canAssignAnywhere) return true
+    return myTier !== null && myTier <= tier && stationInScope(stationId)
+  }
+  /** May I drop someone into this box? */
+  function canFillTeam(t: Team): boolean {
+    if (t.id === profile?.team_id) return true
+    return canOwnTeamsAt(teamTier(t), t.station_id)
+  }
+  const canManageTeam = (t: Team) => canOwnTeamsAt(teamTier(t), t.station_id)
 
   const selected = selectedId ? profiles.find((p) => p.id === selectedId) ?? null : null
 
-  /* ---------------- assignment actions ---------------- */
+  /* ---------------- board model ---------------- */
 
-  async function assignTo(person: Profile, leader: Profile) {
-    if (person.id === leader.id) return
-    const pt = tierOf(person)
-    const lt = tierOf(leader)
-    if (pt !== null && lt !== null && lt >= pt) {
-      return setError('A worker can only be placed under a strictly higher tier.')
+  // The first tier that is tied to ONE station — everything from here down
+  // is grouped by station name, the tiers above belong to every station.
+  // Read from the tag names, and if none look like a station tier, from the
+  // data (the highest tier whose people carry station tags).
+  const stationTier = useMemo(() => {
+    const named = grades
+      .filter((g) => /station/i.test(g.name))
+      .sort((a, b) => a.sort_order - b.sort_order)[0]
+    if (named) return named.sort_order
+    const tiers = grades
+      .filter((g) =>
+        profiles.some(
+          (p) =>
+            p.grade_id === g.id && ((p.station_ids?.length ?? 0) > 0 || Boolean(p.station_id)),
+        ),
+      )
+      .map((g) => g.sort_order)
+    return tiers.length > 0 ? Math.min(...tiers) : null
+  }, [grades, profiles])
+
+  const board: BoardRow[] = useMemo(() => {
+    const teamById = new Map(teams.map((t) => [t.id, t]))
+    const stationById = new Map(stations.map((s) => [s.id, s]))
+    const tierOfTeam = (t: Team) => grades.find((g) => g.id === t.grade_id)?.sort_order ?? 0
+
+    // Which station group a person is drawn in: their team's station wins,
+    // otherwise their first station tag.
+    const sectionKeyOf = (p: Profile): string => {
+      const t = p.team_id ? teamById.get(p.team_id) : undefined
+      if (t) return t.station_id ?? ALL_STATIONS
+      const ids = p.station_ids?.length ? p.station_ids : p.station_id ? [p.station_id] : []
+      return ids[0] ?? ALL_STATIONS
+    }
+    const orderOf = (key: string) =>
+      key === ALL_STATIONS ? Number.MAX_SAFE_INTEGER : stationById.get(key)?.sort_order ?? 9999
+
+    const rows: BoardRow[] = []
+    const laneGrades = grades.filter((g) => g.sort_order !== 1)
+
+    for (const g of laneGrades) {
+      const tier = g.sort_order
+      const people = visible.filter((p) => p.grade_id === g.id)
+      const stationScoped = stationTier !== null && tier >= stationTier
+      // Teams created at this tier or any tier above it reach down to here.
+      const rowTeams = teams.filter(
+        (t) => tierOfTeam(t) <= tier && (stationScoped || t.station_id === null),
+      )
+
+      const keys = new Set<string>()
+      if (stationScoped) {
+        scopeStations.forEach((s) => keys.add(s.id))
+        people.forEach((p) => keys.add(sectionKeyOf(p)))
+        rowTeams.forEach((t) => keys.add(t.station_id ?? ALL_STATIONS))
+      } else {
+        keys.add(ALL_STATIONS)
+      }
+
+      const sections = Array.from(keys)
+        .sort((a, b) => orderOf(a) - orderOf(b))
+        .map<BoardSection>((key) => {
+          const station = key === ALL_STATIONS ? null : stationById.get(key) ?? null
+          const secPeople = stationScoped ? people.filter((p) => sectionKeyOf(p) === key) : people
+          const secTeams = rowTeams.filter((t) => (t.station_id ?? ALL_STATIONS) === key)
+          const boxes: TeamBox[] = secTeams.map((t) => ({
+            key: t.id,
+            team: t,
+            people: secPeople.filter((p) => p.team_id === t.id),
+          }))
+          boxes.push({
+            key: `loose:${g.id}:${key}`,
+            team: null,
+            people: secPeople.filter((p) => !p.team_id || !secTeams.some((t) => t.id === p.team_id)),
+          })
+          return { key, station, boxes, count: secPeople.length }
+        })
+        // Keep the station groups this viewer actually works with: the ones
+        // holding people, plus the empty ones they may still put a team in.
+        // The "all stations" group (teams made above the station tier) only
+        // shows where it holds someone, or to a full-board viewer.
+        .filter((sec) => {
+          if (!stationScoped) return true
+          if (sec.count > 0) return true
+          if (!sec.station) return seesAll
+          if (!stationInScope(sec.station.id)) return false
+          return sec.boxes.some((b) => b.team) || canOwnTeamsAt(tier, sec.station.id)
+        })
+
+      // A tier you cannot reach into and hold nobody in is just noise —
+      // the full-board viewer keeps it, since an empty tier is news.
+      if (seesAll || people.length > 0 || tier > myTierEff) {
+        rows.push({ key: g.id, grade: g, tier, stationScoped, sections, count: people.length })
+      }
+    }
+
+    const untagged = visible.filter((p) => !p.grade_id)
+    if (untagged.length > 0) {
+      rows.push({
+        key: 'untagged',
+        grade: null,
+        tier: bottomTier + 1,
+        stationScoped: false,
+        count: untagged.length,
+        sections: [
+          {
+            key: ALL_STATIONS,
+            station: null,
+            count: untagged.length,
+            boxes: [{ key: 'loose:untagged', team: null, people: untagged }],
+          },
+        ],
+      })
+    }
+    return rows
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grades, stations, teams, visible, scopeStations, stationTier, seesAll, bottomTier, myTierEff])
+
+  const leaderName = (p: Profile) => {
+    const sup = p.supervisor_id ? profiles.find((x) => x.id === p.supervisor_id) : null
+    return sup ? profileName(sup) : null
+  }
+
+  /* ---------------- team actions ---------------- */
+
+  async function createTeam(grade: Grade, station: Station | null) {
+    const siblings = teams.filter(
+      (t) => t.grade_id === grade.id && (t.station_id ?? null) === (station?.id ?? null),
+    )
+    const name = nextTeamName(siblings.map((t) => t.name))
+    setError(null)
+    const { data, error } = await supabase
+      .from('teams')
+      .insert({
+        name,
+        grade_id: grade.id,
+        station_id: station?.id ?? null,
+        created_by: profile?.id ?? null,
+        sort_order: siblings.length,
+      })
+      .select()
+      .single()
+    if (error) return setError(error.message)
+    // Making a team at your OWN tier puts you in it, so the box has a
+    // leader from the start.
+    if (data && profile && profile.grade_id === grade.id && !profile.team_id) {
+      await supabase.from('access_profiles').update({ team_id: data.id }).eq('id', profile.id)
+    }
+    setNotice(`${name} added to ${grade.name}${station ? ` · ${station.name}` : ''}.`)
+    if (data) {
+      setRenamingId(data.id)
+      setRenameDraft(data.name)
+    }
+    load()
+  }
+
+  async function saveTeamName(team: Team) {
+    const name = renameDraft.trim()
+    setRenamingId(null)
+    if (!name || name === team.name) return
+    const { error } = await supabase.from('teams').update({ name }).eq('id', team.id)
+    if (error) return setError(error.message)
+    setError(null)
+    load()
+  }
+
+  async function removeTeam(team: Team, members: number) {
+    const warn =
+      members > 0
+        ? `Remove ${team.name}? Its ${members} member${members === 1 ? '' : 's'} stay on the board, out of a team.`
+        : `Remove ${team.name}?`
+    if (!window.confirm(warn)) return
+    const { error } = await supabase.from('teams').delete().eq('id', team.id)
+    if (error) return setError(error.message)
+    setError(null)
+    setNotice(`${team.name} removed.`)
+    load()
+  }
+
+  /* ---------------- placing people ---------------- */
+
+  async function place(person: Profile, row: BoardRow, section: BoardSection, box: TeamBox) {
+    if (!row.grade) return setError('That row has no tier tag to place someone into.')
+    if (person.id === profile?.id) return
+    if (row.tier <= myTierEff) {
+      return setError('You can only place someone into a tier below your own.')
+    }
+    if (box.team ? !canFillTeam(box.team) : !canOwnTeamsAt(row.tier, section.station?.id ?? null)) {
+      return setError(
+        'That box is not yours to fill. The "Assign workers to ANY team" function opens this up.',
+      )
+    }
+    if (person.tags_confirmed && person.team_id && !canFillTeamId(person.team_id)) {
+      return setError('You can only move workers out of a team you manage.')
     }
     setError(null)
-    const { error } = await supabase
-      .from('access_profiles')
-      .update({
-        supervisor_id: leader.id,
-        station_ids: leader.station_ids ?? [],
-        station_id: leader.station_ids?.[0] ?? leader.station_id ?? null,
-        tags_confirmed: true,
-      })
-      .eq('id', person.id)
+
+    // The team's own leader takes the reporting line where there is one.
+    const leader = box.team
+      ? profiles.find(
+          (p) => p.id === box.team?.created_by && (tierOf(p) ?? Number.MAX_SAFE_INTEGER) < row.tier,
+        ) ??
+        profiles.find(
+          (p) => p.team_id === box.team?.id && (tierOf(p) ?? Number.MAX_SAFE_INTEGER) < row.tier,
+        )
+      : null
+    const supervisor = leader ?? (myTierEff < row.tier ? profile : null)
+
+    const patch: Record<string, unknown> = {
+      grade_id: row.grade.id,
+      team_id: box.team?.id ?? null,
+      supervisor_id: supervisor?.id ?? person.supervisor_id ?? null,
+      tags_confirmed: true,
+    }
+    if (row.stationScoped && section.station) {
+      patch.station_ids = [section.station.id]
+      patch.station_id = section.station.id
+    }
+
+    const { error } = await supabase.from('access_profiles').update(patch).eq('id', person.id)
     if (error) return setError(error.message)
-    const teamName =
-      leader.id === profile?.id
-        ? 'your team'
-        : leader.team_name ?? `${profileName(leader)}'s team`
-    setNotice(`${profileName(person)} added to ${teamName}.`)
+    const where = box.team ? box.team.name : `${row.grade.name}, no team`
+    setNotice(`${profileName(person)} placed in ${where}.`)
     load()
   }
 
   // The dragged id travels in the DataTransfer as well as in state: on a
   // real drag both agree, but the payload is what the drop event actually
   // carries, so it stays correct even if React has not re-rendered yet.
-  function handleDrop(target: Profile, e: React.DragEvent) {
+  function handleDrop(row: BoardRow, section: BoardSection, box: TeamBox, e: React.DragEvent) {
+    e.preventDefault()
     const carried = e.dataTransfer.getData('text/plain')
     const dragged = profiles.find((p) => p.id === (carried || dragId))
     setDragId(null)
-    setDropTargetId(null)
-    if (!dragged) return
-    if (!canDropOn(target)) {
-      return setError(
-        'You can only add workers to your own team. The "Assign workers to ANY team" function opens this up.',
-      )
-    }
-    if (dragged.tags_confirmed && !canMove(dragged)) {
-      return setError('You can only move workers who are already in your team.')
-    }
-    assignTo(dragged, target)
+    setDropKey(null)
+    if (dragged) place(dragged, row, section, box)
   }
 
-  /* ---------------- chart model ---------------- */
-
-  // One lane per tier tag, Management (tier 1) excluded, straight from the
-  // grades table — add or remove a tier and the chart follows.
-  const lanes = useMemo(() => {
-    const list = grades
-      .filter((g) => g.sort_order !== 1)
-      .map((g) => ({
-        grade: g as Grade | null,
-        people: visible.filter((p) => p.grade_id === g.id),
-      }))
-    const untagged = visible.filter((p) => !p.grade_id)
-    if (untagged.length > 0) list.push({ grade: null, people: untagged })
-    // A full-chart viewer keeps empty lanes (they show the tier exists);
-    // someone scoped to their own team would just see noise.
-    return seesAll ? list : list.filter((l) => l.people.length > 0)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grades, visible, seesAll])
-
-  const leaderName = (p: Profile) => {
-    const sup = p.supervisor_id ? profiles.find((x) => x.id === p.supervisor_id) : null
-    return sup ? profileName(sup) : null
+  function dragProps(p: Profile) {
+    return {
+      draggable: true,
+      onDragStart: (e: React.DragEvent) => {
+        e.dataTransfer.setData('text/plain', p.id)
+        e.dataTransfer.effectAllowed = 'move'
+        setDragId(p.id)
+      },
+      onDragEnd: () => {
+        setDragId(null)
+        setDropKey(null)
+      },
+    }
   }
-  const reportCount = (id: string) => profiles.filter((p) => p.supervisor_id === id).length
 
   if (loading) return <p className="muted">Loading…</p>
 
   if (!isLeader) {
     return (
-      <div className="stack">
-        <div>
-          <Link to="/" className="small muted backlink">← Back to main page</Link>
-          <h1>Worker Management</h1>
-        </div>
+      <div className="wm-page">
+        <header className="wm-head">
+          <Link to="/" className="btn ghost wm-back">← Back to main page</Link>
+          <h1 className="wm-title">Worker Management</h1>
+        </header>
         <div className="card"><p className="muted">Only team leaders (upper tiers) can manage workers.</p></div>
       </div>
     )
   }
 
   return (
-    <div className="stack">
-      <div>
-        <Link to="/" className="small muted backlink">← Back to main page</Link>
-        <h1>Worker Management</h1>
-        <p className="muted">
-          Drag a new sign-up into the chart to add them to a team. Click anyone
-          to open their details.
-        </p>
-      </div>
+    <div className="wm-page" style={wideStyle}>
+      <header className="wm-head">
+        <Link to="/" className="btn ghost wm-back">← Back to main page</Link>
+        <h1 className="wm-title">Worker Management</h1>
+        <div className="wm-head-actions">
+          <button
+            type="button"
+            className={`btn badge-holder wm-signup-btn ${signupsOpen ? 'open' : ''}`}
+            aria-expanded={signupsOpen}
+            onClick={() => setSignupsOpen((v) => !v)}
+          >
+            New sign ups
+            <span className="wm-caret" aria-hidden="true">{signupsOpen ? '▲' : '▼'}</span>
+            {pending.length > 0 && <span className="count-badge">{pending.length}</span>}
+          </button>
+        </div>
+      </header>
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
-      <div className="wm-layout" style={wideStyle}>
-        {/* ---------- 1. New sign ups ---------- */}
-        <aside className="wm-col wm-signups">
-          <div className="wm-col-head">
-            <h3>New sign ups</h3>
-            {pending.length > 0 && <span className="count-badge static">{pending.length}</span>}
-          </div>
+      {signupsOpen && (
+        <section className="wm-signups">
           {pending.length === 0 ? (
-            <p className="muted small">No new sign ups waiting.</p>
+            <p className="muted small wm-signups-empty">No new sign ups waiting.</p>
           ) : (
-            <>
-              <p className="muted small" style={{ margin: 0 }}>
-                Drag a card onto {canAssignAnywhere ? 'any leader' : 'your own block'} in the chart.
-              </p>
+            <div className="wm-signup-strip">
               {pending.map((p) => (
-                <div
+                <article
                   key={p.id}
                   className={`wm-signup-card ${dragId === p.id ? 'dragging' : ''}`}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('text/plain', p.id)
-                    e.dataTransfer.effectAllowed = 'move'
-                    setDragId(p.id)
-                  }}
-                  onDragEnd={() => {
-                    setDragId(null)
-                    setDropTargetId(null)
-                  }}
+                  {...dragProps(p)}
                 >
-                  <div className="wm-signup-top">
-                    <span className="wm-block-name">{profileName(p)}</span>
-                    <span className="badge new">new</span>
-                  </div>
-                  <div className="wm-block-meta">{gradeOf(p)?.name ?? 'No tier yet'}</div>
-                  {profile && (
-                    <button className="btn sm" onClick={() => assignTo(p, profile)}>
-                      + Add to my team
+                  <span className="wm-signup-name">{profileName(p)}</span>
+                  <span className="wm-signup-meta">{p.email ?? gradeOf(p)?.name ?? 'No tier yet'}</span>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      <div className={`wm-body ${selected ? 'with-panel' : ''}`}>
+        <section className="wm-board">
+          {board.length === 0 && <p className="muted small">No tiers to show yet.</p>}
+
+          {board.map((row) => {
+            const shut = closedRows[row.key]
+            return (
+              <div className="wm-row" key={row.key}>
+                <div className="wm-row-head">
+                  <button
+                    type="button"
+                    className="wm-row-toggle"
+                    aria-expanded={!shut}
+                    onClick={() => setClosedRows((c) => ({ ...c, [row.key]: !c[row.key] }))}
+                  >
+                    <span className="wm-row-caret" aria-hidden="true">{shut ? '▸' : '▾'}</span>
+                    <span className={`tag-dot dot-${row.grade?.color ?? 'grey'}`} aria-hidden="true" />
+                    <h2 className="wm-row-title">{row.grade?.name ?? 'No tier tag'}</h2>
+                    <span className="wm-row-count">{row.count}</span>
+                  </button>
+                  {row.grade && !row.stationScoped && canOwnTeamsAt(row.tier, null) && (
+                    <button
+                      type="button"
+                      className="wm-add"
+                      title={`Add a team at ${row.grade.name}`}
+                      onClick={() => createTeam(row.grade as Grade, null)}
+                    >
+                      + Team
                     </button>
                   )}
                 </div>
-              ))}
-            </>
-          )}
-        </aside>
 
-        {/* ---------- 2. Team chart ---------- */}
-        <section className="wm-col wm-chart">
-          <div className="wm-col-head">
-            <h3>{seesAll ? 'Team structure' : 'My team structure'}</h3>
-            <span className="muted small">{visible.length} people</span>
-          </div>
-
-          {lanes.every((l) => l.people.length === 0) && (
-            <p className="muted small">No team members yet.</p>
-          )}
-
-          {lanes.map((lane) => (
-            <div className="wm-lane" key={lane.grade?.id ?? 'untagged'}>
-              <div className="wm-lane-head">
-                <span className={`tag-dot dot-${lane.grade?.color ?? 'grey'}`} aria-hidden="true" />
-                <span className="wm-lane-title">{lane.grade?.name ?? 'No tier tag'}</span>
-                <span className="wm-lane-count">{lane.people.length}</span>
-              </div>
-              <div className="wm-lane-body">
-                {lane.people.length === 0 ? (
-                  <span className="muted small wm-lane-empty">—</span>
-                ) : (
-                  lane.people.map((p) => {
-                    const under = reportCount(p.id)
-                    const lead = leaderName(p)
-                    const isMe = p.id === profile?.id
-                    return (
-                      <div
-                        key={p.id}
-                        className={[
-                          'wm-block',
-                          selectedId === p.id ? 'selected' : '',
-                          dragId === p.id ? 'dragging' : '',
-                          dropTargetId === p.id ? 'droppable' : '',
-                          isMe ? 'me' : '',
-                        ].join(' ')}
-                        draggable={canMove(p)}
-                        onDragStart={(e) => {
-                          if (!canMove(p)) return
-                          e.dataTransfer.setData('text/plain', p.id)
-                          e.dataTransfer.effectAllowed = 'move'
-                          setDragId(p.id)
-                        }}
-                        onDragEnd={() => {
-                          setDragId(null)
-                          setDropTargetId(null)
-                        }}
-                        onDragOver={(e) => {
-                          if (dragId === p.id) return
-                          e.preventDefault()
-                          e.dataTransfer.dropEffect = 'move'
-                          setDropTargetId(p.id)
-                        }}
-                        onDragLeave={() => setDropTargetId((cur) => (cur === p.id ? null : cur))}
-                        onDrop={(e) => {
-                          e.preventDefault()
-                          handleDrop(p, e)
-                        }}
-                        onClick={() => setSelectedId(p.id)}
-                      >
-                        <div className="wm-block-name">
-                          {profileName(p)}
-                          {isMe && <span className="you-chip">you</span>}
+                {!shut &&
+                  row.sections.map((section) => (
+                    <div className="wm-section" key={`${row.key}:${section.key}`}>
+                      {row.stationScoped && (
+                        <div className="wm-section-head">
+                          <span className="wm-station-name">
+                            {section.station?.name ?? 'All stations'}
+                          </span>
+                          <span className="wm-section-count">{section.count}</span>
+                          {row.grade && section.station && canOwnTeamsAt(row.tier, section.station.id) && (
+                            <button
+                              type="button"
+                              className="wm-add"
+                              title={`Add a team at ${row.grade.name}${section.station ? ` · ${section.station.name}` : ''}`}
+                              onClick={() => createTeam(row.grade as Grade, section.station)}
+                            >
+                              + Team
+                            </button>
+                          )}
                         </div>
-                        <div className="wm-block-meta">{stationLabel(p)}</div>
-                        <div className="wm-block-foot">
-                          {lead ? <span title="Reports to">▲ {lead}</span> : <span className="muted">no leader</span>}
-                          {under > 0 && <span className="wm-under">{under} under</span>}
-                        </div>
+                      )}
+
+                      <div className="wm-boxes">
+                        {section.boxes.map((box) => {
+                          const key = `${row.key}:${section.key}:${box.key}`
+                          const canFill = box.team
+                            ? canFillTeam(box.team)
+                            : canOwnTeamsAt(row.tier, section.station?.id ?? null)
+                          const editable = box.team ? canManageTeam(box.team) : false
+                          return (
+                            <div
+                              key={key}
+                              className={[
+                                'wm-box',
+                                box.team ? '' : 'loose',
+                                dropKey === key ? 'over' : '',
+                                canFill ? '' : 'locked',
+                              ].join(' ')}
+                              onDragOver={(e) => {
+                                if (!canFill) return
+                                e.preventDefault()
+                                e.dataTransfer.dropEffect = 'move'
+                                setDropKey(key)
+                              }}
+                              onDragLeave={() => setDropKey((cur) => (cur === key ? null : cur))}
+                              onDrop={(e) => handleDrop(row, section, box, e)}
+                            >
+                              <div className="wm-box-head">
+                                {box.team && renamingId === box.team.id ? (
+                                  <input
+                                    className="wm-box-input"
+                                    autoFocus
+                                    value={renameDraft}
+                                    onChange={(e) => setRenameDraft(e.target.value)}
+                                    onBlur={() => saveTeamName(box.team as Team)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') saveTeamName(box.team as Team)
+                                      if (e.key === 'Escape') setRenamingId(null)
+                                    }}
+                                  />
+                                ) : (
+                                  <span className="wm-box-name">
+                                    {box.team ? box.team.name : 'No team'}
+                                  </span>
+                                )}
+                                <span className="wm-box-count">{box.people.length}</span>
+                                {box.team && editable && renamingId !== box.team.id && (
+                                  <span className="wm-box-tools">
+                                    <button
+                                      type="button"
+                                      className="wm-icon"
+                                      title="Rename team"
+                                      onClick={() => {
+                                        setRenamingId(box.team!.id)
+                                        setRenameDraft(box.team!.name)
+                                      }}
+                                    >
+                                      ✎
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="wm-icon danger"
+                                      title="Remove team"
+                                      onClick={() => removeTeam(box.team as Team, box.people.length)}
+                                    >
+                                      ×
+                                    </button>
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="wm-box-body">
+                                {box.people.length === 0 ? (
+                                  <span className="wm-box-empty">
+                                    {canFill ? 'Drop someone here' : 'Empty'}
+                                  </span>
+                                ) : (
+                                  box.people.map((p) => {
+                                    const isMe = p.id === profile?.id
+                                    const lead = leaderName(p)
+                                    return (
+                                      <div
+                                        key={p.id}
+                                        className={[
+                                          'wm-person',
+                                          selectedId === p.id ? 'selected' : '',
+                                          dragId === p.id ? 'dragging' : '',
+                                          isMe ? 'me' : '',
+                                        ].join(' ')}
+                                        onClick={() => setSelectedId(p.id)}
+                                        {...dragProps(p)}
+                                      >
+                                        <span className="wm-person-name">
+                                          {profileName(p)}
+                                          {isMe && <span className="you-chip">you</span>}
+                                        </span>
+                                        <span className="wm-person-meta">
+                                          {p.employee_code ? `${p.employee_code} · ` : ''}
+                                          {lead ? `▲ ${lead}` : stationLabel(p)}
+                                        </span>
+                                      </div>
+                                    )
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
-                    )
-                  })
-                )}
+                    </div>
+                  ))}
               </div>
-            </div>
-          ))}
-
-          <p className="muted small">
-            Drag a block onto a leader to move that person into their team — the
-            target must be a strictly higher tier.
-            {!canAssignAnywhere && ' You can add into your own team only.'}
-          </p>
+            )
+          })}
         </section>
 
-        {/* ---------- 3. Worker panel ---------- */}
-        <aside className="wm-col wm-detail">
-          {selected ? (
+        {selected && (
+          <aside className="wm-panel">
             <WorkerPanel
               person={selected}
               grade={gradeOf(selected) ?? null}
+              team={teamOf(selected)}
               stationText={stationLabel(selected)}
               leader={leaderName(selected)}
               jobs={jobs}
@@ -371,18 +700,8 @@ export default function WorkerManagement() {
               onEdit={() => setEditWorker(selected)}
               onClose={() => setSelectedId(null)}
             />
-          ) : (
-            <div className="wm-col-head">
-              <h3>Worker details</h3>
-            </div>
-          )}
-          {!selected && (
-            <p className="muted small">
-              Click anyone in the chart to see their basic salary, the piece-rate
-              contracts they are entitled to, and the work they have done.
-            </p>
-          )}
-        </aside>
+          </aside>
+        )}
       </div>
 
       {editWorker && (
@@ -401,12 +720,13 @@ export default function WorkerManagement() {
 
 /* ------------------------------------------------------------------ */
 /* Worker panel — everything about ONE person, opened by clicking     */
-/* their block in the chart.                                          */
+/* their card on the board.                                           */
 /* ------------------------------------------------------------------ */
 
 function WorkerPanel({
   person,
   grade,
+  team,
   stationText,
   leader,
   jobs,
@@ -418,6 +738,7 @@ function WorkerPanel({
 }: {
   person: Profile
   grade: Grade | null
+  team: Team | null
   stationText: string
   leader: string | null
   jobs: Job[]
@@ -505,19 +826,19 @@ function WorkerPanel({
 
   return (
     <>
-      <div className="wm-col-head">
+      <div className="wm-panel-head">
         <h3>Worker details</h3>
         <button className="modal-close" onClick={onClose} aria-label="Close details">×</button>
       </div>
 
       <div className="wm-detail-id">
-        <div className="wm-block-name" style={{ fontSize: '1.05rem' }}>{profileName(person)}</div>
+        <div className="wm-person-name" style={{ fontSize: '1.05rem' }}>{profileName(person)}</div>
         <div className="row-form" style={{ gap: '0.4rem', flexWrap: 'wrap' }}>
           {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
-          {person.team_name && <span className="badge off">{person.team_name}</span>}
+          {team && <span className="badge off">{team.name}</span>}
         </div>
-        <div className="wm-block-meta">{stationText}</div>
-        {leader && <div className="wm-block-meta">Reports to {leader}</div>}
+        <div className="wm-person-meta">{stationText}</div>
+        {leader && <div className="wm-person-meta">Reports to {leader}</div>}
       </div>
 
       <div className="wm-stat">
@@ -540,7 +861,7 @@ function WorkerPanel({
               <div className="wm-line" key={j.id}>
                 <span>
                   {j.name}
-                  <span className="wm-block-meta"> {stationName(j.station_id)} · {j.unit}</span>
+                  <span className="wm-person-meta"> {stationName(j.station_id)} · {j.unit}</span>
                 </span>
                 <span className="wm-line-amt">
                   {r
@@ -583,9 +904,6 @@ function WorkerPanel({
             </div>
           </>
         )}
-        <p className="muted small" style={{ margin: 0 }}>
-          This month only — date filters for older history come later.
-        </p>
       </div>
 
       {canEditProfile ? (
@@ -602,7 +920,8 @@ function WorkerPanel({
 
 /* ------------------------------------------------------------------ */
 /* Worker profile pop-out: personal + payroll details for one worker. */
-/* Tags/tier/access stay in Settings -> User access.                  */
+/* Tags/tier/access stay in Settings -> User access, and the team is  */
+/* set by dropping the person into a box on the board.                */
 /* ------------------------------------------------------------------ */
 
 function WorkerProfileModal({
@@ -621,7 +940,6 @@ function WorkerProfileModal({
   const [bankName, setBankName] = useState(worker.bank_name ?? '')
   const [bankAccount, setBankAccount] = useState(worker.bank_account ?? '')
   const [joinedOn, setJoinedOn] = useState(worker.joined_on ?? '')
-  const [teamName, setTeamName] = useState(worker.team_name ?? '')
   const [salary, setSalary] = useState(worker.basic_salary != null ? String(worker.basic_salary) : '')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -644,7 +962,6 @@ function WorkerProfileModal({
         bank_name: bankName.trim() || null,
         bank_account: bankAccount.trim() || null,
         joined_on: joinedOn || null,
-        team_name: teamName.trim() || null,
         basic_salary: salaryValue,
       })
       .eq('id', worker.id)
@@ -694,11 +1011,6 @@ function WorkerProfileModal({
             <input value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} />
           </label>
         </div>
-
-        <label className="field">
-          <span>Team name (shown when this person leads a team)</span>
-          <input value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="e.g. Team A" />
-        </label>
 
         <div className="row-form">
           <label className="field">
