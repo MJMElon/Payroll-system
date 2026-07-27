@@ -67,6 +67,7 @@ export default function Settings() {
     <div className="stack" style={wideStyle}>
       <div>
         <Link to="/" className="small muted backlink">← Back to main page</Link>
+        <h1>Settings</h1>
       </div>
 
       <div className="tabs glass">
