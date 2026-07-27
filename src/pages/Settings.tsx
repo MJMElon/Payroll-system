@@ -66,9 +66,11 @@ export default function Settings() {
 
   return (
     <div className="stack" style={wideStyle}>
-      <div>
-        <Link to="/" className="small muted backlink">← Back to main page</Link>
+      {/* Title on the left, the way out on the right — the back link reads
+          as an action rather than something above the heading. */}
+      <div className="page-head">
         <h1>Settings</h1>
+        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
       </div>
 
       <div className="tabs glass">
@@ -464,8 +466,8 @@ function TierAccessSheet({ grade }: { grade: Grade }) {
       </div>
 
       <div className="tag-section">
-        <div className="tag-section-title">Access to module</div>
-        {mods.length === 0 ? (
+        <div className="tag-section-title">Access to Module</div>
+        {MODULE_OPTIONS.filter((m) => mods.includes(m.key)).length === 0 ? (
           <span className="small muted">None</span>
         ) : (
           <div className="cap-cols">
@@ -795,30 +797,45 @@ function TagModal({
     <div className="modal-overlay" onClick={onClose}>
       <form className="modal modal-view" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="row-form spread">
-          <h2>{grade ? 'Edit tag' : 'New tag'}</h2>
+          <h2>Tier Access Manage</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         {error && <div className="error">{error}</div>}
 
-        {/* The tag itself is the name field — type straight into it. */}
-        <input
-          className={`${tagClass(color)} tag-name-input`}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          size={Math.max(10, name.length + 1)}
-          placeholder="Tag name"
-          aria-label="Tag name"
-          /* Only a tag being created opens with the cursor here — an edit
-             should land on the sheet, not in the name box. */
-          autoFocus={!grade}
-          required
-        />
+        {/* Which tier this is, then the tag itself as the name field —
+            type straight into it to rename. */}
+        <div className="tier-line">
+          <span className="tier-line-no">Tier {grade?.sort_order ?? nextTier} :</span>
+          <input
+            className={`${tagClass(color)} tag-name-input`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            size={Math.max(10, name.length + 1)}
+            placeholder="Tag name"
+            aria-label="Tag name"
+            /* Only a tag being created opens with the cursor here — an edit
+               should land on the sheet, not in the name box. */
+            autoFocus={!grade}
+            required
+          />
+          <span className="tier-line-no">Tier</span>
+        </div>
+
+        {/* What being tier 1 means, said where it belongs: on tier 1. */}
+        {isSuper && (
+          <span className="small muted">
+            The Management tier. Creating tier tags and station tags, setting
+            what a tier may do, and changing other users' settings are done
+            here and nowhere else — which is why nothing below can be
+            unticked.
+          </span>
+        )}
 
         {/* Tick a module and it opens to show that module's own functions,
             so what a tier may do sits under the module it belongs to. */}
         <div className="tag-section">
-          <div className="tag-section-title">Access to module</div>
+          <div className="tag-section-title">Access to Module</div>
           <div className="module-table">
             {MODULE_OPTIONS.map((m) => {
               const on = modules.includes(m.key)
@@ -868,15 +885,6 @@ function TagModal({
             {capBoxes(group)}
           </div>
         ))}
-
-        <div className="tag-section">
-          <div className="tag-section-title">Management only</div>
-          <span className="small muted">
-            Creating tier tags and station tags, setting what a tier may do, and
-            changing other users' settings belong to Management (tier 1). They
-            are not handed out per tier, so there is nothing to tick here.
-          </span>
-        </div>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>

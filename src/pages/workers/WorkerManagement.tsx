@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// WORKER MANAGEMENT — the team chart.
+// TEAM MANAGE — the team chart.
 //
 // Three columns under the page banner:
 //   LEFT    New signups. Sticky, so the cards ride along as you scroll down
@@ -21,10 +21,11 @@
 // cluster and they join that team, under whoever made it. A new signup with
 // no tier lands on the tier straight below the block, and takes its station.
 //
-// Access: any leader may build their OWN branch — that needs no capability.
-// Editing a profile needs "Edit worker profile & salary", and moving people
-// in someone else's branch needs "Assign workers to ANY team"; both are
-// granted per tier in Settings → Tier & Station Tags setting.
+// Access: any leader may build their OWN branch — dragging someone into a
+// team needs no capability at all. Editing details needs "Edit worker
+// profile" and pay needs "Edit worker salary", each granted on its own per
+// tier in Settings → Tier & Station Tags setting, so a lower tier can keep
+// details tidy without ever seeing what anyone earns.
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -145,8 +146,12 @@ export default function WorkerManagement() {
   const isLeader = seesAll || (myTier !== null && myTier < bottomTier)
   // Granted functions. Building your OWN branch is always allowed.
   const canEditProfile = isAdmin || myTier === 1 || myCaps.includes('worker-edit')
-  const canAssignAnywhere =
-    isAdmin || myTier === 1 || myCaps.includes('user-access') || myCaps.includes('worker-assign-any')
+  // Pay is its own grant, so a lower tier can keep details tidy without
+  // ever seeing what anyone earns.
+  const canEditSalary = isAdmin || myTier === 1 || myCaps.includes('worker-salary')
+  // Dragging someone into a team needs no capability — every leader does it
+  // for their own branch, and reaching across branches follows tier.
+  const canAssignAnywhere = isAdmin || myTier === 1 || myCaps.includes('user-access')
 
   const tierOf = (p: Profile) =>
     p.grade_id ? grades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
@@ -496,7 +501,7 @@ export default function WorkerManagement() {
         <header className="wm-head">
           <Link to="/" className="btn ghost wm-back">← Back to main page</Link>
         </header>
-        <h1 className="wm-page-title">Team chart</h1>
+        <h1 className="wm-page-title">Team Manage</h1>
         <div className="card"><p className="muted">Only team leaders (upper tiers) can manage workers.</p></div>
       </div>
     )
@@ -642,7 +647,7 @@ export default function WorkerManagement() {
       <header className="wm-head">
         <Link to="/" className="btn ghost wm-back">← Back to main page</Link>
       </header>
-      <h1 className="wm-page-title">Team chart</h1>
+      <h1 className="wm-page-title">Team Manage</h1>
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
@@ -726,6 +731,7 @@ export default function WorkerManagement() {
               rates={rates}
               stations={stations}
               canEditProfile={canEditProfile}
+              canEditSalary={canEditSalary}
               tierOptions={
                 canAssignAnywhere || inMyBranch(selected)
                   ? grades.filter((g) => canAssignAnywhere || myTier === null || g.sort_order > myTier)
@@ -746,6 +752,8 @@ export default function WorkerManagement() {
       {editWorker && (
         <WorkerProfileModal
           worker={editWorker}
+          canEditProfile={canEditProfile}
+          canEditSalary={canEditSalary}
           onClose={() => setEditWorker(null)}
           onSaved={() => {
             setEditWorker(null)
@@ -773,6 +781,7 @@ function WorkerPanel({
   rates,
   stations,
   canEditProfile,
+  canEditSalary,
   tierOptions,
   onChangeTier,
   onRename,
@@ -787,6 +796,7 @@ function WorkerPanel({
   rates: PieceRate[]
   stations: Station[]
   canEditProfile: boolean
+  canEditSalary: boolean
   tierOptions: Grade[]
   onChangeTier: (gradeId: string) => void
   onRename: (name: string) => void
@@ -1008,11 +1018,13 @@ function WorkerPanel({
         )}
       </div>
 
-      {canEditProfile ? (
-        <button className="btn" onClick={onEdit}>✎ Edit worker profile</button>
+      {canEditProfile || canEditSalary ? (
+        <button className="btn" onClick={onEdit}>
+          ✎ Edit worker {canEditProfile ? 'profile' : 'salary'}
+        </button>
       ) : (
         <p className="muted small">
-          Editing a worker profile needs the "Edit worker profile &amp; salary"
+          Editing a worker needs the "Edit worker profile" or "Edit worker salary"
           function, granted per tier in Settings → Tier &amp; Station Tags setting.
         </p>
       )}
@@ -1028,10 +1040,14 @@ function WorkerPanel({
 
 function WorkerProfileModal({
   worker,
+  canEditProfile,
+  canEditSalary,
   onClose,
   onSaved,
 }: {
   worker: Profile
+  canEditProfile: boolean
+  canEditSalary: boolean
   onClose: () => void
   onSaved: () => void
 }) {
@@ -1054,18 +1070,22 @@ function WorkerProfileModal({
       return setError('Basic salary must be a positive number.')
     }
     setSaving(true)
+    // Only the fields this tier may edit are written — a profile-only
+    // grant must not carry the salary back with it.
+    const patch: Record<string, unknown> = {}
+    if (canEditProfile) {
+      patch.full_name = name.trim() || null
+      patch.employee_code = code.trim() || null
+      patch.ic_number = ic.trim() || null
+      patch.phone = phone.trim() || null
+      patch.bank_name = bankName.trim() || null
+      patch.bank_account = bankAccount.trim() || null
+      patch.joined_on = joinedOn || null
+    }
+    if (canEditSalary) patch.basic_salary = salaryValue
     const { error } = await supabase
       .from('access_profiles')
-      .update({
-        full_name: name.trim() || null,
-        employee_code: code.trim() || null,
-        ic_number: ic.trim() || null,
-        phone: phone.trim() || null,
-        bank_name: bankName.trim() || null,
-        bank_account: bankAccount.trim() || null,
-        joined_on: joinedOn || null,
-        basic_salary: salaryValue,
-      })
+      .update(patch)
       .eq('id', worker.id)
     setSaving(false)
     if (error) return setError(error.message)
@@ -1076,60 +1096,68 @@ function WorkerProfileModal({
     <div className="modal-overlay" onClick={onClose}>
       <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="row-form spread">
-          <h2>Worker profile</h2>
+          <h2>{canEditProfile ? 'Worker profile' : 'Worker salary'}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
         {error && <div className="error">{error}</div>}
 
-        <div className="row-form">
-          <label className="field grow">
-            <span>Full name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} required />
-          </label>
-          <label className="field">
-            <span>Employee code</span>
-            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="EMP001" />
-          </label>
-        </div>
+        {canEditProfile && (
+          <>
+            <div className="row-form">
+              <label className="field grow">
+                <span>Full name</span>
+                <input value={name} onChange={(e) => setName(e.target.value)} required />
+              </label>
+              <label className="field">
+                <span>Employee code</span>
+                <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="EMP001" />
+              </label>
+            </div>
+
+            <div className="row-form">
+              <label className="field grow">
+                <span>IC / passport number</span>
+                <input value={ic} onChange={(e) => setIc(e.target.value)} />
+              </label>
+              <label className="field grow">
+                <span>Phone</span>
+                <input value={phone} onChange={(e) => setPhone(e.target.value)} />
+              </label>
+            </div>
+
+            <div className="row-form">
+              <label className="field grow">
+                <span>Bank</span>
+                <input value={bankName} onChange={(e) => setBankName(e.target.value)} />
+              </label>
+              <label className="field grow">
+                <span>Bank account no.</span>
+                <input value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} />
+              </label>
+            </div>
+          </>
+        )}
 
         <div className="row-form">
-          <label className="field grow">
-            <span>IC / passport number</span>
-            <input value={ic} onChange={(e) => setIc(e.target.value)} />
-          </label>
-          <label className="field grow">
-            <span>Phone</span>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} />
-          </label>
-        </div>
-
-        <div className="row-form">
-          <label className="field grow">
-            <span>Bank</span>
-            <input value={bankName} onChange={(e) => setBankName(e.target.value)} />
-          </label>
-          <label className="field grow">
-            <span>Bank account no.</span>
-            <input value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} />
-          </label>
-        </div>
-
-        <div className="row-form">
-          <label className="field">
-            <span>Joined on</span>
-            <input type="date" value={joinedOn} onChange={(e) => setJoinedOn(e.target.value)} />
-          </label>
-          <label className="field grow">
-            <span>Monthly basic salary (RM)</span>
-            <input
-              type="number"
-              min="0"
-              step="50"
-              value={salary}
-              onChange={(e) => setSalary(e.target.value)}
-              placeholder="—"
-            />
-          </label>
+          {canEditProfile && (
+            <label className="field">
+              <span>Joined on</span>
+              <input type="date" value={joinedOn} onChange={(e) => setJoinedOn(e.target.value)} />
+            </label>
+          )}
+          {canEditSalary && (
+            <label className="field grow">
+              <span>Monthly basic salary (RM)</span>
+              <input
+                type="number"
+                min="0"
+                step="50"
+                value={salary}
+                onChange={(e) => setSalary(e.target.value)}
+                placeholder="—"
+              />
+            </label>
+          )}
         </div>
 
         <p className="muted small" style={{ margin: 0 }}>

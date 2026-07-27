@@ -823,6 +823,21 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .tag-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; align-items: stretch; }
 .tag-cols .tag-section { min-width: 0; }
 .cap-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.9rem; }
+/* Page banner: heading left, the way out on the right. */
+.page-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+}
+.page-head h1 { margin: 0; }
+.backlink-btn { padding: 0.45rem 0.9rem; font-size: 0.85rem; white-space: nowrap; }
+
+/* "Tier 1 : [tag] Tier" — the tier, then the tag as its own name field. */
+.tier-line { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
+.tier-line-no {
+  font-family: 'Montserrat', system-ui, sans-serif;
+  font-size: 1.15rem; font-weight: 700; color: var(--muted);
+}
+
 /* The tag IS the name field — one thing, not a box plus a preview. It
    wears the tier's own colour and grows with what is typed. */
 .tag-name-input {

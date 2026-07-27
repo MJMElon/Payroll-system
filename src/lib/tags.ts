@@ -15,19 +15,30 @@ export function nextTagColor(usedColors: (string | null | undefined)[]): string 
   return TAG_COLORS.find((c) => !usedColors.includes(c)) ?? TAG_COLORS[usedColors.length % TAG_COLORS.length]
 }
 
-// Module keys a tag can be allowed to see on the web. Labels are the
-// module's own name in Title Case — no "module" suffix on some and not
-// others, so the list reads evenly.
+// Modules a tag can be allowed to open on the web, each named "… Module"
+// so the list reads evenly.
+//
+// The station status board is NOT here: it is the common dashboard every
+// tier needs, so it is granted to all of them (see ALWAYS_MODULES) rather
+// than ticked per tag.
 export const MODULE_OPTIONS = [
-  { key: 'station-status', label: 'Station Status' },
-  { key: 'operation', label: 'Operation' },
-  { key: 'piece-rate', label: 'Piece Rate' },
-  { key: 'payroll', label: 'Payroll' },
-  { key: 'worker-management', label: 'Worker Management' },
-  { key: 'demo-mobile', label: 'Demo Mobile View' },
+  { key: 'operation', label: 'Operation Module' },
+  { key: 'piece-rate', label: 'Piece Rate Module' },
+  { key: 'payroll', label: 'Payroll Module' },
+  { key: 'worker-management', label: 'Team Manage Module' },
+  { key: 'report', label: 'Report Module' },
+  { key: 'demo-mobile', label: 'Demo Mobile View Module' },
 ] as const
 
+/** Open to every tier, with or without a tick. */
+export const ALWAYS_MODULES = ['station-status']
+
 export const DEFAULT_MODULES = ['station-status', 'piece-rate']
+
+/** The modules a tier may open: what its tag stores, plus the common ones. */
+export function effectiveModules(modules: string[] | null | undefined): string[] {
+  return Array.from(new Set([...ALWAYS_MODULES, ...(modules ?? [])]))
+}
 
 // Standardized per-tier capabilities ("can do") in their FIXED order —
 // they always display in this sequence no matter what order they were
@@ -35,10 +46,12 @@ export const DEFAULT_MODULES = ['station-status', 'piece-rate']
 export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[] = [
   // Work entries (mobile records)
   { key: 'data-entry', label: 'Data entry', group: 'Work entry setting' },
+  { key: 'edit-entry', label: 'Edit work entry', group: 'Work entry setting' },
   { key: 'verify', label: "Verify below tiers' work entry", group: 'Work entry setting' },
   { key: 'approve', label: "Approve below tiers' work entry", group: 'Work entry setting' },
   // Piece rates
   { key: 'rate-create', label: 'Create piece rate', group: 'Piece rate setting' },
+  { key: 'rate-edit', label: 'Edit piece rate', group: 'Piece rate setting' },
   { key: 'rate-verify', label: 'Verify piece rate', group: 'Piece rate setting' },
   { key: 'rate-approve', label: 'Approve piece rate', group: 'Piece rate setting' },
   // Tag management — each function grantable on its own
@@ -47,13 +60,12 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   { key: 'tag-edit', label: "Edit tags' settings", group: 'Tag management setting' },
   // Users & stations
   { key: 'user-access', label: "Change other users' settings", group: 'User setting' },
-  // Worker management — claiming sign-ups into YOUR OWN team needs no
-  // capability (any leader may do it); these open up the wider functions.
-  { key: 'worker-edit', label: 'Edit worker profile & salary', group: 'Worker management setting' },
-  { key: 'worker-assign-any', label: "Assign workers to ANY team (not only your own)", group: 'Worker management setting' },
+  // Team manage — dragging someone into a team needs no capability, any
+  // leader may do it. Profile and salary are separate grants, so a lower
+  // tier can keep details tidy without ever seeing pay.
+  { key: 'worker-edit', label: 'Edit worker profile', group: 'Team manage setting' },
+  { key: 'worker-salary', label: 'Edit worker salary', group: 'Team manage setting' },
   { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
-  // Views
-  { key: 'report-view', label: 'See report module (dashboards)', group: 'View setting' },
 ]
 
 export const ALL_CAPABILITIES: string[] = CAPABILITY_OPTIONS.map((c) => c.key)
@@ -68,7 +80,7 @@ export const CAPABILITY_GROUPS: string[] = Array.from(new Set(CAPABILITY_OPTIONS
 export const GROUP_MODULE: Record<string, string> = {
   'Work entry setting': 'operation',
   'Piece rate setting': 'piece-rate',
-  'Worker management setting': 'worker-management',
+  'Team manage setting': 'worker-management',
 }
 
 /** The same link read the other way: module key → the group it opens. */
