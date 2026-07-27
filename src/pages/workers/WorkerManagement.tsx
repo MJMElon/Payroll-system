@@ -26,7 +26,7 @@
 // Access: any leader may build their OWN branch — that needs no capability.
 // Editing a profile needs "Edit worker profile & salary", and moving people
 // in someone else's branch needs "Assign workers to ANY team"; both are
-// granted per tier in Settings → Tags management.
+// granted per tier in Settings → Tier & Station Tags setting.
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -42,12 +42,24 @@ import {
   type PieceRate,
   type ProductionEntry,
   type Profile,
+  type Role,
   type Station,
   type Team,
 } from '../../lib/supabase'
 
 const TIER1_UNIT_CAP = 4
 const RM = (n: number) => `RM ${n.toFixed(2)}`
+
+// Route access follows the tier tag: placing someone in the chain also
+// settles which pages they may open. Carried over from the old Settings
+// "User access" tab, which was the only other place that kept the two in
+// step.
+function roleForTier(tier: number | null, name?: string): Role {
+  if (tier === null) return 'operator'
+  if (tier <= 2) return 'manager'
+  if (tier === 3 || (name ?? '').toLowerCase().includes('engineer')) return 'engineer'
+  return 'operator'
+}
 
 /** A bracket of children under one leader; `team: null` = no team. */
 type Group = { team: Team | null; people: Profile[] }
@@ -258,7 +270,7 @@ export default function WorkerManagement() {
 
   async function createTeam(leader: Profile) {
     const grade = gradeOf(leader)
-    if (!grade) return setError('Give this leader a tier tag first (Settings → User access).')
+    if (!grade) return setError('That leader has no tier tag yet — place them in the chain first.')
     const station = stationsOf(leader)[0] ?? null
     const siblings = teams.filter((t) => t.created_by === leader.id)
     const name = nextTeamName(siblings.map((t) => t.name))
@@ -329,7 +341,7 @@ export default function WorkerManagement() {
     }
     const lt = tierOf(leader)
     const pt = tierOf(person)
-    if (lt === null) return setError('Give this leader a tier tag first (Settings → User access).')
+    if (lt === null) return setError('That leader has no tier tag yet — place them in the chain first.')
     if (pt !== null && lt >= pt) {
       return setError('A worker can only be placed under a strictly higher tier.')
     }
@@ -350,12 +362,64 @@ export default function WorkerManagement() {
       patch.station_ids = leaderStations
       patch.station_id = leaderStations[0]
     }
-    const { error } = await supabase.from('access_profiles').update(patch).eq('id', person.id)
+    // Route access follows the tier tag, so placing someone also settles
+    // which pages they may open. An admin is never demoted by a tag.
+    const landedTier = nextGrade?.sort_order ?? pt
+    const landedName = nextGrade?.name ?? gradeOf(person)?.name
+    if (person.role !== 'admin') patch.role = roleForTier(landedTier, landedName)
+
+    const { data, error } = await supabase
+      .from('access_profiles')
+      .update(patch)
+      .eq('id', person.id)
+      .select('id')
     if (error) return setError(error.message)
+    // Row-level security refuses by matching no row, which PostgREST reports
+    // as a success that changed nothing — so an empty result is a refusal.
+    if (!data || data.length === 0) {
+      return setError(
+        `The database would not let you place ${profileName(person)} — that needs a higher ` +
+          'tier, or the "Change other users\' settings" function.',
+      )
+    }
     setOpenMap((m) => ({ ...m, [leader.id]: true }))
     setNotice(
       `${profileName(person)} now reports to ${profileName(leader)}${team ? ` · ${team.name}` : ''}.`,
     )
+    load()
+  }
+
+  /** Move someone to another tier tag without moving them in the chain. */
+  async function changeTier(person: Profile, gradeId: string) {
+    const grade = grades.find((g) => g.id === gradeId)
+    if (!grade) return
+    if (!canAssignAnywhere && !inMyBranch(person)) {
+      return setError('You can only re-tier people in your own branch.')
+    }
+    if (myTier !== null && !canAssignAnywhere && grade.sort_order <= myTier) {
+      return setError('You can only put someone on a tier below your own.')
+    }
+    const sup = person.supervisor_id ? profiles.find((x) => x.id === person.supervisor_id) : null
+    const supTier = sup ? tierOf(sup) : null
+    if (supTier !== null && grade.sort_order <= supTier) {
+      return setError(`That tier is not below ${profileName(sup)}, who they report to.`)
+    }
+    setError(null)
+    const patch: Record<string, unknown> = { grade_id: grade.id }
+    if (person.role !== 'admin') patch.role = roleForTier(grade.sort_order, grade.name)
+    const { data, error } = await supabase
+      .from('access_profiles')
+      .update(patch)
+      .eq('id', person.id)
+      .select('id')
+    if (error) return setError(error.message)
+    if (!data || data.length === 0) {
+      return setError(
+        `The database would not let you re-tier ${profileName(person)} — that needs a higher ` +
+          'tier, or the "Change other users\' settings" function.',
+      )
+    }
+    setNotice(`${profileName(person)} is now ${grade.name}.`)
     load()
   }
 
@@ -651,6 +715,12 @@ export default function WorkerManagement() {
               rates={rates}
               stations={stations}
               canEditProfile={canEditProfile}
+              tierOptions={
+                canAssignAnywhere || inMyBranch(selected)
+                  ? grades.filter((g) => canAssignAnywhere || myTier === null || g.sort_order > myTier)
+                  : []
+              }
+              onChangeTier={(gradeId) => changeTier(selected, gradeId)}
               onEdit={() => setEditWorker(selected)}
               onClose={() => setSelectedId(null)}
             />
@@ -687,6 +757,8 @@ function WorkerPanel({
   rates,
   stations,
   canEditProfile,
+  tierOptions,
+  onChangeTier,
   onEdit,
   onClose,
 }: {
@@ -699,6 +771,8 @@ function WorkerPanel({
   rates: PieceRate[]
   stations: Station[]
   canEditProfile: boolean
+  tierOptions: Grade[]
+  onChangeTier: (gradeId: string) => void
   onEdit: () => void
   onClose: () => void
 }) {
@@ -795,6 +869,18 @@ function WorkerPanel({
         {leader && <div className="wm-row-meta">Reports to {leader}</div>}
       </div>
 
+      {tierOptions.length > 0 && (
+        <label className="field">
+          <span>Tier tag</span>
+          <select value={grade?.id ?? ''} onChange={(e) => onChangeTier(e.target.value)}>
+            <option value="" disabled>No tier yet</option>
+            {tierOptions.map((g) => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <div className="wm-stat">
         <span className="wm-stat-label">Monthly basic salary</span>
         <span className="wm-stat-value">
@@ -865,7 +951,7 @@ function WorkerPanel({
       ) : (
         <p className="muted small">
           Editing a worker profile needs the "Edit worker profile &amp; salary"
-          function, granted per tier in Settings → Tags management.
+          function, granted per tier in Settings → Tier &amp; Station Tags setting.
         </p>
       )}
     </>
@@ -874,8 +960,8 @@ function WorkerPanel({
 
 /* ------------------------------------------------------------------ */
 /* Worker profile pop-out: personal + payroll details for one worker. */
-/* Tags/tier/access stay in Settings -> User access, and the team is  */
-/* set by dropping the person into a bracket in the chain.            */
+/* Tier, station and team come from where the person sits in the      */
+/* chain, not from this form.                                         */
 /* ------------------------------------------------------------------ */
 
 function WorkerProfileModal({
@@ -985,7 +1071,8 @@ function WorkerProfileModal({
         </div>
 
         <p className="muted small" style={{ margin: 0 }}>
-          Tier tag, station tag and access settings stay in Settings → User access.
+          Tier tag, station tag and team are not set here — drag the person
+          onto the leader (or the team) they belong to in the chain.
         </p>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
