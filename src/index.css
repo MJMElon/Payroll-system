@@ -1106,172 +1106,200 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 
 /* ------------------------------------------------------------------ */
-/* WORKER MANAGEMENT — sign-up drawer, tier strip, and the reporting   */
-/* chain drawn as an indented tree with team brackets inside it.       */
+/* WORKER MANAGEMENT — the team chart: a sticky New signups column, the */
+/* formation (one row of blocks per tier), and the worker panel.        */
 /* ------------------------------------------------------------------ */
-.wm-page { display: flex; flex-direction: column; gap: 0.85rem; }
+.wm-page { display: flex; flex-direction: column; gap: 0.75rem; }
 
 .wm-head { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
 .wm-head .wm-back {
   padding: 0.4rem 0.75rem; font-size: 0.82rem; border-radius: 8px;
   text-decoration: none; white-space: nowrap; margin-bottom: 0;
 }
-.wm-head-actions { margin-left: auto; display: flex; align-items: center; gap: 0.6rem; }
-
-.wm-signup-btn {
-  display: inline-flex; align-items: center; gap: 0.45rem;
-  padding: 0.45rem 0.85rem; font-size: 0.85rem; border-radius: 9px;
+.wm-page-title {
+  margin: 0.1rem 0 0.4rem; text-align: center;
+  font-size: 1.4rem; letter-spacing: -0.02em;
 }
-.wm-signup-btn .wm-signup-caret { font-size: 0.6rem; opacity: 0.75; }
-.wm-signup-btn.open { filter: brightness(1.1); }
 
-/* The drawer the sign-up button opens — drag a card onto a leader. */
-.wm-signups {
+/* Three columns; the middle one carries the chart. */
+.wm-cols {
+  display: grid; grid-template-columns: 218px minmax(0, 1fr);
+  gap: 1rem; align-items: start;
+}
+.wm-cols.with-panel { grid-template-columns: 218px minmax(0, 1fr) 310px; }
+@media (max-width: 1180px) {
+  .wm-cols, .wm-cols.with-panel { grid-template-columns: 200px minmax(0, 1fr); }
+}
+@media (max-width: 820px) {
+  .wm-cols, .wm-cols.with-panel { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Left column — rides along as the page scrolls. */
+/* top clears the sticky app bar, so the column never slides under it */
+.wm-side { position: sticky; top: 4.25rem; align-self: start; }
+.wm-side-inner {
   background: var(--surface); border: 1px solid var(--border);
-  border-left: 3px solid var(--danger);
-  border-radius: 12px; padding: 0.7rem 0.8rem;
+  border-left: 3px solid var(--danger); border-radius: 12px;
+  padding: 0.7rem 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;
+  max-height: calc(100vh - 5.5rem); overflow-y: auto;
 }
-.wm-signups-empty { margin: 0; }
-.wm-signup-strip { display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.15rem; }
+.wm-side-title {
+  appearance: none; background: none; border: none; cursor: pointer; padding: 0;
+  font-family: inherit; color: var(--text);
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.9rem; font-weight: 800; letter-spacing: -0.01em;
+}
+.wm-side-caret { color: var(--muted); font-size: 0.7rem; }
+.wm-side-title .count-badge.static { margin-left: 0.15rem; }
+.wm-signup-list { display: flex; flex-direction: column; gap: 0.4rem; }
 .wm-signup-card {
-  flex: none; min-width: 150px;
   display: flex; flex-direction: column; gap: 0.1rem;
   border: 1px solid var(--border); border-radius: 9px;
   padding: 0.45rem 0.6rem; background: var(--bg); cursor: grab;
 }
 .wm-signup-card:active { cursor: grabbing; }
 .wm-signup-card.dragging { opacity: 0.4; }
-.wm-signup-name { font-weight: 700; font-size: 0.83rem; }
+.wm-signup-name { font-weight: 700; font-size: 0.82rem; }
 .wm-signup-meta {
-  color: var(--muted); font-size: 0.7rem; max-width: 190px;
+  color: var(--muted); font-size: 0.7rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* Chain + optional worker panel beside it. */
-.wm-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
-.wm-body.with-panel { grid-template-columns: minmax(0, 1fr) 330px; }
-@media (max-width: 1000px) { .wm-body.with-panel { grid-template-columns: minmax(0, 1fr); } }
-
-.wm-chart {
+/* Middle column — the formation. */
+.wm-formation {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; padding: 0.35rem 0.9rem 0.9rem;
+  border-radius: 12px; padding: 0.8rem 0.9rem 1rem;
+  display: flex; flex-direction: column; gap: 0.15rem;
+}
+.wm-formation-head {
+  display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
+  padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); margin-bottom: 0.4rem;
+}
+.wm-section-title { margin: 0; font-size: 1rem; letter-spacing: -0.01em; }
+.wm-crumbs { display: flex; align-items: center; gap: 0.2rem; flex-wrap: wrap; }
+.wm-crumb {
+  appearance: none; background: none; border: none; cursor: pointer; padding: 0.05rem 0.2rem;
+  font-family: inherit; font-size: 0.76rem; color: var(--muted); border-radius: 5px;
+}
+.wm-crumb:hover { color: var(--text); background: var(--bg); }
+.wm-crumb.active { color: var(--accent-strong); font-weight: 700; }
+.wm-crumb-sep { color: #c3c9d2; font-size: 0.72rem; }
+
+/* One row per tier. */
+.wm-tier-row { padding: 0.55rem 0 0.15rem; }
+.wm-tier-row + .wm-tier-row { border-top: 1px solid #eef0f3; }
+.wm-tier-head { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.45rem; }
+.wm-tier-name {
+  margin: 0; font-size: 0.72rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent-strong);
+}
+.wm-tier-n {
+  background: var(--bg); color: var(--muted); border-radius: 999px;
+  padding: 0 0.4rem; font-size: 0.68rem; font-weight: 700;
+}
+.wm-tier-of { color: var(--muted); font-size: 0.7rem; font-style: italic; }
+
+/* The blocks in a row, and the org-chart stems above them. */
+.wm-row-blocks {
+  display: flex; gap: 0.55rem; align-items: flex-start;
+  overflow-x: auto; padding: 0.25rem 0.1rem 0.35rem;
+}
+.wm-row-blocks.linked { position: relative; padding-top: 0.9rem; }
+.wm-row-blocks.linked::before {
+  content: ''; position: absolute; top: 0.45rem; left: 0.6rem; right: 0.6rem;
+  height: 1px; background: #dde2e8;
+}
+.wm-row-blocks.linked .wm-block::before,
+.wm-row-blocks.linked .wm-cluster::before {
+  content: ''; position: absolute; top: -0.45rem; left: 1.2rem;
+  width: 1px; height: 0.45rem; background: #dde2e8;
 }
 
-/* Tier strip: the shape of the whole chain at a glance. */
-.wm-tiers {
-  display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
-  padding: 0.55rem 0; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem;
+/* Asana-style block. */
+.wm-block {
+  position: relative; flex: none; width: 194px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(25, 32, 42, 0.06);
+  padding: 0.5rem 0.6rem 0.45rem; cursor: grab;
+  display: flex; flex-direction: column; gap: 0.12rem;
+  transition: box-shadow 0.12s, border-color 0.12s, transform 0.12s;
+  overflow: hidden;
 }
-.wm-tier-chip {
-  appearance: none; cursor: pointer; font-family: inherit;
-  display: inline-flex; align-items: center; gap: 0.35rem;
-  background: var(--bg); border: 1px solid var(--border); color: var(--text);
-  border-radius: 999px; padding: 0.2rem 0.6rem; font-size: 0.75rem;
+.wm-block:hover { box-shadow: 0 3px 10px rgba(25, 32, 42, 0.12); transform: translateY(-1px); }
+.wm-block-bar { position: absolute; inset: 0 0 auto 0; height: 3px; }
+.wm-block.on-path { border-color: #b9c2cd; }
+.wm-block.focused, .wm-block.selected {
+  border-color: var(--accent-strong); box-shadow: 0 0 0 2px var(--accent-soft);
 }
-.wm-tier-chip:hover { border-color: var(--accent-strong); }
-.wm-tier-chip b { font-variant-numeric: tabular-nums; }
-.wm-tiers-actions { margin-left: auto; display: flex; gap: 0.7rem; }
-
-/* The tree. Each level draws its own rail, so the chain is visible. */
-.wm-tree, .wm-children { list-style: none; margin: 0; padding: 0; }
-.wm-children {
-  margin-left: 0.75rem; padding-left: 0.85rem;
-  border-left: 1px solid #dfe3e9;
-}
-.wm-node { position: relative; }
-/* The elbow from the rail into each row. */
-.wm-children > .wm-node > .wm-row::before,
-.wm-children > .wm-bracket > .wm-bracket-head::before {
-  content: ''; position: absolute; left: -0.85rem; top: 50%;
-  width: 0.6rem; height: 1px; background: #dfe3e9;
-}
-
-.wm-row {
-  position: relative;
-  display: flex; align-items: center; gap: 0.45rem;
-  padding: 0.32rem 0.45rem; border-radius: 8px;
-  border: 1px solid transparent; cursor: grab;
-  min-height: 34px;
-}
-.wm-row:hover { background: #f5f6f8; }
-.wm-row.selected { background: var(--accent-soft); border-color: var(--accent-strong); }
-.wm-row.me { background: #f1faf5; }
-.wm-row.dragging { opacity: 0.4; }
-.wm-row.over { border-color: var(--accent-strong); border-style: dashed; background: var(--accent-soft); }
-
-.wm-caret {
-  appearance: none; background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: 0.7rem; line-height: 1; padding: 0.2rem;
-  width: 1.15rem; flex: none; border-radius: 4px;
-}
-.wm-caret:hover { background: var(--border); color: var(--text); }
-.wm-caret.leaf { cursor: default; opacity: 0.35; }
-.wm-caret.leaf:hover { background: none; }
-
-.wm-row-name {
-  font-weight: 700; font-size: 0.85rem; white-space: nowrap;
+.wm-block.me { background: #f4fbf7; }
+.wm-block.dragging { opacity: 0.4; }
+.wm-block.over { border-color: var(--accent-strong); border-style: dashed; background: var(--accent-soft); }
+.wm-block-name {
+  margin-top: 0.15rem; font-weight: 700; font-size: 0.85rem;
   display: flex; align-items: center; gap: 0.3rem;
-}
-.wm-row .tagbadge { font-size: 0.68rem; padding: 0.05rem 0.45rem; flex: none; }
-.wm-row-meta {
-  color: var(--muted); font-size: 0.72rem; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.wm-flag { flex: none; font-size: 0.65rem; }
-.wm-row-tail {
-  margin-left: auto; flex: none; display: flex; align-items: center; gap: 0.35rem;
+.wm-block-meta {
+  color: var(--muted); font-size: 0.71rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wm-block-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;
+  margin-top: 0.25rem; min-height: 18px;
 }
 .wm-under {
   background: var(--accent-soft); color: var(--accent-strong);
-  border-radius: 999px; padding: 0 0.45rem; font-size: 0.68rem; font-weight: 700;
+  border-radius: 999px; padding: 0 0.45rem; font-size: 0.67rem; font-weight: 700;
   white-space: nowrap;
 }
 .wm-add {
-  appearance: none; cursor: pointer; font-family: inherit; flex: none;
+  appearance: none; cursor: pointer; font-family: inherit;
   background: var(--surface); border: 1px dashed #b8c0ca; color: var(--accent-strong);
-  border-radius: 7px; padding: 0.12rem 0.45rem; font-size: 0.7rem; font-weight: 700;
+  border-radius: 7px; padding: 0.05rem 0.4rem; font-size: 0.68rem; font-weight: 700;
   white-space: nowrap; visibility: hidden;
 }
-.wm-row:hover .wm-add, .wm-row.selected .wm-add { visibility: visible; }
+.wm-block:hover .wm-add, .wm-block.focused .wm-add { visibility: visible; }
 .wm-add:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
 
-/* A team bracket inside a leader's branch. */
-.wm-bracket { position: relative; }
-.wm-bracket-head {
-  position: relative;
-  display: flex; align-items: center; gap: 0.35rem;
-  padding: 0.15rem 0.45rem; margin: 0.2rem 0 0.1rem;
-  border-radius: 6px; border: 1px dashed transparent;
+/* A team cluster inside a row. */
+.wm-cluster {
+  position: relative; flex: none;
+  border: 1px dashed #e0e4ea; border-radius: 12px; padding: 0.35rem 0.4rem 0.4rem;
+  background: #fafbfc;
 }
-.wm-bracket-head:hover { background: #f5f6f8; }
-.wm-bracket-head.over { border-color: var(--accent-strong); background: var(--accent-soft); }
-.wm-bracket-name {
-  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em;
+.wm-cluster-head {
+  display: flex; align-items: center; gap: 0.3rem;
+  padding: 0.05rem 0.25rem 0.3rem; border-radius: 6px;
+}
+.wm-cluster-head.over { background: var(--accent-soft); outline: 1px dashed var(--accent-strong); }
+.wm-cluster-name {
+  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--accent-strong);
 }
-.wm-bracket-name.none { color: var(--muted); font-weight: 600; }
-.wm-bracket-count { color: var(--muted); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
-.wm-bracket-input { font: inherit; font-size: 0.75rem; font-weight: 700; padding: 0.05rem 0.3rem; }
+.wm-cluster-name.none { color: var(--muted); font-weight: 600; }
+.wm-cluster-of { color: var(--muted); font-weight: 600; text-transform: none; letter-spacing: 0; }
+.wm-cluster-n { color: var(--muted); font-size: 0.66rem; font-variant-numeric: tabular-nums; }
+.wm-cluster-input { font: inherit; font-size: 0.72rem; font-weight: 700; padding: 0.05rem 0.3rem; width: 8rem; }
+.wm-cluster-blocks { display: flex; gap: 0.45rem; }
 .wm-icon {
   appearance: none; background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: 0.75rem; line-height: 1; padding: 0.1rem 0.2rem;
+  color: var(--muted); font-size: 0.72rem; line-height: 1; padding: 0.05rem 0.2rem;
   border-radius: 5px; visibility: hidden;
 }
-.wm-bracket-head:hover .wm-icon { visibility: visible; }
+.wm-cluster-head:hover .wm-icon { visibility: visible; }
 .wm-icon:hover { background: var(--border); color: var(--text); }
 .wm-icon.danger:hover { background: #fbeceb; color: var(--danger); }
 
-/* Worker panel docked beside the chain. */
+/* Right column — the person you opened. */
 .wm-panel {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 0.7rem;
-  position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto;
+  position: sticky; top: 4.25rem; max-height: calc(100vh - 5.5rem); overflow-y: auto;
 }
 .wm-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .wm-panel-head h3 { margin: 0; }
 .wm-detail-id { display: flex; flex-direction: column; gap: 0.25rem; }
-.wm-panel .wm-row-name { white-space: normal; }
-.wm-panel .wm-row-meta { white-space: normal; }
+.wm-panel .wm-block-name, .wm-panel .wm-block-meta { white-space: normal; }
 .wm-stat {
   display: flex; flex-direction: column; gap: 0.1rem;
   background: var(--accent-soft); border-radius: 10px; padding: 0.55rem 0.7rem;
@@ -1297,10 +1325,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-line-amt { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 700; }
 .wm-line-date { color: var(--muted); font-variant-numeric: tabular-nums; }
 
-@media (max-width: 640px) {
-  .wm-row-meta { display: none; }
-  .wm-children { margin-left: 0.4rem; padding-left: 0.6rem; }
-  .wm-children > .wm-node > .wm-row::before,
-  .wm-children > .wm-bracket > .wm-bracket-head::before { left: -0.6rem; width: 0.45rem; }
+@media (max-width: 820px) {
+  .wm-side { position: static; }
+  .wm-side-inner { max-height: 240px; }
   .wm-add { visibility: visible; }
 }
