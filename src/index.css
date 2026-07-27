@@ -368,6 +368,9 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 
 /* Wider pop-out for the approval list */
 .modal.modal-wide { max-width: 620px; }
+/* Row pop-outs that carry a view face as well as a form — roughly a
+   third wider again, so the access sheet reads in columns. */
+.modal.modal-view { max-width: 810px; }
 .approval-item {
   border: 1px solid var(--border); border-radius: 12px; padding: 0.8rem 0.9rem;
 }
@@ -820,6 +823,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .tag-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; align-items: stretch; }
 .tag-cols .tag-section { min-width: 0; }
 .cap-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.9rem; }
+/* Read-only access sheet (the eye button on a tier tag) */
+.cap-group { display: flex; flex-direction: column; gap: 0.1rem; margin-bottom: 0.5rem; }
+.cap-group:last-child { margin-bottom: 0; }
+.cap-group-name { font-size: 0.75rem; font-weight: 700; color: var(--muted); }
 @media (max-width: 560px) {
   .tag-cols, .cap-cols { grid-template-columns: 1fr; }
 }
