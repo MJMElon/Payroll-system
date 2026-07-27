@@ -591,13 +591,19 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .signup-row:first-of-type { border-top: none; padding-top: 0; }
 .salary-input { width: 120px; text-align: right; padding: 0.4rem 0.5rem; font-size: 0.9rem; }
 
-/* Centered bottom bar: side groups flex equally around the centre pen */
-.mob-tabbar.centered { display: flex; align-items: flex-end; justify-content: center; gap: 0.2rem; }
+/* Centered bottom bar: two tabs each side flex equally around the centre
+   "+" — Performance · My work · [ + ] · Team · Profile. */
+.mob-tabbar.centered { display: flex; align-items: flex-end; justify-content: center; gap: 0.1rem; }
 .mob-tab-side {
   flex: 1 1 0; min-width: 0;
-  display: flex; align-items: flex-end; justify-content: space-evenly;
+  display: flex; align-items: flex-end; justify-content: space-evenly; gap: 0.1rem;
 }
-.mob-tabbar.centered .mob-tab { width: auto; min-width: 74px; max-width: none; }
+.mob-tabbar.centered .mob-tab {
+  flex: 1 1 0; width: auto; min-width: 0; max-width: none;
+  padding: 0.35rem 0.1rem 0.3rem; font-size: 0.55rem; letter-spacing: -0.01em;
+}
+.mob-tabbar.centered .mob-tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mob-tabbar.centered .mob-tab-badge { right: 4px; }
 
 /* New sign-up welcome check */
 .signup-check {
@@ -608,12 +614,41 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   box-shadow: 0 6px 16px rgba(21, 128, 61, 0.35);
 }
 
+/* Team tab — reporting-line chart. One node per tier, climbing from the
+   Engineer rung at the top down to YOU, joined by a connector line. */
+.mob-org { display: flex; flex-direction: column; }
+.mob-org-node {
+  display: flex; align-items: center; gap: 0.5rem; position: relative;
+  padding: 0.45rem 0.55rem; border-radius: 12px;
+  background: #f6f8fa; margin-bottom: 0.85rem;
+}
+.mob-org-node:last-child { margin-bottom: 0; }
+.mob-org-node::after {
+  content: ''; position: absolute; left: 1.05rem; top: 100%;
+  width: 2px; height: 0.85rem; background: #dfe4ea;
+}
+.mob-org-node:last-child::after { display: none; }
+.mob-org-node.me {
+  background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent);
+}
+.mob-org-node .tag-dot { width: 11px; height: 11px; border-radius: 4px; flex: none; }
+.mob-org-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.mob-org-text .mob-entry-name { font-size: 0.85rem; }
+
+/* An entry row inside a My work card that is itself tappable. */
+.mob-plainbtn {
+  appearance: none; background: none; border: none; padding: 0; margin: 0;
+  cursor: pointer; text-align: left; color: inherit; font: inherit;
+  display: flex; flex-direction: column; gap: 0.5rem; width: 100%;
+}
+
 /* Approvals queue chips + action buttons */
-.mob-queue-chips { display: flex; gap: 0.4rem; }
+.mob-queue-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
 .mob-queue-chips button {
   appearance: none; border: none; cursor: pointer;
   background: #eef0f4; color: var(--muted); border-radius: 999px;
-  padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 700;
+  padding: 0.35rem 0.7rem; font-size: 0.72rem; font-weight: 700;
+  white-space: nowrap;
 }
 .mob-queue-chips button.on { background: var(--accent-strong); color: #fff; }
 .mob-btn.approve {

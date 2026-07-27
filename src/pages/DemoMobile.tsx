@@ -3,12 +3,12 @@
 // repo later). A tier rail on the left lists every tier tag straight from
 // the database; picking one previews the phone AS that tier.
 //
-// COMMON to all tiers: the bottom tab bar —
-//   left  = Performance (station status: stamp card, photos, records)
-//   middle= Record (big round button: submit a work record → approval flow)
-//   right = Profile (the user's profile & earnings dashboard)
-// Each tier gets its own version of the screens; the Operator view is built
-// first.
+// COMMON to EVERY tier — same layout, same five tabs, same screens:
+//   Performance · My work · [ + ] · Team · Profile
+// Only the PERFORMANCE tab changes what it shows per tier (an Operator sees
+// their own output; verify/approve tiers also get the management dashboard).
+// My work, Team and Profile are identical for everyone — they just read that
+// person's own data.
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -30,7 +30,7 @@ import {
   type Station,
 } from '../lib/supabase'
 
-type Tab = 'performance' | 'record' | 'approvals' | 'profile'
+type Tab = 'performance' | 'mywork' | 'record' | 'team' | 'profile'
 
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
@@ -394,7 +394,28 @@ export default function DemoMobile() {
                     myEmail={profile?.email ?? 'unknown'}
                     jobColumnReady={jobColumnReady}
                     onRecord={() => setTab('record')}
+                    onMyWork={() => setTab('mywork')}
                     onError={setError}
+                  />
+                ) : tab === 'mywork' ? (
+                  <MyWorkTab
+                    profileId={profile?.id ?? null}
+                    myName={profileName(profile)}
+                    tier={tier}
+                    stations={stations}
+                    jobs={jobs}
+                    rateFor={rateFor}
+                    amountFor={amountFor}
+                    tier2RateFor={tier2RateFor}
+                    onRecord={() => setTab('record')}
+                    onError={setError}
+                  />
+                ) : tab === 'team' ? (
+                  <TeamTab
+                    profile={profile}
+                    tier={tier}
+                    grades={grades}
+                    stations={stations}
                   />
                 ) : tab === 'record' ? (
                   <RecordTab
@@ -412,33 +433,10 @@ export default function DemoMobile() {
                     jobColumnReady={jobColumnReady}
                     onError={setError}
                   />
-                ) : tab === 'approvals' ? (
-                  approvalLevel ? (
-                    <ApprovalsTab
-                      profileId={profile?.id ?? null}
-                      myEmail={profile?.email ?? 'unknown'}
-                      level={approvalLevel}
-                      tier={tier}
-                      stations={stations}
-                      jobs={jobs}
-                      amountFor={amountFor}
-                      onError={setError}
-                    />
-                  ) : (
-                    <MyWorkTab
-                      profileId={profile?.id ?? null}
-                      tier={tier}
-                      stations={stations}
-                      jobs={jobs}
-                      amountFor={amountFor}
-                      onError={setError}
-                    />
-                  )
                 ) : (
                   <ProfileTab
                     profile={profile}
                     tier={tier}
-                    grades={grades}
                     stations={stations}
                   />
                 )}
@@ -448,7 +446,6 @@ export default function DemoMobile() {
                 <TabBar
                   tab={tab}
                   onTab={setTab}
-                  workLabel={approvalLevel ? 'Verify work' : 'My work'}
                   badge={approvalLevel ? approvalsCount : 0}
                 />
               )}
@@ -470,16 +467,15 @@ export default function DemoMobile() {
 function TabBar({
   tab,
   onTab,
-  workLabel,
   badge,
 }: {
   tab: Tab
   onTab: (t: Tab) => void
-  workLabel: string
   badge: number
 }) {
-  // The pen (Record) sits EXACTLY in the centre: both side groups flex
-  // equally around it. Work (verify / my work) is right beside the pen.
+  // Five slots, identical for every tier: the "+" (add a new entry) sits
+  // EXACTLY in the centre with two tabs flexing on each side —
+  // Performance · My work · [ + ] · Team · Profile.
   return (
     <div className="mob-tabbar centered">
       <div className="mob-tab-side">
@@ -489,28 +485,36 @@ function TabBar({
             <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
           </svg>
           <span>Performance</span>
+          {badge > 0 && <span className="mob-tab-badge">{badge > 99 ? '99+' : badge}</span>}
         </button>
-      </div>
-      <button
-        className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
-        onClick={() => onTab('record')}
-        aria-label="Record"
-      >
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 20h9" />
-          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-        </svg>
-      </button>
-      <div className="mob-tab-side">
-        <button className={`mob-tab ${tab === 'approvals' ? 'active' : ''}`} onClick={() => onTab('approvals')}>
+        <button className={`mob-tab ${tab === 'mywork' ? 'active' : ''}`} onClick={() => onTab('mywork')}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 11l3 3 8-8" />
             <path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" />
           </svg>
-          <span>{workLabel}</span>
-          {badge > 0 && <span className="mob-tab-badge">{badge > 99 ? '99+' : badge}</span>}
+          <span>My work</span>
+        </button>
+      </div>
+      <button
+        className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
+        onClick={() => onTab('record')}
+        aria-label="Add new entry"
+      >
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.6" strokeLinecap="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+      <div className="mob-tab-side">
+        <button className={`mob-tab ${tab === 'team' ? 'active' : ''}`} onClick={() => onTab('team')}>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="9" cy="8" r="3.4" />
+            <path d="M2.5 20c0-3.3 2.9-5 6.5-5s6.5 1.7 6.5 5" />
+            <path d="M17 4.6a3.4 3.4 0 0 1 0 6.8M18.5 14.4c2 .7 3 2.3 3 4.6" />
+          </svg>
+          <span>Team</span>
         </button>
         <button className={`mob-tab ${tab === 'profile' ? 'active' : ''}`} onClick={() => onTab('profile')}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -583,7 +587,9 @@ function statusChip(status: string | undefined) {
 }
 
 /* ------------------------------------------------------------------ */
-/* TAB 1 — PERFORMANCE: station dashboard → stamp card & records      */
+/* TAB 1 — PERFORMANCE: the ONLY tab whose content changes per tier.  */
+/* Every tier gets the same shell; a data-entry tier sees its own     */
+/* output, a verify/approve tier also gets the management dashboard.  */
 /* Operators see their own station tags; verify/approve tiers see all */
 /* stations. Tapping a station opens its stamp-card detail.           */
 /* ------------------------------------------------------------------ */
@@ -601,6 +607,7 @@ function PerformanceTab({
   myEmail,
   jobColumnReady,
   onRecord,
+  onMyWork,
   onError,
 }: {
   stations: Station[]
@@ -615,6 +622,7 @@ function PerformanceTab({
   myEmail: string
   jobColumnReady: boolean
   onRecord: () => void
+  onMyWork: () => void
   onError: (m: string | null) => void
 }) {
   const [station, setStation] = useState<Station | null>(null)
@@ -743,7 +751,6 @@ function PerformanceTab({
   }
   const myMaxQty = Math.max(1, ...myWeek.map((w) => w.qty))
   const myBestIso = myWeek.reduce((a, b) => (b.qty > a.qty ? b : a), myWeek[0])?.iso
-  const myJobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
 
   const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
   const status = (e: ProductionEntry) => e.approval_status ?? 'approved'
@@ -762,8 +769,6 @@ function PerformanceTab({
     e.user_id !== profileId &&
     ((canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'))
   const awaiting = mtd.filter(needsMe)
-  // Unscoped by month — an aging entry from further back still needs action.
-  const awaitingAll = entries.filter(needsMe)
   const rejectedWk = entries.filter((e) => status(e) === 'rejected' && e.work_date >= weekStart)
   const fmtMoney = (v: number) => (v >= 1000 ? `RM ${Math.round(v).toLocaleString()}` : RM(v))
 
@@ -860,17 +865,17 @@ function PerformanceTab({
   if (showApprovals) {
     return (
       <ApprovalsScreen
-        items={awaitingAll}
-        jobs={jobs}
-        stations={stations}
-        rateFor={rateFor}
-        amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
+        profileId={profileId}
         myEmail={myEmail}
-        canVerify={canVerify}
-        canFinal={canFinal}
-        onBack={() => setShowApprovals(false)}
-        onChanged={loadEntries}
+        level={canFinal ? 'approve' : 'verify'}
+        tier={tier}
+        stations={stations}
+        jobs={jobs}
+        amountFor={amountFor}
+        onBack={() => {
+          setShowApprovals(false)
+          loadEntries()
+        }}
         onError={onError}
       />
     )
@@ -931,12 +936,12 @@ function PerformanceTab({
             </div>
 
             {needsFix > 0 && (
-              <button className="mob-alert" onClick={onRecord}>
+              <button className="mob-alert" onClick={onMyWork}>
                 ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
               </button>
             )}
 
-            <button className="mob-btn" onClick={onRecord}>✎ Enter today's work record</button>
+            <button className="mob-btn" onClick={onRecord}>+ Add new work entry</button>
 
             <div className="mob-card">
               <div className="mob-title">Daily quantity — this week</div>
@@ -956,24 +961,9 @@ function PerformanceTab({
               </div>
             </div>
 
-            <div className="mob-card">
-              <div className="mob-title">Recent records</div>
-              {myEntries.length === 0 && <div className="mob-sub">No records yet.</div>}
-              {myEntries.slice(0, 5).map((e) => (
-                <div className="mob-entry static" key={e.id}>
-                  <span className="mob-entry-main">
-                    <span className="mob-entry-name">{myJobName(e.job_id)}</span>
-                    <span className="mob-station-meta" style={{ display: 'block' }}>
-                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                    </span>
-                  </span>
-                  <span className="mob-entry-side">
-                    <span className="mob-entry-amt">{myAmountOf(e).toFixed(2)}</span>
-                    {statusChip(e.approval_status)}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <button className="mob-btn ghost" onClick={onMyWork}>
+              Every record & its status → My work
+            </button>
           </>
         )}
 
@@ -1720,7 +1710,7 @@ function RecordTab({
 
         <div className="mob-body">
           <div style={{ padding: '0 0.2rem' }}>
-            <div className="mob-role">Record work</div>
+            <div className="mob-role">Add new entry</div>
             {myStation && <div className="mob-sub">{myStation.name}</div>}
           </div>
 
@@ -1780,7 +1770,7 @@ function RecordTab({
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Record work</div>
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Add new entry</div>
 
         {!canEntry ? (
           <div className="mob-card">
@@ -1911,11 +1901,11 @@ function RecordTab({
           </div>
         )}
 
-        {/* My submitted records */}
+        {/* Just-submitted confirmation — the full history lives in My work. */}
         <div className="mob-card">
-          <div className="mob-title">My records</div>
+          <div className="mob-title">Recently submitted</div>
           {entries.length === 0 && <div className="mob-sub">Nothing submitted yet.</div>}
-          {entries.map((e) => (
+          {entries.slice(0, 5).map((e) => (
             <button className="mob-entry" key={e.id} onClick={() => setDetail(e)}>
               <span className="mob-entry-main">
                 <span className="mob-entry-name">{jobName(e.job_id)}</span>
@@ -2091,29 +2081,43 @@ function EntryDetail({
 }
 
 /* ------------------------------------------------------------------ */
-/* MY WORK (operators / tiers without verify rights): the same Work   */
-/* button, but read-only — every entry they recorded with its status  */
-/* through the verify -> approve flow.                                */
+/* TAB 2 — MY WORK: the SAME screen for every tier — everything this  */
+/* person recorded, split into what is waiting for approval, what was */
+/* approved and what came back rejected. Rejected entries can be      */
+/* fixed and pushed back into the queue; tapping any entry opens its  */
+/* detail with the full verify → approve trail.                       */
 /* ------------------------------------------------------------------ */
+
+type WorkFilter = 'pending' | 'approved' | 'rejected'
 
 function MyWorkTab({
   profileId,
+  myName,
   tier,
   stations,
   jobs,
+  rateFor,
   amountFor,
+  tier2RateFor,
+  onRecord,
   onError,
 }: {
   profileId: string | null
+  myName: string
   tier: Grade | null
   stations: Station[]
   jobs: Job[]
+  rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
+  onRecord: () => void
   onError: (m: string | null) => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
+  const [filter, setFilter] = useState<WorkFilter>('pending')
+  const [detail, setDetail] = useState<ProductionEntry | null>(null)
 
   function load() {
     if (!profileId) return
@@ -2122,7 +2126,7 @@ function MyWorkTab({
       .select('*')
       .eq('user_id', profileId)
       .order('created_at', { ascending: false })
-      .limit(30)
+      .limit(120)
       .then(({ data, error }) => {
         if (error) onError(error.message)
         else setEntries(data ?? [])
@@ -2162,7 +2166,35 @@ function MyWorkTab({
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
   const stationName = (id: string) => stations.find((st) => st.id === id)?.name ?? '?'
   const stat = (e: ProductionEntry) => e.approval_status ?? 'approved'
-  const count = (k: string) => entries.filter((e) => stat(e) === k).length
+  // "Pending approval" covers both legs of the flow — waiting for a verify
+  // AND verified but waiting for the final approval.
+  const inBucket = (e: ProductionEntry, k: WorkFilter) =>
+    k === 'pending' ? ['pending', 'verified'].includes(stat(e)) : stat(e) === k
+  const count = (k: WorkFilter) => entries.filter((e) => inBucket(e, k)).length
+  const shown = entries.filter((e) => inBucket(e, filter))
+  const total = shown.reduce((s, e) => s + amountFor(e.job_id, e.quantity), 0)
+
+  if (detail) {
+    return (
+      <EntryDetail
+        entry={detail}
+        myName={myName}
+        tier={tier}
+        stations={stations}
+        jobs={jobs}
+        rateFor={rateFor}
+        amountFor={amountFor}
+        tier2RateFor={tier2RateFor}
+        onBack={() => setDetail(null)}
+      />
+    )
+  }
+
+  const emptyText: Record<WorkFilter, string> = {
+    pending: 'Nothing waiting for approval right now.',
+    approved: 'No approved work yet.',
+    rejected: 'Nothing rejected — good work ✅',
+  }
 
   return (
     <>
@@ -2177,48 +2209,77 @@ function MyWorkTab({
           <div className="mob-sub">Everything you recorded and where it stands</div>
         </div>
 
-        <div className="mob-queue-chips" aria-hidden="true">
-          <button className="on">Pending ({count('pending') + count('verified')})</button>
-          <button>Approved ({count('approved')})</button>
-          <button>Rejected ({count('rejected')})</button>
+        <div className="mob-queue-chips">
+          <button className={filter === 'pending' ? 'on' : ''} onClick={() => setFilter('pending')}>
+            Pending ({count('pending')})
+          </button>
+          <button className={filter === 'approved' ? 'on' : ''} onClick={() => setFilter('approved')}>
+            Approved ({count('approved')})
+          </button>
+          <button className={filter === 'rejected' ? 'on' : ''} onClick={() => setFilter('rejected')}>
+            Rejected ({count('rejected')})
+          </button>
         </div>
 
         {loading ? (
           <p className="muted small">Loading…</p>
         ) : entries.length === 0 ? (
-          <div className="mob-card"><div className="mob-sub">Nothing recorded yet — use the pen button to add work.</div></div>
+          <div className="mob-card">
+            <div className="mob-sub">Nothing recorded yet.</div>
+            <button className="mob-btn" onClick={onRecord}>+ Add new entry</button>
+          </div>
         ) : (
-          entries.map((e) => (
-            <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
-              <span className="perf-top">
-                <span>{jobName(e.job_id)}</span>
-                <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-              </span>
-              <span className="perf-top">
-                <span className="mob-station-meta">
-                  {stationName(e.station_id)} · {e.quantity} ·{' '}
-                  {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                </span>
-                {statusChip(e.approval_status)}
-              </span>
-              {stat(e) === 'rejected' && e.rejected_reason && (
-                <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
-                  Rejected: {e.rejected_reason}
-                </span>
-              )}
-              {stat(e) === 'rejected' && (
+          <>
+            <div className="mob-card">
+              <div className="mob-field-label">
+                {filter === 'pending' ? 'Waiting for approval' : filter === 'approved' ? 'Approved' : 'Rejected'}
+                {' '}· {shown.length} record{shown.length === 1 ? '' : 's'}
+              </div>
+              <div className="mob-stat">{RM(total)}</div>
+            </div>
+
+            {shown.length === 0 && (
+              <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
+            )}
+
+            {shown.map((e) => (
+              <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
                 <button
                   type="button"
-                  className="mob-mini"
-                  style={{ alignSelf: 'flex-start' }}
-                  disabled={busy === e.id}
-                  onClick={() => fixResubmit(e)}
+                  className="mob-plainbtn"
+                  onClick={() => setDetail(e)}
                 >
-                  ✎ Fix &amp; resubmit
+                  <span className="perf-top">
+                    <span>{jobName(e.job_id)}</span>
+                    <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                  </span>
+                  <span className="perf-top">
+                    <span className="mob-station-meta">
+                      {stationName(e.station_id)} · {e.quantity} ·{' '}
+                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                    </span>
+                    {statusChip(e.approval_status)}
+                  </span>
                 </button>
-              )}
-            </div>
-          ))
+                {stat(e) === 'rejected' && e.rejected_reason && (
+                  <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
+                    Rejected: {e.rejected_reason}
+                  </span>
+                )}
+                {stat(e) === 'rejected' && (
+                  <button
+                    type="button"
+                    className="mob-mini"
+                    style={{ alignSelf: 'flex-start' }}
+                    disabled={busy === e.id}
+                    onClick={() => fixResubmit(e)}
+                  >
+                    ✎ Fix &amp; resubmit
+                  </button>
+                )}
+              </div>
+            ))}
+          </>
         )}
       </div>
     </>
@@ -2286,12 +2347,14 @@ function SignupWelcome({ myName }: { myName: string }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* TAB — APPROVALS (granted per user in Settings → User access).      */
-/* 'verify' level works the To-verify queue; 'approve' level gets     */
-/* both queues. Own submissions are never in either queue.            */
+/* APPROVALS — a sub-screen of Performance, reached from the "awaiting */
+/* review" alert. It is NOT a bottom tab: the tab bar is the same five */
+/* buttons for every tier. 'verify' level works the To-verify queue;   */
+/* 'approve' level gets both queues. Own submissions are never queued  */
+/* back to the person who submitted them.                              */
 /* ------------------------------------------------------------------ */
 
-function ApprovalsTab({
+function ApprovalsScreen({
   profileId,
   myEmail,
   level,
@@ -2299,6 +2362,7 @@ function ApprovalsTab({
   stations,
   jobs,
   amountFor,
+  onBack,
   onError,
 }: {
   profileId: string | null
@@ -2308,6 +2372,7 @@ function ApprovalsTab({
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
+  onBack: () => void
   onError: (m: string | null) => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
@@ -2378,6 +2443,7 @@ function ApprovalsTab({
   return (
     <>
       <div className="mob-header">
+        <button className="mob-back" onClick={onBack}>‹ Performance</button>
         <span className="mob-brand">MJM</span>
         <TierBadge tier={tier} />
       </div>
@@ -2595,164 +2661,19 @@ function ApprovalDetail({
 }
 
 /* ------------------------------------------------------------------ */
-/* Approvals — verify/approve pending work entries (Record work,      */
-/* Daily Job Record, etc.). A tier can hold verify, approve, or both;  */
-/* each section only shows if this tier holds that capability.        */
-/* ------------------------------------------------------------------ */
-
-function ApprovalsScreen({
-  items,
-  jobs,
-  stations,
-  rateFor,
-  amountFor,
-  tier2RateFor,
-  myEmail,
-  canVerify,
-  canFinal,
-  onBack,
-  onChanged,
-  onError,
-}: {
-  items: ProductionEntry[]
-  jobs: Job[]
-  stations: Station[]
-  rateFor: (jobId: string) => number
-  amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
-  myEmail: string
-  canVerify: boolean
-  canFinal: boolean
-  onBack: () => void
-  onChanged: () => void
-  onError: (m: string | null) => void
-}) {
-  const [names, setNames] = useState<Map<string, string>>(new Map())
-
-  useEffect(() => {
-    const ids = [...new Set(items.map((e) => e.user_id).filter((id): id is string => Boolean(id)))]
-    if (ids.length === 0) return
-    supabase
-      .from('access_profiles')
-      .select('id, full_name, email')
-      .in('id', ids)
-      .then(({ data }) => {
-        const m = new Map<string, string>()
-        for (const p of data ?? []) m.set(p.id, p.full_name || p.email || 'Unknown')
-        setNames(m)
-      })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.map((e) => e.id).join(',')])
-
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
-  const jobUnit = (id: string) => jobs.find((j) => j.id === id)?.unit ?? ''
-
-  async function act(entry: ProductionEntry, fields: Partial<ProductionEntry>) {
-    const { error } = await supabase.from('production_entries').update(fields).eq('id', entry.id)
-    if (error) onError(error.message)
-    else onChanged()
-  }
-  const verify = (e: ProductionEntry) =>
-    act(e, { approval_status: 'verified', verified_by: myEmail, verified_at: new Date().toISOString() })
-  const approve = (e: ProductionEntry) =>
-    act(e, { approval_status: 'approved', approved_by: myEmail, approved_at: new Date().toISOString() })
-  const reject = (e: ProductionEntry) => {
-    // Same rule as the Approvals tab and the Operation page: a reject
-    // records WHY and wipes any verify stamp so the entry restarts clean.
-    const reason = window.prompt('Reason for rejecting (shown to the worker):')
-    if (reason === null) return
-    act(e, {
-      approval_status: 'rejected',
-      rejected_reason: reason || null,
-      verified_by: null,
-      verified_at: null,
-      approved_by: null,
-      approved_at: null,
-    })
-  }
-
-  const pendingItems = items.filter((e) => (e.approval_status ?? 'approved') === 'pending')
-  const verifiedItems = items.filter((e) => (e.approval_status ?? 'approved') === 'verified')
-
-  function Row({ entry, actionLabel, onAction }: { entry: ProductionEntry; actionLabel: string; onAction: () => void }) {
-    return (
-      <div className="approval-item">
-        <div className="mob-entry-name">{jobName(entry.job_id)}</div>
-        <div className="mob-station-meta">
-          {stationName(entry.station_id)} ·{' '}
-          {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-          {entry.shift ? ` · Shift ${entry.shift.toUpperCase()}` : ''} ·{' '}
-          {names.get(entry.user_id ?? '') ?? 'Unknown'}
-        </div>
-        <div className="mob-breakrow total">
-          <span>{breakdownFor(rateFor, tier2RateFor, entry.job_id, entry.quantity)}{jobUnit(entry.job_id)}</span>
-          <span>{RM(amountFor(entry.job_id, entry.quantity))}</span>
-        </div>
-        <div className="row-form" style={{ marginTop: '0.4rem' }}>
-          <button className="mob-btn" style={{ flex: 1 }} onClick={onAction}>{actionLabel}</button>
-          <button className="mob-btn ghost" style={{ flex: 1 }} onClick={() => reject(entry)}>Reject</button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <>
-      <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Profile</button>
-        <span className="mob-brand">MJM</span>
-      </div>
-
-      <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Approvals</div>
-
-        {items.length === 0 && (
-          <div className="mob-card">
-            <div className="mob-sub">Nothing waiting for you right now.</div>
-          </div>
-        )}
-
-        {canVerify && pendingItems.length > 0 && (
-          <div className="mob-card">
-            <div className="mob-title">Waiting for verification ({pendingItems.length})</div>
-            {pendingItems.map((e) => (
-              <Row key={e.id} entry={e} actionLabel="Verify" onAction={() => verify(e)} />
-            ))}
-          </div>
-        )}
-
-        {canFinal && verifiedItems.length > 0 && (
-          <div className="mob-card">
-            <div className="mob-title">Waiting for final approval ({verifiedItems.length})</div>
-            {verifiedItems.map((e) => (
-              <Row key={e.id} entry={e} actionLabel="Approve" onAction={() => approve(e)} />
-            ))}
-          </div>
-        )}
-      </div>
-    </>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* TAB 3 — PROFILE: the user's profile & earnings dashboard           */
+/* TAB 5 — PROFILE: the user's profile & earnings dashboard. Same for */
+/* every tier; team management now lives on the Team tab.             */
 /* ------------------------------------------------------------------ */
 
 function ProfileTab({
   profile,
   tier,
-  grades,
   stations,
 }: {
   profile: Profile | null
   tier: Grade | null
-  grades: Grade[]
   stations: Station[]
 }) {
-  // Leaders (any tier above the bottom) manage their team right here.
-  const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
-  const isLeader = tier !== null && grades.length > 0 && tier.sort_order < bottomTier
   const [workerName, setWorkerName] = useState<string | null>(null)
   const [supervisorName, setSupervisorName] = useState<string | null>(null)
 
@@ -2815,10 +2736,6 @@ function ProfileTab({
           <div className="mob-role">{myName}</div>
           <div className="mob-sub">{tier?.name ?? '—'}</div>
         </div>
-
-        {isLeader && (
-          <TeamSection profile={profile} grades={grades} stations={stations} />
-        )}
 
         <PayslipSection profile={profile} />
 
@@ -2991,7 +2908,6 @@ function TeamSection({
   }
 
   const pending = people.filter((p) => !p.tags_confirmed)
-  const myTeam = people.filter((p) => p.supervisor_id === profile?.id)
 
   // Every team = a leader (any tier above the bottom) — labelled with the
   // team name, the leader and their station, so a sign-up can be assigned
@@ -3029,7 +2945,7 @@ function TeamSection({
   return (
     <div className="mob-card">
       <div className="mob-title">
-        My team{profile?.team_name ? ` — ${profile.team_name}` : ''}{' '}
+        New sign ups{profile?.team_name ? ` — ${profile.team_name}` : ''}{' '}
         {pending.length > 0 && <span className="mob-chip warn">{pending.length} new</span>}
       </div>
       {error && <div className="mob-sub" style={{ color: '#b91c1c' }}>{error}</div>}
@@ -3070,25 +2986,195 @@ function TeamSection({
         </div>
       ))}
 
-      {myTeam.length === 0 && pending.length === 0 && (
-        <div className="mob-sub">No team members yet.</div>
+      {pending.length === 0 && (
+        <div className="mob-sub">No sign ups waiting for a team.</div>
       )}
-      {myTeam.map((p) => {
-        const g = gradeOf(p)
-        return (
-          <div className="mob-row" key={p.id}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-              <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
-              <span>
-                <span className="mob-entry-name">{p.full_name ?? p.email ?? '—'}</span>
-                <span className="mob-station-meta" style={{ display: 'block' }}>
-                  {g?.name ?? '—'} · {stationLabel(p)}
-                </span>
-              </span>
-            </span>
-          </div>
-        )
-      })}
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* TAB 4 — TEAM: who you are and who you answer to. The chart starts  */
+/* at YOUR role, then climbs one tier at a time — your direct upper,  */
+/* their upper, and so on — stopping at the Engineer tier. Below the  */
+/* chart: the people who report to you, and (for leaders) the new     */
+/* sign-ups waiting to be claimed into a team.                        */
+/* ------------------------------------------------------------------ */
+
+/** The rung the chart climbs to and stops at. */
+const TOP_CHART_TIER = 'Engineer'
+
+function TeamTab({
+  profile,
+  tier,
+  grades,
+  stations,
+}: {
+  profile: Profile | null
+  tier: Grade | null
+  grades: Grade[]
+  stations: Station[]
+}) {
+  const [people, setPeople] = useState<Profile[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    supabase
+      .from('access_profiles')
+      .select('*')
+      .then(({ data }) => {
+        setPeople((data ?? []) as Profile[])
+        setLoading(false)
+      })
+  }, [])
+
+  const gradeById = (id: string | null | undefined) => grades.find((g) => g.id === id) ?? null
+  const stationLabel = (p: Profile | null) => {
+    if (!p) return '—'
+    const ids = p.station_ids && p.station_ids.length > 0
+      ? p.station_ids
+      : p.station_id ? [p.station_id] : []
+    if (ids.length === 0) return 'All stations'
+    return ids.map((id) => stations.find((st) => st.id === id)?.name ?? '?').join(', ')
+  }
+
+  // The real reporting chain (supervisor → their supervisor → …), keyed by
+  // the tier each person holds, so a rung of the ladder can be filled with
+  // the actual name instead of just a tier label. Capped so a bad
+  // supervisor loop in the data can never spin forever.
+  const chainByGrade = new Map<string, Profile>()
+  {
+    let cursor = profile?.supervisor_id ?? null
+    const seen = new Set<string>()
+    while (cursor && !seen.has(cursor) && seen.size < grades.length + 2) {
+      seen.add(cursor)
+      const person: Profile | undefined = people.find((p) => p.id === cursor)
+      if (!person) break
+      if (person.grade_id && !chainByGrade.has(person.grade_id)) chainByGrade.set(person.grade_id, person)
+      cursor = person.supervisor_id ?? null
+    }
+  }
+
+  // Exactly one confirmed person holds this tier → they ARE the upper, even
+  // when nobody has wired up a supervisor link yet.
+  function holderOf(g: Grade): Profile | null {
+    const fromChain = chainByGrade.get(g.id)
+    if (fromChain) return fromChain
+    const holders = people.filter((p) => p.grade_id === g.id && p.tags_confirmed)
+    return holders.length === 1 ? holders[0] : null
+  }
+
+  // Tier 1 is the highest, so "up" means a SMALLER sort_order. The chart
+  // runs from just above your tier to the Engineer tier inclusive.
+  const topTier = grades.find((g) => g.name === TOP_CHART_TIER)
+  const topOrder = topTier?.sort_order ?? Math.min(...grades.map((g) => g.sort_order), 1)
+  const upperTiers = tier
+    ? grades
+        .filter((g) => g.sort_order < tier.sort_order && g.sort_order >= topOrder)
+        .sort((a, b) => b.sort_order - a.sort_order) // nearest upper first
+    : []
+
+  const myName = profileName(profile)
+  const myTeam = people.filter((p) => p.supervisor_id === profile?.id)
+  const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
+  const isLeader = tier !== null && grades.length > 0 && tier.sort_order < bottomTier
+
+  const Node = ({
+    grade,
+    person,
+    label,
+    me,
+  }: {
+    grade: Grade | null
+    person: Profile | null
+    label: string
+    me?: boolean
+  }) => (
+    <div className={`mob-org-node ${me ? 'me' : ''}`}>
+      <span className={`tag-dot dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
+      <span className="mob-org-text">
+        <span className="mob-entry-name">{label}</span>
+        <span className="mob-station-meta">
+          {grade?.name ?? '—'}
+          {person ? ` · ${stationLabel(person)}` : ''}
+        </span>
+      </span>
+      {me && <span className="mob-chip ok">You</span>}
+    </div>
+  )
+
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+        <TierBadge tier={tier} />
+      </div>
+
+      <div className="mob-body">
+        <div style={{ padding: '0 0.2rem' }}>
+          <div className="mob-role">My team</div>
+          <div className="mob-sub">Your role and the line above you, up to {TOP_CHART_TIER}</div>
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">Reporting line</div>
+          {loading ? (
+            <div className="mob-sub">Loading…</div>
+          ) : (
+            <div className="mob-org">
+              {[...upperTiers].reverse().map((g) => {
+                const person = holderOf(g)
+                return (
+                  <Node
+                    key={g.id}
+                    grade={g}
+                    person={person}
+                    label={person ? profileName(person) : `${g.name} — not assigned yet`}
+                  />
+                )
+              })}
+              <Node grade={tier} person={profile} label={myName} me />
+            </div>
+          )}
+          {!loading && upperTiers.length === 0 && (
+            <div className="mob-sub">
+              {tier
+                ? `The ${tier.name} tier sits at or above ${TOP_CHART_TIER} — nothing above it on this chart.`
+                : 'No tier selected.'}
+            </div>
+          )}
+        </div>
+
+        <div className="mob-card">
+          <div className="mob-title">
+            Reports to me <span className="mob-chip">{myTeam.length}</span>
+          </div>
+          {loading ? (
+            <div className="mob-sub">Loading…</div>
+          ) : myTeam.length === 0 ? (
+            <div className="mob-sub">Nobody reports to you yet.</div>
+          ) : (
+            myTeam.map((p) => {
+              const g = gradeById(p.grade_id)
+              return (
+                <div className="mob-row" key={p.id}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
+                    <span>
+                      <span className="mob-entry-name">{profileName(p)}</span>
+                      <span className="mob-station-meta" style={{ display: 'block' }}>
+                        {g?.name ?? '—'} · {stationLabel(p)}
+                      </span>
+                    </span>
+                  </span>
+                </div>
+              )
+            })
+          )}
+        </div>
+
+        {isLeader && <TeamSection profile={profile} grades={grades} stations={stations} />}
+      </div>
+    </>
   )
 }
