@@ -3,9 +3,26 @@ import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 
+// The top bar carries the module you are in: the system name on the main
+// page, the module's own name once you enter one. Longest path first, so
+// "/operation/add" wins over "/operation".
+const MODULE_TITLES: [string, string][] = [
+  ['/operation/add', 'Add Job Record'],
+  ['/workers', 'Worker Management'],
+  ['/operation', 'Operation'],
+  ['/piece-rate', 'Piece Rate Management'],
+  ['/payroll', 'Payroll'],
+  ['/settings', 'Settings'],
+  ['/demo-mobile', 'Demo Mobile View'],
+  ['/station', 'Station status'],
+  ['/unauthorized', 'No access'],
+]
+const SYSTEM_TITLE = 'Piece Rate & Payroll System'
+
 export default function Layout() {
   const { profile, session, signOut } = useAuth()
   const { pathname } = useLocation()
+  const moduleTitle = MODULE_TITLES.find(([path]) => pathname.startsWith(path))?.[1] ?? SYSTEM_TITLE
   // The pivoted Piece Rate tables need more breathing room than the
   // standard page width gives every other page.
   const isWide = pathname.startsWith('/piece-rate')
@@ -33,7 +50,7 @@ export default function Layout() {
         <Link to="/" className="brand">
           <span className="brand-logo">MJM</span>
           <span className="brand-sep">/</span>
-          <span className="brand-title">Piece Rate &amp; Payroll System</span>
+          <span className="brand-title">{moduleTitle}</span>
         </Link>
         <div className="account">
           <span className="muted small">

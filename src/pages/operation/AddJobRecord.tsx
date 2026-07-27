@@ -261,7 +261,6 @@ export default function AddJobRecord() {
           <span className="sep">›</span>
           <span className="current">Add Job Record</span>
         </nav>
-        <h1>Add Job Record</h1>
         <p className="muted">Record the work done by an employee. Piece rate and amount are automatically calculated.</p>
       </div>
 

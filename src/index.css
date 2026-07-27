@@ -1098,41 +1098,33 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 
 /* ------------------------------------------------------------------ */
-/* WORKER MANAGEMENT — page header, the new sign-up drawer, and the    */
-/* team board: tier row → station group → team boxes → people.         */
+/* WORKER MANAGEMENT — sign-up drawer, tier strip, and the reporting   */
+/* chain drawn as an indented tree with team brackets inside it.       */
 /* ------------------------------------------------------------------ */
-.wm-page { display: flex; flex-direction: column; gap: 0.9rem; }
+.wm-page { display: flex; flex-direction: column; gap: 0.85rem; }
 
-/* Header: back button, title, and the sign-up button on the right. */
-.wm-head {
-  display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap;
-  padding-bottom: 0.7rem;
-  border-bottom: 1px solid rgba(25, 32, 42, 0.12);
-}
+.wm-head { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
 .wm-head .wm-back {
   padding: 0.4rem 0.75rem; font-size: 0.82rem; border-radius: 8px;
-  text-decoration: none; white-space: nowrap;
+  text-decoration: none; white-space: nowrap; margin-bottom: 0;
 }
-.wm-title { margin: 0; font-size: 1.35rem; letter-spacing: -0.02em; }
 .wm-head-actions { margin-left: auto; display: flex; align-items: center; gap: 0.6rem; }
 
 .wm-signup-btn {
   display: inline-flex; align-items: center; gap: 0.45rem;
   padding: 0.45rem 0.85rem; font-size: 0.85rem; border-radius: 9px;
 }
-.wm-signup-btn .wm-caret { font-size: 0.6rem; opacity: 0.75; }
+.wm-signup-btn .wm-signup-caret { font-size: 0.6rem; opacity: 0.75; }
 .wm-signup-btn.open { filter: brightness(1.1); }
 
-/* The drawer the sign-up button opens — drag a card straight to a box. */
+/* The drawer the sign-up button opens — drag a card onto a leader. */
 .wm-signups {
   background: var(--surface); border: 1px solid var(--border);
   border-left: 3px solid var(--danger);
   border-radius: 12px; padding: 0.7rem 0.8rem;
 }
 .wm-signups-empty { margin: 0; }
-.wm-signup-strip {
-  display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.15rem;
-}
+.wm-signup-strip { display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.15rem; }
 .wm-signup-card {
   flex: none; min-width: 150px;
   display: flex; flex-direction: column; gap: 0.1rem;
@@ -1143,135 +1135,135 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-signup-card.dragging { opacity: 0.4; }
 .wm-signup-name { font-weight: 700; font-size: 0.83rem; }
 .wm-signup-meta {
-  color: var(--muted); font-size: 0.7rem;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px;
-}
-
-/* Board + optional worker panel beside it. */
-.wm-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
-.wm-body.with-panel { grid-template-columns: minmax(0, 1fr) 330px; }
-@media (max-width: 1000px) {
-  .wm-body.with-panel { grid-template-columns: minmax(0, 1fr); }
-}
-
-.wm-board {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; overflow: hidden;
-}
-
-/* One tier row. */
-.wm-row { border-top: 1px solid var(--border); }
-.wm-row:first-child { border-top: none; }
-.wm-row-head {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.5rem 0.85rem;
-  background: #f6f7f9;
-  border-bottom: 1px solid var(--border);
-}
-.wm-row-toggle {
-  appearance: none; background: none; border: none; padding: 0; cursor: pointer;
-  display: flex; align-items: center; gap: 0.5rem; font-family: inherit; color: inherit;
-  flex: 1; text-align: left;
-}
-.wm-row-caret { color: var(--muted); font-size: 0.7rem; width: 0.7rem; }
-.wm-row-title {
-  margin: 0; font-size: 0.82rem; font-weight: 800;
-  text-transform: uppercase; letter-spacing: 0.09em;
-}
-.wm-row-count {
-  color: var(--muted); font-size: 0.72rem; font-variant-numeric: tabular-nums;
-}
-.wm-add {
-  appearance: none; cursor: pointer; font-family: inherit;
-  background: var(--surface); border: 1px dashed #b8c0ca; color: var(--accent-strong);
-  border-radius: 7px; padding: 0.15rem 0.5rem; font-size: 0.72rem; font-weight: 700;
-  white-space: nowrap;
-}
-.wm-add:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
-
-/* Station group inside a tier row. */
-.wm-section { padding: 0.5rem 0.85rem 0.65rem; border-top: 1px dashed #e6e9ee; }
-.wm-section:first-of-type { border-top: none; }
-.wm-section-head { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.4rem; }
-.wm-station-name {
-  font-size: 0.78rem; font-weight: 700; color: var(--accent-strong);
-}
-.wm-station-name::before { content: '↳'; color: var(--muted); margin-right: 0.3rem; font-weight: 400; }
-.wm-section-count { color: var(--muted); font-size: 0.7rem; margin-right: auto; }
-
-/* Team boxes. */
-.wm-boxes { display: flex; flex-wrap: wrap; gap: 0.55rem; align-items: flex-start; }
-.wm-box {
-  width: 216px; border: 1px solid var(--border); border-radius: 10px;
-  background: var(--surface);
-  display: flex; flex-direction: column;
-}
-.wm-box.loose { background: #fbfbfc; border-style: dashed; }
-.wm-box.over { border-color: var(--accent-strong); box-shadow: 0 0 0 2px var(--accent-soft); }
-.wm-box.locked { opacity: 0.75; }
-.wm-box-head {
-  display: flex; align-items: center; gap: 0.35rem;
-  padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border);
-}
-.wm-box-name { font-size: 0.8rem; font-weight: 800; }
-.wm-box.loose .wm-box-name { font-weight: 600; color: var(--muted); }
-.wm-box-count {
-  background: var(--accent-soft); color: var(--accent-strong);
-  border-radius: 999px; padding: 0 0.35rem; font-size: 0.68rem; font-weight: 700;
-}
-.wm-box-tools { margin-left: auto; display: flex; gap: 0.1rem; }
-.wm-box-input {
-  font: inherit; font-size: 0.8rem; font-weight: 700;
-  padding: 0.1rem 0.3rem; border-radius: 6px; width: 100%;
-}
-.wm-icon {
-  appearance: none; background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: 0.8rem; line-height: 1; padding: 0.15rem 0.25rem;
-  border-radius: 5px;
-}
-.wm-icon:hover { background: var(--bg); color: var(--text); }
-.wm-icon.danger:hover { background: #fbeceb; color: var(--danger); }
-.wm-box-body {
-  padding: 0.4rem; display: flex; flex-direction: column; gap: 0.3rem; min-height: 46px;
-}
-.wm-box-empty {
-  color: #9aa3ae; font-size: 0.72rem; font-style: italic;
-  padding: 0.35rem 0.15rem;
-}
-
-/* A person on the board. */
-.wm-person {
-  display: flex; flex-direction: column; gap: 0.05rem;
-  border: 1px solid transparent; border-left: 3px solid #cfd5dd;
-  border-radius: 6px; padding: 0.3rem 0.45rem; background: var(--bg);
-  cursor: grab;
-}
-.wm-person:hover { border-color: var(--border); border-left-color: var(--accent-strong); }
-.wm-person.selected {
-  border-color: var(--accent-strong); border-left-color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-.wm-person.me { border-left-color: #2f9e6d; }
-.wm-person.dragging { opacity: 0.4; }
-.wm-person-name {
-  font-weight: 700; font-size: 0.8rem; display: flex; align-items: center; gap: 0.3rem;
-}
-.wm-person-meta {
-  color: var(--muted); font-size: 0.7rem;
+  color: var(--muted); font-size: 0.7rem; max-width: 190px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* Worker panel docked beside the board. */
+/* Chain + optional worker panel beside it. */
+.wm-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
+.wm-body.with-panel { grid-template-columns: minmax(0, 1fr) 330px; }
+@media (max-width: 1000px) { .wm-body.with-panel { grid-template-columns: minmax(0, 1fr); } }
+
+.wm-chart {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 0.35rem 0.9rem 0.9rem;
+}
+
+/* Tier strip: the shape of the whole chain at a glance. */
+.wm-tiers {
+  display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
+  padding: 0.55rem 0; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem;
+}
+.wm-tier-chip {
+  appearance: none; cursor: pointer; font-family: inherit;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 999px; padding: 0.2rem 0.6rem; font-size: 0.75rem;
+}
+.wm-tier-chip:hover { border-color: var(--accent-strong); }
+.wm-tier-chip b { font-variant-numeric: tabular-nums; }
+.wm-tiers-actions { margin-left: auto; display: flex; gap: 0.7rem; }
+
+/* The tree. Each level draws its own rail, so the chain is visible. */
+.wm-tree, .wm-children { list-style: none; margin: 0; padding: 0; }
+.wm-children {
+  margin-left: 0.75rem; padding-left: 0.85rem;
+  border-left: 1px solid #dfe3e9;
+}
+.wm-node { position: relative; }
+/* The elbow from the rail into each row. */
+.wm-children > .wm-node > .wm-row::before,
+.wm-children > .wm-bracket > .wm-bracket-head::before {
+  content: ''; position: absolute; left: -0.85rem; top: 50%;
+  width: 0.6rem; height: 1px; background: #dfe3e9;
+}
+
+.wm-row {
+  position: relative;
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.32rem 0.45rem; border-radius: 8px;
+  border: 1px solid transparent; cursor: grab;
+  min-height: 34px;
+}
+.wm-row:hover { background: #f5f6f8; }
+.wm-row.selected { background: var(--accent-soft); border-color: var(--accent-strong); }
+.wm-row.me { background: #f1faf5; }
+.wm-row.dragging { opacity: 0.4; }
+.wm-row.over { border-color: var(--accent-strong); border-style: dashed; background: var(--accent-soft); }
+
+.wm-caret {
+  appearance: none; background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 0.7rem; line-height: 1; padding: 0.2rem;
+  width: 1.15rem; flex: none; border-radius: 4px;
+}
+.wm-caret:hover { background: var(--border); color: var(--text); }
+.wm-caret.leaf { cursor: default; opacity: 0.35; }
+.wm-caret.leaf:hover { background: none; }
+
+.wm-row-name {
+  font-weight: 700; font-size: 0.85rem; white-space: nowrap;
+  display: flex; align-items: center; gap: 0.3rem;
+}
+.wm-row .tagbadge { font-size: 0.68rem; padding: 0.05rem 0.45rem; flex: none; }
+.wm-row-meta {
+  color: var(--muted); font-size: 0.72rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wm-flag { flex: none; font-size: 0.65rem; }
+.wm-row-tail {
+  margin-left: auto; flex: none; display: flex; align-items: center; gap: 0.35rem;
+}
+.wm-under {
+  background: var(--accent-soft); color: var(--accent-strong);
+  border-radius: 999px; padding: 0 0.45rem; font-size: 0.68rem; font-weight: 700;
+  white-space: nowrap;
+}
+.wm-add {
+  appearance: none; cursor: pointer; font-family: inherit; flex: none;
+  background: var(--surface); border: 1px dashed #b8c0ca; color: var(--accent-strong);
+  border-radius: 7px; padding: 0.12rem 0.45rem; font-size: 0.7rem; font-weight: 700;
+  white-space: nowrap; visibility: hidden;
+}
+.wm-row:hover .wm-add, .wm-row.selected .wm-add { visibility: visible; }
+.wm-add:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
+
+/* A team bracket inside a leader's branch. */
+.wm-bracket { position: relative; }
+.wm-bracket-head {
+  position: relative;
+  display: flex; align-items: center; gap: 0.35rem;
+  padding: 0.15rem 0.45rem; margin: 0.2rem 0 0.1rem;
+  border-radius: 6px; border: 1px dashed transparent;
+}
+.wm-bracket-head:hover { background: #f5f6f8; }
+.wm-bracket-head.over { border-color: var(--accent-strong); background: var(--accent-soft); }
+.wm-bracket-name {
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--accent-strong);
+}
+.wm-bracket-name.none { color: var(--muted); font-weight: 600; }
+.wm-bracket-count { color: var(--muted); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+.wm-bracket-input { font: inherit; font-size: 0.75rem; font-weight: 700; padding: 0.05rem 0.3rem; }
+.wm-icon {
+  appearance: none; background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 0.75rem; line-height: 1; padding: 0.1rem 0.2rem;
+  border-radius: 5px; visibility: hidden;
+}
+.wm-bracket-head:hover .wm-icon { visibility: visible; }
+.wm-icon:hover { background: var(--border); color: var(--text); }
+.wm-icon.danger:hover { background: #fbeceb; color: var(--danger); }
+
+/* Worker panel docked beside the chain. */
 .wm-panel {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 0.7rem;
   position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto;
 }
-.wm-panel-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-}
+.wm-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .wm-panel-head h3 { margin: 0; }
 .wm-detail-id { display: flex; flex-direction: column; gap: 0.25rem; }
+.wm-panel .wm-row-name { white-space: normal; }
+.wm-panel .wm-row-meta { white-space: normal; }
 .wm-stat {
   display: flex; flex-direction: column; gap: 0.1rem;
   background: var(--accent-soft); border-radius: 10px; padding: 0.55rem 0.7rem;
@@ -1297,9 +1289,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-line-amt { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 700; }
 .wm-line-date { color: var(--muted); font-variant-numeric: tabular-nums; }
 
-@media (max-width: 560px) {
-  .wm-head { gap: 0.5rem; }
-  .wm-title { font-size: 1.15rem; width: 100%; order: 3; }
-  .wm-head-actions { margin-left: auto; }
-  .wm-box { width: 100%; }
+@media (max-width: 640px) {
+  .wm-row-meta { display: none; }
+  .wm-children { margin-left: 0.4rem; padding-left: 0.6rem; }
+  .wm-children > .wm-node > .wm-row::before,
+  .wm-children > .wm-bracket > .wm-bracket-head::before { left: -0.6rem; width: 0.45rem; }
+  .wm-add { visibility: visible; }
 }

@@ -44,7 +44,6 @@ export default function Settings() {
     <div className="stack">
       <div>
         <Link to="/" className="small muted backlink">← Back to main page</Link>
-        <h1>Settings</h1>
         <p className="muted">
           User access and tags. Station tags are managed below, under Tags management.
         </p>
