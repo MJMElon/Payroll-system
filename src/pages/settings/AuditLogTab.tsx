@@ -88,7 +88,7 @@ export default function AuditLogTab() {
   return (
     <div className="card stack">
       <div className="row-form spread">
-        <h3>Audit log</h3>
+        <h3>Audit trail record</h3>
         <select
           className="filter-select"
           value={target}

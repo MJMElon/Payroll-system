@@ -213,6 +213,39 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
 }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
 
+/* Glassy pill tab bar (Settings) — a frosted rail floating on the page
+   background, the active tab lifted out of it as a bright pane. */
+.tabs.glass {
+  align-self: flex-start;
+  display: inline-flex; gap: 0.2rem;
+  border-bottom: none;
+  padding: 0.32rem;
+  border-radius: 15px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.34));
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(14px) saturate(170%);
+  -webkit-backdrop-filter: blur(14px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 20px rgba(25, 35, 50, 0.10);
+  max-width: 100%; flex-wrap: wrap;
+}
+.tabs.glass .tab {
+  border-bottom: none; margin-bottom: 0;
+  padding: 0.5rem 1.1rem; border-radius: 12px;
+  font-size: 0.92rem; letter-spacing: -0.01em;
+  transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+.tabs.glass .tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.55); }
+.tabs.glass .tab.active {
+  color: var(--text); font-weight: 600;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(255, 255, 255, 0.78));
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 2px rgba(25, 32, 42, 0.10),
+    0 6px 16px rgba(25, 35, 50, 0.13);
+}
+
 /* Page sidebar (e.g. Piece Rate Management sections) */
 .sidebar-layout { display: flex; gap: 1.5rem; align-items: flex-start; }
 .sidebar-nav {
@@ -284,7 +317,6 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 }
 
 /* Approval section stands out slightly */
-.approval-card { border-left: 4px solid var(--accent-strong); }
 .approver-row { border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
 
 /* Coloured tag badges (colours managed in Settings -> Tags) */
@@ -350,16 +382,6 @@ a.small.muted, .backlink { display: inline-block; margin-bottom: 1.1rem; }
 /* Compact half-width blocks */
 .card.compact { padding: 1rem 1.1rem; gap: 0.6rem; }
 .card.compact .tag-row { padding: 0.3rem 0.4rem; }
-
-/* Multi-select station picker */
-.multi-select { position: relative; display: inline-block; }
-.multi-toggle { font-size: 0.85rem; padding: 0.45rem 0.7rem; }
-.multi-panel {
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
-  background: var(--surface); border-radius: 12px; padding: 0.7rem 0.9rem;
-  box-shadow: 0 12px 34px rgba(20, 30, 45, 0.22);
-  display: flex; flex-direction: column; gap: 0.35rem; min-width: 190px;
-}
 
 /* Colour plate in the tag editor */
 .color-plate { display: flex; gap: 0.5rem; flex-wrap: wrap; }
@@ -472,6 +494,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .icon-btn:hover { background: var(--bg); color: var(--text); }
 .icon-btn.sm { width: 30px; height: 30px; border-radius: 7px; }
+.icon-btn.danger:hover { background: #fdf1f1; border-color: var(--danger); color: var(--danger); }
+
+/* Icon action buttons sitting together in a table's right-hand cell */
+.row-actions { display: inline-flex; gap: 0.35rem; justify-content: flex-end; }
 
 /* Square module tiles on the main page */
 .module-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
@@ -756,59 +782,6 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .tag-section-hint { margin: 0.1rem 0 0; font-size: 0.75rem; color: var(--muted); }
 
-/* User access — identity header in the manage-access pop-out */
-.user-id-card {
-  display: flex; align-items: center; gap: 0.8rem;
-  background: var(--bg); border-radius: 12px; padding: 0.75rem 0.9rem;
-}
-.user-id-avatar {
-  width: 40px; height: 40px; border-radius: 50%; flex: none;
-  background: linear-gradient(135deg, #566270, #8d959f); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 0.85rem;
-}
-.user-id-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
-.user-id-name { font-weight: 700; }
-.user-id-code { flex: none; width: 120px; }
-.user-id-code input { padding: 0.4rem 0.5rem; font-size: 0.85rem; }
-
-/* User access — panel view toggle + team structure tree */
-.view-toggle {
-  display: flex; gap: 0.2rem; background: var(--bg);
-  border-radius: 10px; padding: 0.2rem;
-}
-.view-toggle button {
-  appearance: none; border: none; cursor: pointer; background: none;
-  padding: 0.35rem 0.7rem; border-radius: 8px;
-  font-size: 0.8rem; font-weight: 600; color: var(--muted);
-}
-.view-toggle button.active {
-  background: var(--surface); color: var(--accent-strong);
-  box-shadow: 0 1px 3px rgba(25, 35, 50, 0.15);
-}
-.tree-row {
-  display: flex; align-items: center; gap: 0.55rem;
-  background: var(--bg); border-radius: 10px;
-  padding: 0.42rem 0.65rem; margin-bottom: 0.3rem; font-size: 0.85rem;
-}
-.tree-row .tree-name { font-weight: 700; white-space: nowrap; }
-.tree-row .tree-meta {
-  color: var(--muted); font-size: 0.75rem;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.tree-row .tree-gear { margin-left: auto; flex: none; }
-.tree-elbow { color: var(--muted); font-size: 0.8rem; margin-right: -0.1rem; }
-
-/* User access — tier groups (expand to see that tier's users) */
-.tier-group { display: flex; flex-direction: column; gap: 0.3rem; }
-.tier-group-header {
-  appearance: none; border: none; cursor: pointer; width: 100%; text-align: left;
-  display: flex; align-items: center; gap: 0.6rem;
-  background: var(--bg); border-radius: 10px; padding: 0.55rem 0.75rem;
-  font-size: 0.9rem; color: var(--text);
-}
-.tier-group-header:hover { background: var(--accent-soft); }
-.tier-group-header .chev { color: var(--muted); font-size: 0.8rem; width: 12px; }
 .tag-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; align-items: stretch; }
 .tag-cols .tag-section { min-width: 0; }
 .cap-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.9rem; }

@@ -1,14 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import {
-  supabase,
-  profileName,
-  type Grade,
-  type Profile,
-  type Role,
-  type Station,
-} from '../lib/supabase'
+import { supabase, type Grade, type Station } from '../lib/supabase'
 import {
   ALL_CAPABILITIES,
   CAPABILITY_OPTIONS,
@@ -20,689 +13,42 @@ import {
   sortCapabilities,
   tagClass,
 } from '../lib/tags'
+import { useWideShell } from '../lib/useWideShell'
 
 import AuditLogTab from './settings/AuditLogTab'
 
-type Tab = 'access' | 'tags' | 'audit'
-
-// Role (route access) follows the tier tag so the panel only needs tags.
-function roleForTier(tier: number | null, name?: string): Role {
-  if (tier === null) return 'operator'
-  if (tier <= 2) return 'manager'
-  if (tier === 3 || (name ?? '').toLowerCase().includes('engineer')) return 'engineer'
-  return 'operator'
-}
+type Tab = 'tags' | 'audit'
 
 export default function Settings() {
   const { profile } = useAuth()
-  const [tab, setTab] = useState<Tab>('access')
+  const [tab, setTab] = useState<Tab>('tags')
+  // Settings holds wide tables — let it use the whole window like the
+  // Payroll and Worker Management pages instead of the narrow page cap.
+  const wideStyle = useWideShell()
   // The audit log's RLS only answers to admins/managers — showing the tab
   // to anyone else would just render an empty (confusing) table.
   const canAudit = profile?.role === 'admin' || profile?.role === 'manager'
 
   return (
-    <div className="stack">
+    <div className="stack" style={wideStyle}>
       <div>
         <Link to="/" className="small muted backlink">← Back to main page</Link>
         <h1>Settings</h1>
-        <p className="muted">
-          User access and tags. Station tags are managed below, under Tags management.
-        </p>
       </div>
 
-      <div className="tabs">
-        <button className={`tab ${tab === 'access' ? 'active' : ''}`} onClick={() => setTab('access')}>
-          User access
-        </button>
+      <div className="tabs glass">
         <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
-          Tags management
+          Tier &amp; Station Tags setting
         </button>
         {canAudit && (
           <button className={`tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>
-            Audit log
+            Audit trail record
           </button>
         )}
       </div>
 
-      {tab === 'access' && <UserAccessTab />}
       {tab === 'tags' && <TagsTab />}
       {tab === 'audit' && canAudit && <AuditLogTab />}
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* User access: every signed-up email, what they can see and do.      */
-/* Admin-only — RLS also enforces this on the backend.                */
-/* ------------------------------------------------------------------ */
-
-function UserAccessTab() {
-  const { profile } = useAuth()
-  const [profiles, setProfiles] = useState<Profile[]>([])
-  const [stations, setStations] = useState<Station[]>([])
-  const [grades, setGrades] = useState<Grade[]>([])
-  const [accessUser, setAccessUser] = useState<Profile | null>(null)
-  const [openTiers, setOpenTiers] = useState<Record<string, boolean>>({})
-  const [panelView, setPanelView] = useState<'structure' | 'tier'>('structure')
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  const isAdmin = profile?.role === 'admin'
-
-  async function load() {
-    const [p, s, g] = await Promise.all([
-      supabase.from('access_profiles').select('*').order('email'),
-      supabase.from('stations').select('*').order('sort_order'),
-      supabase.from('grades').select('*').order('sort_order'),
-    ])
-    const err = p.error || s.error || g.error
-    if (err) setError(err.message)
-    setProfiles((p.data ?? []) as Profile[])
-    setStations(s.data ?? [])
-    setGrades(((g.data ?? []) as Grade[]).sort((a, b) => a.sort_order - b.sort_order))
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    load()
-  }, [])
-
-  async function update(p: Profile, fields: Partial<Profile>) {
-    const { error } = await supabase.from('access_profiles').update(fields).eq('id', p.id)
-    if (error) setError(error.message)
-    else load()
-  }
-
-  const tierOf = (p: Profile) =>
-    p.grade_id ? grades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
-  const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
-  const myTier = profile?.grade_id
-    ? grades.find((g) => g.id === profile.grade_id)?.sort_order ?? null
-    : null
-  // Anyone at least one tier above the bottom can see + confirm new signups.
-  const canConfirm = isAdmin || (myTier !== null && myTier < bottomTier)
-  // Non-admins may only hand out tiers strictly below their own.
-  const assignableGrades = isAdmin
-    ? grades
-    : grades.filter((g) => myTier !== null && g.sort_order > myTier)
-  // The full control panel opens for admins, tier 1, and tiers granted the
-  // "Change other users' settings" capability — who may only edit users of
-  // a LOWER tier than their own.
-  const myCaps = effectiveCapabilities(
-    profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) : null,
-  )
-  const canManageUsers = isAdmin || myTier === 1 || myCaps.includes('user-access')
-  const userEditable = (p: Profile) =>
-    isAdmin || myTier === 1 || (myTier !== null && (tierOf(p) === null || tierOf(p)! > myTier))
-
-  // This tab is the SYSTEM access setting (engineer tier and above via the
-  // "Change other users' settings" capability). Day-to-day team work —
-  // claiming sign-ups, salaries — lives in the Worker Management module.
-  if (!loading && !canManageUsers && !canConfirm) {
-    return (
-      <div className="card">
-        <p className="muted">
-          Only admins or tiers granted "Change other users' settings" can open
-          the system access settings. Team leaders manage their people in the
-          Worker Management module on the main page.
-        </p>
-      </div>
-    )
-  }
-  if (loading) return <p className="muted">Loading…</p>
-
-  const label = (p: Profile) => profileName(p)
-  const capsOf = (p: Profile) =>
-    effectiveCapabilities(p.grade_id ? grades.find((g) => g.id === p.grade_id) : null)
-  const approvalUsers = profiles.filter((p) => capsOf(p).includes('rate-approve'))
-  const verifyUsers = profiles.filter((p) => capsOf(p).includes('rate-verify'))
-  const stationLabel = (p: Profile) => {
-    const ids = p.station_ids && p.station_ids.length > 0
-      ? p.station_ids
-      : p.station_id
-        ? [p.station_id]
-        : []
-    if (ids.length === 0) return 'All stations'
-    return ids
-      .map((id) => stations.find((st) => st.id === id)?.name ?? '?')
-      .join(', ')
-  }
-
-  const pending = profiles.filter((p) => !p.tags_confirmed)
-  const confirmed = profiles
-    .filter((p) => p.tags_confirmed)
-    .sort((a, b) => (tierOf(a) ?? 99) - (tierOf(b) ?? 99) || (a.email ?? '').localeCompare(b.email ?? ''))
-
-  // Sync route access with the tier when a tag is handed out.
-  function tierFields(gradeId: string | null, p: Profile): Partial<Profile> {
-    const g = grades.find((x) => x.id === gradeId)
-    const fields: Partial<Profile> = { grade_id: gradeId }
-    if (p.role !== 'admin') fields.role = roleForTier(g?.sort_order ?? null, g?.name)
-    return fields
-  }
-
-  return (
-    <div className="stack">
-      {error && <div className="error">{error}</div>}
-
-      {canManageUsers && (
-        <div className="card stack compact approval-card">
-          <h3>Piece rate approval</h3>
-          <div className="field">
-            <span>Verify by</span>
-            {verifyUsers.length === 0
-              ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the verify capability.</p>
-              : verifyUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
-          </div>
-          <div className="field">
-            <span>Approval by</span>
-            {approvalUsers.length === 0
-              ? <p className="muted small" style={{ margin: 0 }}>No one yet — assign a tag with the approve capability.</p>
-              : approvalUsers.map((p) => <div className="small" key={p.id}>{label(p)}</div>)}
-          </div>
-        </div>
-      )}
-
-      {/* 1 — new signups waiting for their tags to be confirmed */}
-      <div className="card stack approval-card">
-        <div className="row-form spread">
-          <h3>New sign ups — pending tag confirmation</h3>
-          {pending.length > 0 && <span className="count-badge static">{pending.length}</span>}
-        </div>
-        {pending.length === 0 && <p className="muted small">No new sign ups waiting.</p>}
-        {pending.length > 0 && (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Tier tag</th>
-                <th>Station tag</th>
-                <th className="right">Confirm</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pending.map((p) => (
-                <tr key={p.id}>
-                  <td>{p.full_name ?? '—'} <span className="badge new">new</span></td>
-                  <td className="muted small">{p.email}</td>
-                  <td>
-                    <select
-                      value={p.grade_id ?? ''}
-                      onChange={(e) => update(p, tierFields(e.target.value || null, p))}
-                    >
-                      <option value="">—</option>
-                      {assignableGrades.map((g) => (
-                        <option key={g.id} value={g.id}>{g.name}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <StationMultiSelect
-                      stations={stations}
-                      value={p.station_ids ?? (p.station_id ? [p.station_id] : [])}
-                      onChange={(ids) => update(p, { station_ids: ids, station_id: ids[0] ?? null })}
-                    />
-                  </td>
-                  <td className="right">
-                    <button
-                      className="btn"
-                      disabled={!p.grade_id}
-                      title={p.grade_id ? 'Confirm this user' : 'Set a tier tag first'}
-                      onClick={() => update(p, { tags_confirmed: true })}
-                    >
-                      Confirm
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <p className="muted small">
-          Sign ups default to Operator with all modules visible. Set their station and
-          tier, then confirm to move them into the user list.
-        </p>
-      </div>
-
-      {/* 2 — confirmed users: team-structure tree or tier groups */}
-      {canManageUsers && (
-        <div className="card stack">
-          <div className="row-form spread">
-            <h3>User access control panel</h3>
-            <div className="view-toggle">
-              <button
-                type="button"
-                className={panelView === 'structure' ? 'active' : ''}
-                onClick={() => setPanelView('structure')}
-              >
-                Team structure
-              </button>
-              <button
-                type="button"
-                className={panelView === 'tier' ? 'active' : ''}
-                onClick={() => setPanelView('tier')}
-              >
-                By tier
-              </button>
-            </div>
-          </div>
-          {confirmed.length === 0 && <p className="muted small">No confirmed users yet.</p>}
-
-          {panelView === 'structure' && confirmed.length > 0 && (
-            <StructureTree
-              users={confirmed}
-              grades={grades}
-              stationLabel={stationLabel}
-              userEditable={userEditable}
-              onEdit={setAccessUser}
-            />
-          )}
-
-          {panelView === 'tier' && [
-            ...grades.map((g) => ({
-              key: g.id,
-              grade: g as Grade | null,
-              users: confirmed.filter((p) => p.grade_id === g.id),
-            })),
-            {
-              key: 'untagged',
-              grade: null as Grade | null,
-              users: confirmed.filter(
-                (p) => !p.grade_id || !grades.some((g) => g.id === p.grade_id),
-              ),
-            },
-          ]
-            .filter((grp) => grp.users.length > 0)
-            .map((grp) => {
-              const open = openTiers[grp.key] ?? false
-              return (
-                <div key={grp.key} className="tier-group">
-                  <button
-                    type="button"
-                    className="tier-group-header"
-                    onClick={() => setOpenTiers((s) => ({ ...s, [grp.key]: !open }))}
-                  >
-                    <span className="chev">{open ? '▾' : '▸'}</span>
-                    {grp.grade ? (
-                      <span className={tagClass(grp.grade.color)}>{grp.grade.name}</span>
-                    ) : (
-                      <span className="tagbadge tag-grey">No tier tag</span>
-                    )}
-                    <span className="muted small">
-                      {grp.users.length} user{grp.users.length === 1 ? '' : 's'}
-                    </span>
-                  </button>
-                  {open && (
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>Employee code</th>
-                          <th>Name</th>
-                          <th>Email</th>
-                          <th>Station</th>
-                          <th className="right">Access</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {grp.users.map((p) => (
-                          <tr key={p.id}>
-                            <td className="muted small">{p.employee_code ?? '—'}</td>
-                            <td>{p.full_name ?? '—'}</td>
-                            <td className="muted small">{p.email}</td>
-                            <td className="muted small">{stationLabel(p)}</td>
-                            <td className="right">
-                              {userEditable(p) && (
-                                <button
-                                  className="icon-btn sm"
-                                  title="Manage access"
-                                  aria-label={`Set access for ${label(p)}`}
-                                  onClick={() => setAccessUser(p)}
-                                >
-                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <circle cx="12" cy="8" r="4" />
-                                    <path d="M4 21v-1a7 7 0 0 1 10.6-6" />
-                                    <circle cx="18" cy="18" r="3" />
-                                    <path d="M18 14.5v1M18 20.5v1M21.5 18h-1M15.5 18h-1" />
-                                  </svg>
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              )
-            })}
-        </div>
-      )}
-
-      {accessUser && (
-        <UserAccessModal
-          user={accessUser}
-          stations={stations}
-          grades={isAdmin || myTier === 1 ? grades : assignableGrades}
-          allGrades={grades}
-          profiles={profiles.filter((p) => p.tags_confirmed)}
-          onClose={() => setAccessUser(null)}
-          onSaved={() => {
-            setAccessUser(null)
-            load()
-          }}
-        />
-      )}
-
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Team structure tree: everyone hangs under the direct upper they    */
-/* report to ("Reports to" in Manage access) — so it's obvious who    */
-/* verifies/approves whose work. Users without an upper sit at the    */
-/* root, sorted by tier.                                              */
-/* ------------------------------------------------------------------ */
-
-function StructureTree({
-  users,
-  grades,
-  stationLabel,
-  userEditable,
-  onEdit,
-}: {
-  users: Profile[]
-  grades: Grade[]
-  stationLabel: (p: Profile) => string
-  userEditable: (p: Profile) => boolean
-  onEdit: (p: Profile) => void
-}) {
-  const gradeOf = (p: Profile) => grades.find((g) => g.id === p.grade_id)
-  const tierOf = (p: Profile) => gradeOf(p)?.sort_order ?? 99
-  const byTierName = (a: Profile, b: Profile) =>
-    tierOf(a) - tierOf(b) || profileName(a).localeCompare(profileName(b))
-
-  const childrenOf = (id: string) =>
-    users.filter((p) => p.supervisor_id === id).sort(byTierName)
-  // Roots: no supervisor, or the supervisor isn't in the confirmed list.
-  const roots = users
-    .filter((p) => !p.supervisor_id || !users.some((x) => x.id === p.supervisor_id))
-    .sort(byTierName)
-  const unlinked = users.filter((p) => !p.supervisor_id).length
-
-  const renderNode = (p: Profile, depth: number): JSX.Element => {
-    const g = gradeOf(p)
-    const kids = childrenOf(p.id)
-    return (
-      <div key={p.id}>
-        <div className="tree-row" style={{ marginLeft: depth * 26 }}>
-          {depth > 0 && <span className="tree-elbow" aria-hidden="true">└</span>}
-          <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
-          <span className="tree-name">{p.full_name ?? p.email ?? '—'}</span>
-          {g && <span className={tagClass(g.color)}>{g.name}</span>}
-          <span className="tree-meta">
-            {p.employee_code ? `${p.employee_code} · ` : ''}{stationLabel(p)}
-            {kids.length > 0 && ` · ${kids.length} under`}
-          </span>
-          {userEditable(p) && (
-            <button
-              className="icon-btn sm tree-gear"
-              title="Manage access"
-              aria-label={`Set access for ${profileName(p)}`}
-              onClick={() => onEdit(p)}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="8" r="4" />
-                <path d="M4 21v-1a7 7 0 0 1 10.6-6" />
-                <circle cx="18" cy="18" r="3" />
-                <path d="M18 14.5v1M18 20.5v1M21.5 18h-1M15.5 18h-1" />
-              </svg>
-            </button>
-          )}
-        </div>
-        {kids.map((c) => renderNode(c, depth + 1))}
-      </div>
-    )
-  }
-
-  return (
-    <div className="stack" style={{ gap: '0.1rem' }}>
-      {roots.map((p) => renderNode(p, 0))}
-      {unlinked > 1 && (
-        <p className="muted small" style={{ marginTop: '0.6rem' }}>
-          Set each user's "Reports to" in Manage access to hang them under
-          their direct upper — e.g. operators under an assistant head,
-          assistant heads under the station head.
-        </p>
-      )}
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Per-user access pop-out. Its job is ONLY assigning tags: station   */
-/* tag(s) + tier tag. What a tier can see and do lives in Tags        */
-/* management. Employee code is set here too (its only home).         */
-/* ------------------------------------------------------------------ */
-
-function UserAccessModal({
-  user,
-  stations,
-  grades,
-  allGrades,
-  profiles,
-  onClose,
-  onSaved,
-}: {
-  user: Profile
-  stations: Station[]
-  grades: Grade[]
-  allGrades: Grade[]
-  profiles: Profile[]
-  onClose: () => void
-  onSaved: () => void
-}) {
-  const [employeeCode, setEmployeeCode] = useState(user.employee_code ?? '')
-  const [stationIds, setStationIds] = useState<string[]>(
-    user.station_ids ?? (user.station_id ? [user.station_id] : []),
-  )
-  const [gradeId, setGradeId] = useState(user.grade_id ?? '')
-  const [supervisorId, setSupervisorId] = useState(user.supervisor_id ?? '')
-  const [approvalScreen, setApprovalScreen] = useState(user.mobile_approval ?? '')
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  // "Reports to" candidates: confirmed accounts of a STRICTLY higher tier
-  // than this user's (selected) tier — which keeps the chain loop-free.
-  const tierOfP = (p: Profile) =>
-    p.grade_id ? allGrades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
-  const selTier = gradeId ? allGrades.find((g) => g.id === gradeId)?.sort_order ?? null : null
-  const supervisors = profiles
-    .filter((p) => {
-      if (p.id === user.id) return false
-      const t = tierOfP(p)
-      return t !== null && (selTier === null || t < selTier)
-    })
-    .sort((a, b) => (tierOfP(a)! - tierOfP(b)!) || profileName(a).localeCompare(profileName(b)))
-  const supGradeName = (p: Profile) =>
-    allGrades.find((g) => g.id === p.grade_id)?.name ?? '—'
-
-  async function save(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setSaving(true)
-    const g = grades.find((x) => x.id === gradeId)
-    const validSupervisor = supervisors.some((p) => p.id === supervisorId)
-    const fields: Partial<Profile> = {
-      employee_code: employeeCode.trim() || null,
-      station_ids: stationIds,
-      station_id: stationIds[0] ?? null,
-      grade_id: gradeId || null,
-      supervisor_id: validSupervisor ? supervisorId : null,
-      mobile_approval: (approvalScreen || null) as Profile['mobile_approval'],
-    }
-    if (user.role !== 'admin') fields.role = roleForTier(g?.sort_order ?? null, g?.name)
-    const { error } = await supabase.from('access_profiles').update(fields).eq('id', user.id)
-    setSaving(false)
-    if (error) return setError(error.message)
-    onSaved()
-  }
-
-  const initials = profileName(user).split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase()
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
-        <div className="row-form spread">
-          <h2>Manage access</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-
-        {error && <div className="error">{error}</div>}
-
-        {/* Who this is — identity from sign up, not edited here. */}
-        <div className="user-id-card">
-          <span className="user-id-avatar">{initials}</span>
-          <span className="user-id-main">
-            <span className="user-id-name">{profileName(user)}</span>
-            <span className="muted small">{user.email ?? '—'}</span>
-          </span>
-          <label className="field user-id-code">
-            <span>Employee code</span>
-            <input
-              value={employeeCode}
-              onChange={(e) => setEmployeeCode(e.target.value)}
-              placeholder="EMP001"
-            />
-          </label>
-        </div>
-
-        <div className="tag-section">
-          <div className="tag-section-title">Tier tag</div>
-          <select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
-            <option value="">—</option>
-            {grades.map((g) => (
-              <option key={g.id} value={g.id}>{g.sort_order}. {g.name}</option>
-            ))}
-          </select>
-          <p className="tag-section-hint">
-            What the tier can see and do is set in Settings → Tags management.
-          </p>
-        </div>
-
-        <div className="tag-section">
-          <div className="tag-section-title">Station tag</div>
-          <StationMultiSelect stations={stations} value={stationIds} onChange={setStationIds} />
-          <p className="tag-section-hint">No station selected = sees all stations.</p>
-        </div>
-
-        <div className="tag-section">
-          <div className="tag-section-title">Reports to (direct upper)</div>
-          <select value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)}>
-            <option value="">— no one yet —</option>
-            {supervisors.map((p) => (
-              <option key={p.id} value={p.id}>
-                {profileName(p)} · {supGradeName(p)}
-              </option>
-            ))}
-          </select>
-          <p className="tag-section-hint">
-            Only higher tiers can be chosen. This builds the team structure tree
-            — e.g. 4 operators under 1 assistant head, 2 assistant heads under 1
-            station head.
-          </p>
-        </div>
-
-        <div className="tag-section">
-          <div className="tag-section-title">Work approval screen (mobile)</div>
-          <select value={approvalScreen} onChange={(e) => setApprovalScreen(e.target.value)}>
-            <option value="">Not allowed — no Approvals page</option>
-            <option value="verify">Verification — can verify submitted work</option>
-            <option value="approve">Final approval — can verify and approve</option>
-          </select>
-          <p className="tag-section-hint">
-            Opens the Approvals page in the mobile app for THIS user only — it
-            is granted per person here, not fixed to any tier.
-          </p>
-        </div>
-
-        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : 'Save access'}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Pick any number of station tags for a user (none = all stations).  */
-/* ------------------------------------------------------------------ */
-
-function StationMultiSelect({
-  stations,
-  value,
-  onChange,
-}: {
-  stations: Station[]
-  value: string[]
-  onChange: (ids: string[]) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const boxRef = useRef<HTMLDivElement>(null)
-
-  // Close on a click outside the panel (moving the mouse out keeps it open).
-  useEffect(() => {
-    if (!open) return
-    function onDocClick(e: MouseEvent) {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [open])
-  const label =
-    value.length === 0
-      ? 'All stations'
-      : value.length === 1
-        ? stations.find((s) => s.id === value[0])?.name ?? '1 station'
-        : `${value.length} stations`
-
-  function toggle(id: string) {
-    onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])
-  }
-
-  return (
-    <div className="multi-select" ref={boxRef}>
-      <button type="button" className="btn ghost multi-toggle" onClick={() => setOpen((v) => !v)}>
-        {label} ▾
-      </button>
-      {open && (
-        <div className="multi-panel">
-          <label className="checkbox small" style={{ margin: 0 }}>
-            <input
-              type="checkbox"
-              checked={value.length === 0}
-              onChange={() => onChange([])}
-            />{' '}
-            All stations
-          </label>
-          {stations.map((s) => (
-            <label className="checkbox small" key={s.id} style={{ margin: 0 }}>
-              <input
-                type="checkbox"
-                checked={value.includes(s.id)}
-                onChange={() => toggle(s.id)}
-              />{' '}
-              {s.name}
-            </label>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -896,15 +242,34 @@ function TagsTab() {
                   {canEditTags && (
                     <td className="right">
                       {editable && (
-                        <>
-                          <button className="linkbtn" onClick={() => setEditor(g)}>Edit</button>
+                        <span className="row-actions">
+                          <button
+                            className="icon-btn sm"
+                            title="Edit tag"
+                            aria-label={`Edit ${g.name}`}
+                            onClick={() => setEditor(g)}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                            </svg>
+                          </button>
                           {!isSuper && (
-                            <>
-                              {' '}
-                              <button className="linkbtn danger" onClick={() => removeTag(g)}>Delete</button>
-                            </>
+                            <button
+                              className="icon-btn sm danger"
+                              title="Delete tag"
+                              aria-label={`Delete ${g.name}`}
+                              onClick={() => removeTag(g)}
+                            >
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                <path d="M10 11v6M14 11v6" />
+                              </svg>
+                            </button>
                           )}
-                        </>
+                        </span>
                       )}
                     </td>
                   )}
@@ -1265,7 +630,8 @@ function TagEditModal({
           <div className="tag-section-title">User setting</div>
           {capBoxes('User setting')}
           <p className="tag-section-hint">
-            Opens the User access panel to set lower-tier users' station, tier and modules.
+            Lets this tier manage people in every team from Worker Management,
+            not just their own.
           </p>
         </div>
 
@@ -1274,7 +640,7 @@ function TagEditModal({
           <p className="tag-section-hint">
             Data always follows the fixed rule: this tier and every tier below it;
             station tags narrow it to those stations. Tick the web modules this
-            tier sees — per-user boxes in User access can only narrow further.
+            tier sees.
           </p>
           <div className="cap-cols">
             {MODULE_OPTIONS.map((m) => (

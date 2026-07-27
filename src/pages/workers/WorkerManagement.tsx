@@ -911,7 +911,7 @@ function WorkerPanel({
       ) : (
         <p className="muted small">
           Editing a worker profile needs the "Edit worker profile &amp; salary"
-          function, granted per tier in Settings → Tags management.
+          function, granted per tier in Settings → Tier &amp; Station Tags setting.
         </p>
       )}
     </>

@@ -314,7 +314,7 @@ export default function DemoMobile() {
         <p className="muted">
           One app, one design — each person's access decides what they see.
           Use "View as" to preview any scenario, from a brand-new sign-up to
-          Management. Station requirements are preset in Settings → Tags management.
+          Management. Station requirements are preset in Settings → Tier &amp; Station Tags setting.
         </p>
       </div>
 
