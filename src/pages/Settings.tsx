@@ -9,6 +9,7 @@ import {
   DEFAULT_MODULES,
   GROUP_MODULE,
   MANAGEMENT_ONLY_GROUPS,
+  MODULE_GROUP,
   MODULE_OPTIONS,
   nextTagColor,
   sortCapabilities,
@@ -65,9 +66,11 @@ export default function Settings() {
 
   return (
     <div className="stack" style={wideStyle}>
-      <div>
-        <Link to="/" className="small muted backlink">← Back to main page</Link>
+      {/* Title on the left, the way out on the right — the back link reads
+          as an action rather than something above the heading. */}
+      <div className="page-head">
         <h1>Settings</h1>
+        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
       </div>
 
       <div className="tabs glass">
@@ -463,8 +466,8 @@ function TierAccessSheet({ grade }: { grade: Grade }) {
       </div>
 
       <div className="tag-section">
-        <div className="tag-section-title">Access to module</div>
-        {mods.length === 0 ? (
+        <div className="tag-section-title">Access to Module</div>
+        {MODULE_OPTIONS.filter((m) => mods.includes(m.key)).length === 0 ? (
           <span className="small muted">None</span>
         ) : (
           <div className="cap-cols">
@@ -703,7 +706,15 @@ function TagModal({
 
   function toggleModule(key: string) {
     if (isSuper) return
-    setModules((m) => (m.includes(key) ? m.filter((k) => k !== key) : [...m, key]))
+    const turningOff = modules.includes(key)
+    setModules((m) => (turningOff ? m.filter((k) => k !== key) : [...m, key]))
+    // Closing a module drops its own functions with it — there is nothing
+    // to grant on a module this tier can no longer open.
+    const group = turningOff ? MODULE_GROUP[key] : null
+    if (group) {
+      const inner = CAPABILITY_OPTIONS.filter((c) => c.group === group).map((c) => c.key)
+      setCapabilities((c) => c.filter((k) => !inner.includes(k)))
+    }
   }
 
   async function save(e: FormEvent) {
@@ -725,13 +736,12 @@ function TagModal({
     onSaved()
   }
 
-  // Groups still worth showing: never a Management-only one, and — where a
-  // group governs a module — only once that module is ticked above.
-  const openGroups = CAPABILITY_GROUPS.filter((group) => {
-    if (MANAGEMENT_ONLY_GROUPS.includes(group)) return false
-    const owner = GROUP_MODULE[group]
-    return !owner || modules.includes(owner)
-  })
+  // Groups that belong to no module, so they cannot sit inside the module
+  // table and keep a block of their own. Management-only groups are not
+  // handed out per tier at all.
+  const looseGroups = CAPABILITY_GROUPS.filter(
+    (group) => !MANAGEMENT_ONLY_GROUPS.includes(group) && !GROUP_MODULE[group],
+  )
 
   // One checkbox row per capability of a group — shared by every section.
   const capBoxes = (group: string) =>
@@ -787,66 +797,94 @@ function TagModal({
     <div className="modal-overlay" onClick={onClose}>
       <form className="modal modal-view" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="row-form spread">
-          <h2>{grade ? 'Edit tag' : 'New tag'}</h2>
+          <h2>Tier Access Manage</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         {error && <div className="error">{error}</div>}
 
-        <div className="row-form">
-          <label className="field grow">
-            <span>Tag name</span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              /* Only a tag being created opens with the cursor here — an
-                 edit should land on the sheet, not in the name box. */
-              autoFocus={!grade}
-              required
-            />
-          </label>
-          <div className="field">
-            <span>Colour (auto-issued)</span>
-            <span className={tagClass(color)} style={{ alignSelf: 'flex-start' }}>
-              {name.trim() || 'preview'}
-            </span>
-          </div>
+        {/* Which tier this is, then the tag itself as the name field —
+            type straight into it to rename. */}
+        <div className="tier-line">
+          <span className="tier-line-no">Tier {grade?.sort_order ?? nextTier} :</span>
+          <input
+            className={`${tagClass(color)} tag-name-input`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            size={Math.max(10, name.length + 1)}
+            placeholder="Tag name"
+            aria-label="Tag name"
+            /* Only a tag being created opens with the cursor here — an edit
+               should land on the sheet, not in the name box. */
+            autoFocus={!grade}
+            required
+          />
+          <span className="tier-line-no">Tier</span>
         </div>
 
+        {/* What being tier 1 means, said where it belongs: on tier 1. */}
+        {isSuper && (
+          <span className="small muted">
+            The Management tier. Creating tier tags and station tags, setting
+            what a tier may do, and changing other users' settings are done
+            here and nowhere else — which is why nothing below can be
+            unticked.
+          </span>
+        )}
+
+        {/* Tick a module and it opens to show that module's own functions,
+            so what a tier may do sits under the module it belongs to. */}
         <div className="tag-section">
-          <div className="tag-section-title">Access to module</div>
-          <div className="cap-cols">
-            {MODULE_OPTIONS.map((m) => (
-              <label key={m.key} className="checkbox small" style={{ margin: 0 }}>
-                <input
-                  type="checkbox"
-                  checked={modules.includes(m.key)}
-                  disabled={isSuper}
-                  onChange={() => toggleModule(m.key)}
-                />{' '}
-                {m.label}
-              </label>
-            ))}
+          <div className="tag-section-title">Access to Module</div>
+          <div className="module-table">
+            {MODULE_OPTIONS.map((m) => {
+              const on = modules.includes(m.key)
+              const group = MODULE_GROUP[m.key]
+              const inner = group ? CAPABILITY_OPTIONS.filter((c) => c.group === group) : []
+              return (
+                <div className={`module-row ${on ? 'on' : ''}`} key={m.key}>
+                  <label className="checkbox module-head">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      disabled={isSuper}
+                      onChange={() => toggleModule(m.key)}
+                    />
+                    <span className="module-name">{m.label}</span>
+                    {on && inner.length > 0 && (
+                      <span className="module-count">
+                        {inner.filter((c) => capabilities.includes(c.key)).length}/{inner.length}
+                      </span>
+                    )}
+                  </label>
+                  {on && inner.length > 0 && (
+                    <div className="module-caps">
+                      {inner.map((c) => (
+                        <label key={c.key} className="checkbox small" style={{ margin: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={capabilities.includes(c.key)}
+                            disabled={isSuper}
+                            onChange={() => toggleCapability(c.key)}
+                          />{' '}
+                          {c.label}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
 
-        {/* A module's own settings only appear once the tier can open that
-            module — there is nothing to set on a module it cannot reach. */}
-        {openGroups.map((group) => (
+        {/* Anything that governs no single module keeps its own block. */}
+        {looseGroups.map((group) => (
           <div className="tag-section" key={group}>
             <div className="tag-section-title">{group}</div>
             {capBoxes(group)}
           </div>
         ))}
-
-        <div className="tag-section">
-          <div className="tag-section-title">Management only</div>
-          <span className="small muted">
-            Creating tier tags and station tags, setting what a tier may do, and
-            changing other users' settings belong to Management (tier 1). They
-            are not handed out per tier, so there is nothing to tick here.
-          </span>
-        </div>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>

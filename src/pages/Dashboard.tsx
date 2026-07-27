@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase, type Station } from '../lib/supabase'
-import { DEFAULT_MODULES } from '../lib/tags'
+import { ALWAYS_MODULES, DEFAULT_MODULES } from '../lib/tags'
 
 const DAY_START_HOUR = 7 // The mill day runs 07:00 → 07:00.
 
@@ -42,7 +42,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'worker-management',
     to: '/workers',
-    title: 'Worker Management',
+    title: 'Team Manage',
     desc: 'Teams, sign-ups & salaries',
     show: () => true,
     icon: (
@@ -133,7 +133,10 @@ export default function Dashboard() {
     load()
   }, [profile, isManage])
 
-  const canSee = (key: string) => allowed === null || allowed.includes(key)
+  // The station status board is common to every tier, so it is never on
+  // the allow-list — it is simply always open.
+  const canSee = (key: string) =>
+    allowed === null || ALWAYS_MODULES.includes(key) || allowed.includes(key)
 
   // Tile order is a personal preference — kept in this browser's storage.
   const [order, setOrder] = useState<string[]>(() => {
