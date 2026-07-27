@@ -46,6 +46,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // database was mid-migration). Create it, then reload.
     const { data: session } = await supabase.auth.getSession()
     const email = session.session?.user.email ?? null
+    // The name they typed at signup, if it is still on the auth user. Never
+    // fall back to the email: an email is not a name, and the team chart
+    // then has no way to tell an unnamed account from a named one.
+    const signupName =
+      (session.session?.user.user_metadata?.full_name as string | undefined)?.trim() || null
     const { data: opGrade } = await supabase
       .from('grades')
       .select('id')
@@ -53,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .maybeSingle()
     const { data: created, error: insErr } = await supabase
       .from('access_profiles')
-      .insert({ id: userId, full_name: email, email, role: 'operator', grade_id: opGrade?.id ?? null })
+      .insert({ id: userId, full_name: signupName, email, role: 'operator', grade_id: opGrade?.id ?? null })
       .select()
       .single()
     if (insErr) {

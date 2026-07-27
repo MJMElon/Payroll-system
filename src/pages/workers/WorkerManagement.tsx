@@ -1,26 +1,25 @@
 // ---------------------------------------------------------------------------
 // WORKER MANAGEMENT — the team chart.
 //
-// Three columns under the page title:
-//   LEFT    New signups. Sticky, so the list rides along as you scroll down
-//           to the operator rows and drag a card onto a block.
+// Three columns under the page banner:
+//   LEFT    New signups. Sticky, so the cards ride along as you scroll down
+//           to the operator row and drag one onto a block.
 //   MIDDLE  Formation. One row per tier, top tier first, drawn as blocks:
 //
 //             MANAGER                 [ Manager Raj ]
 //             ENGINEER                [ Wong ][ Siva ][ Tan ] …
 //             STATION HEAD            [ Ahmad ][ Chin ] …
 //
-//           A row shows the whole tier until you pick a block above it —
-//           then it narrows to that block's branch, and the trail shows in
-//           the breadcrumb, so the chain reads without drawing 112 boxes.
-//   RIGHT   The person you opened.
+//           Every name stays on its row — clicking a block only opens it.
+//   RIGHT   Profile details for whoever was clicked, where an account can
+//           also be given a name (the chart shows the email until it has
+//           one, which is why naming lives one click away).
 //
 // Teams are the clusters inside a row: "+ Team" on a leader's block makes
-// one at that leader's tier and station, named inline, and the row below
-// splits into those clusters. Drop someone on a block and they join that
-// leader (and that leader's team); drop them on a cluster and they join
-// that team. A new signup with no tier lands on the tier straight below
-// the block they are dropped on, and inherits its station.
+// one at that leader's tier and station, named inline. Drop someone on a
+// block and they join that leader (and that leader's team); drop them on a
+// cluster and they join that team, under whoever made it. A new signup with
+// no tier lands on the tier straight below the block, and takes its station.
 //
 // Access: any leader may build their OWN branch — that needs no capability.
 // Editing a profile needs "Edit worker profile & salary", and moving people
@@ -60,6 +59,24 @@ function roleForTier(tier: number | null, name?: string): Role {
   return 'operator'
 }
 
+/** Has this account been given a real name, or is it still the email? */
+function hasName(p: Profile | undefined | null): boolean {
+  const n = p?.full_name?.trim()
+  return Boolean(n && n.toLowerCase() !== (p?.email ?? '').trim().toLowerCase())
+}
+
+/**
+ * What the chart calls someone: their name once it is set, otherwise the
+ * part of their email before the @ — an email address is not a name, and
+ * the chart is a page we show the team.
+ */
+function displayName(p: Profile | undefined | null): string {
+  if (!p) return '?'
+  if (hasName(p)) return p.full_name!.trim()
+  const local = (p.email ?? '').split('@')[0]
+  return local || p.id.slice(0, 8)
+}
+
 /** A bracket of children under one leader; `team: null` = no team. */
 type Group = { team: Team | null; people: Profile[] }
 
@@ -84,8 +101,6 @@ export default function WorkerManagement() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editWorker, setEditWorker] = useState<Profile | null>(null)
   const [signupsOpen, setSignupsOpen] = useState(true)
-  // The block whose branch the rows below are drilled into.
-  const [focusId, setFocusId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [dragId, setDragId] = useState<string | null>(null)
@@ -223,66 +238,33 @@ export default function WorkerManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, grades])
 
-  // Is `p` somewhere under `ancestorId` in the reporting chain?
-  const isUnder = (p: Profile, ancestorId: string): boolean => {
-    let cur: Profile | undefined = profiles.find((x) => x.id === p.supervisor_id)
-    for (let hops = 0; cur && hops < 20; hops++) {
-      if (cur.id === ancestorId) return true
-      cur = profiles.find((x) => x.id === cur?.supervisor_id)
-    }
-    return false
-  }
-
-  // The focused block and everyone above it — the trail the rows follow.
-  const focusPath = useMemo(() => {
-    const chain: Profile[] = []
-    let cur = focusId ? profiles.find((p) => p.id === focusId) : undefined
-    for (let hops = 0; cur && hops < 20; hops++) {
-      chain.unshift(cur)
-      cur = cur.supervisor_id ? profiles.find((x) => x.id === cur?.supervisor_id) : undefined
-    }
-    return chain
-  }, [focusId, profiles])
-
-  // One row per tier, top tier first. A row shows the whole tier until a
-  // block above it is picked — then it shows that block's branch only.
+  // One row per tier, top tier first. Every name stays on its row — the
+  // chart shows the whole floor, and clicking a block only opens it.
   const rows = useMemo(() => {
-    const out: { grade: Grade; parent: Profile | null; people: Profile[] }[] = []
+    const out: { grade: Grade; people: Profile[] }[] = []
     for (const g of grades) {
-      const parent = [...focusPath].reverse().find((f) => (tierOf(f) ?? 99) < g.sort_order) ?? null
       const people = visible
         .filter((p) => p.grade_id === g.id)
-        .filter((p) => !parent || isUnder(p, parent.id))
-        .sort((a, b) => profileName(a).localeCompare(profileName(b)))
-      if (people.length > 0) out.push({ grade: g, parent, people })
+        .sort((a, b) => displayName(a).localeCompare(displayName(b)))
+      if (people.length > 0) out.push({ grade: g, people })
     }
     return out
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grades, visible, focusPath, profiles])
+  }, [grades, visible])
 
-  // People with a tier tag nobody knows about, plus anyone with no tier.
-  const looseRow = useMemo(
-    () => visible.filter((p) => !p.grade_id),
-    [visible],
-  )
+  // People with no tier tag at all.
+  const looseRow = useMemo(() => visible.filter((p) => !p.grade_id), [visible])
 
-  /** The brackets under one leader: their teams, then whoever has no team. */
-  function groupsFor(leader: Profile, kids: Profile[]): Group[] {
-    const mine = teams.filter((t) => t.created_by === leader.id)
-    const spread = new Set(kids.map((k) => k.team_id ?? null))
-    // Nothing to bracket: this leader made no team and their people all sit
-    // in the same one (usually the leader's own) — the rows say so already.
-    if (mine.length === 0 && spread.size <= 1) return [{ team: null, people: kids }]
-    const childTeams = new Set(kids.map((k) => k.team_id).filter(Boolean) as string[])
-    const shown = teams
-      .filter((t) => t.created_by === leader.id || childTeams.has(t.id))
+  /** Split a tier row into its teams, in team order, no-team last. */
+  function clustersFor(people: Profile[]): Group[] {
+    const present = teams
+      .filter((t) => people.some((p) => p.team_id === t.id))
       .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
-    if (shown.length === 0) return [{ team: null, people: kids }]
-    const groups: Group[] = shown.map((t) => ({
+    if (present.length === 0) return [{ team: null, people }]
+    const groups: Group[] = present.map((t) => ({
       team: t,
-      people: kids.filter((k) => k.team_id === t.id),
+      people: people.filter((p) => p.team_id === t.id),
     }))
-    const rest = kids.filter((k) => !k.team_id || !shown.some((t) => t.id === k.team_id))
+    const rest = people.filter((p) => !p.team_id || !present.some((t) => t.id === p.team_id))
     if (rest.length > 0) groups.push({ team: null, people: rest })
     return groups
   }
@@ -308,8 +290,7 @@ export default function WorkerManagement() {
       .select()
       .single()
     if (error) return setError(error.message)
-    setFocusId(leader.id)
-    setNotice(`${name} added under ${profileName(leader)}.`)
+    setNotice(`${name} added under ${displayName(leader)}.`)
     if (data) {
       setRenamingId(data.id)
       setRenameDraft(data.name)
@@ -399,13 +380,34 @@ export default function WorkerManagement() {
     // as a success that changed nothing — so an empty result is a refusal.
     if (!data || data.length === 0) {
       return setError(
-        `The database would not let you place ${profileName(person)} — that needs a higher ` +
+        `The database would not let you place ${displayName(person)} — that needs a higher ` +
           'tier, or the "Change other users\' settings" function.',
       )
     }
     setNotice(
-      `${profileName(person)} now reports to ${profileName(leader)}${team ? ` · ${team.name}` : ''}.`,
+      `${displayName(person)} now reports to ${displayName(leader)}${team ? ` · ${team.name}` : ''}.`,
     )
+    load()
+  }
+
+  /** Give an account a name, so the chart stops showing an email. */
+  async function renamePerson(person: Profile, name: string) {
+    const clean = name.trim()
+    if (!clean || clean === (person.full_name ?? '')) return
+    setError(null)
+    const { data, error } = await supabase
+      .from('access_profiles')
+      .update({ full_name: clean })
+      .eq('id', person.id)
+      .select('id')
+    if (error) return setError(error.message)
+    if (!data || data.length === 0) {
+      return setError(
+        `The database would not let you rename ${displayName(person)} — that needs the ` +
+          '"Edit worker profile & salary" function.',
+      )
+    }
+    setNotice(`Name saved: ${clean}.`)
     load()
   }
 
@@ -422,7 +424,7 @@ export default function WorkerManagement() {
     const sup = person.supervisor_id ? profiles.find((x) => x.id === person.supervisor_id) : null
     const supTier = sup ? tierOf(sup) : null
     if (supTier !== null && grade.sort_order <= supTier) {
-      return setError(`That tier is not below ${profileName(sup)}, who they report to.`)
+      return setError(`That tier is not below ${displayName(sup)}, who they report to.`)
     }
     setError(null)
     const patch: Record<string, unknown> = { grade_id: grade.id }
@@ -435,11 +437,11 @@ export default function WorkerManagement() {
     if (error) return setError(error.message)
     if (!data || data.length === 0) {
       return setError(
-        `The database would not let you re-tier ${profileName(person)} — that needs a higher ` +
+        `The database would not let you re-tier ${displayName(person)} — that needs a higher ` +
           'tier, or the "Change other users\' settings" function.',
       )
     }
-    setNotice(`${profileName(person)} is now ${grade.name}.`)
+    setNotice(`${displayName(person)} is now ${grade.name}.`)
     load()
   }
 
@@ -516,23 +518,18 @@ export default function WorkerManagement() {
         key={p.id}
         className={[
           'wm-block',
-          focusId === p.id ? 'focused' : '',
-          focusPath.some((f) => f.id === p.id) ? 'on-path' : '',
           selectedId === p.id ? 'selected' : '',
           dragId === p.id ? 'dragging' : '',
           dropKey === key ? 'over' : '',
           isMe ? 'me' : '',
         ].join(' ')}
-        onClick={() => {
-          setSelectedId(p.id)
-          setFocusId((cur) => (cur === p.id ? null : p.id))
-        }}
+        onClick={() => setSelectedId(p.id)}
         {...dragProps(p)}
         {...dropProps(key, p, team, allowed)}
       >
         <span className={`wm-block-bar dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
         <span className="wm-block-name">
-          {profileName(p)}
+          {displayName(p)}
           {isMe && <span className="you-chip">you</span>}
         </span>
         <span className="wm-block-meta">
@@ -545,7 +542,7 @@ export default function WorkerManagement() {
             <button
               type="button"
               className="wm-add"
-              title={`Add a team under ${profileName(p)}`}
+              title={`Add a team under ${displayName(p)}`}
               onClick={(e) => {
                 e.stopPropagation()
                 createTeam(p)
@@ -559,9 +556,9 @@ export default function WorkerManagement() {
     )
   }
 
-  /** A tier row: the whole tier, or the picked block's branch of it. */
-  function tierRow(grade: Grade | null, parent: Profile | null, people: Profile[]) {
-    const clusters = parent ? groupsFor(parent, people) : [{ team: null, people } as Group]
+  /** A tier row: every name on that tier, split into its teams. */
+  function tierRow(grade: Grade | null, people: Profile[]) {
+    const clusters = clustersFor(people)
     const bare = clusters.length === 1 && !clusters[0].team
     return (
       <section className="wm-tier-row" key={grade?.id ?? 'untagged'}>
@@ -569,18 +566,22 @@ export default function WorkerManagement() {
           <span className={`tag-dot dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
           <h2 className="wm-tier-name">{grade?.name ?? 'No tier tag'}</h2>
           <span className="wm-tier-n">{people.length}</span>
-          {parent && <span className="wm-tier-of">under {profileName(parent)}</span>}
         </div>
-        <div className={`wm-row-blocks ${parent ? 'linked' : ''}`}>
+        <div className="wm-row-blocks">
           {bare
             ? clusters[0].people.map(block)
             : clusters.map((c) => {
-                const key = `cluster:${parent?.id ?? 'x'}:${c.team?.id ?? 'none'}`
+                // A team's own leader takes the drop, so a card dropped on
+                // the cluster joins that team under the person who made it.
+                const owner = c.team?.created_by
+                  ? profiles.find((x) => x.id === c.team?.created_by) ?? null
+                  : null
+                const key = `cluster:${grade?.id ?? 'x'}:${c.team?.id ?? 'none'}`
                 return (
                   <div className="wm-cluster" key={key}>
                     <div
                       className={`wm-cluster-head ${dropKey === key ? 'over' : ''}`}
-                      {...(parent ? dropProps(key, parent, c.team, canPlaceUnder(parent)) : {})}
+                      {...(owner ? dropProps(key, owner, c.team, canPlaceUnder(owner)) : {})}
                     >
                       {c.team && renamingId === c.team.id ? (
                         <input
@@ -597,11 +598,8 @@ export default function WorkerManagement() {
                       ) : (
                         <span className={`wm-cluster-name ${c.team ? '' : 'none'}`}>
                           {c.team ? c.team.name : 'No team'}
-                          {c.team && c.team.created_by && c.team.created_by !== parent?.id && (
-                            <span className="wm-cluster-of">
-                              {' · '}
-                              {profileName(profiles.find((x) => x.id === c.team?.created_by))}
-                            </span>
+                          {owner && (
+                            <span className="wm-cluster-of">{' · '}{displayName(owner)}</span>
                           )}
                         </span>
                       )}
@@ -649,7 +647,7 @@ export default function WorkerManagement() {
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
-      <div className={`wm-cols ${selected ? 'with-panel' : ''}`}>
+      <div className="wm-cols">
         {/* ---------- left: new sign ups, riding along as you scroll ------- */}
         <aside className="wm-side">
           <div className="wm-side-inner">
@@ -671,11 +669,17 @@ export default function WorkerManagement() {
                   {pending.map((p) => (
                     <article
                       key={p.id}
-                      className={`wm-signup-card ${dragId === p.id ? 'dragging' : ''}`}
+                      className={`wm-block wm-signup ${dragId === p.id ? 'dragging' : ''} ${
+                        selectedId === p.id ? 'selected' : ''
+                      }`}
+                      onClick={() => setSelectedId(p.id)}
                       {...dragProps(p)}
                     >
-                      <span className="wm-signup-name">{profileName(p)}</span>
-                      <span className="wm-signup-meta">{p.email ?? 'No tier yet'}</span>
+                      <span className="wm-block-bar new" aria-hidden="true" />
+                      <span className="wm-block-name">{displayName(p)}</span>
+                      <span className="wm-block-meta">
+                        {hasName(p) ? 'Waiting for a team' : 'No name yet'}
+                      </span>
                     </article>
                   ))}
                 </div>
@@ -687,47 +691,35 @@ export default function WorkerManagement() {
         <section className="wm-formation">
           <div className="wm-formation-head">
             <h2 className="wm-section-title">Formation</h2>
-            <nav className="wm-crumbs">
-              <button
-                type="button"
-                className={`wm-crumb ${focusPath.length === 0 ? 'active' : ''}`}
-                onClick={() => setFocusId(null)}
-              >
-                Everyone
-              </button>
-              {focusPath.map((f) => (
-                <span key={f.id}>
-                  <span className="wm-crumb-sep">›</span>
-                  <button
-                    type="button"
-                    className={`wm-crumb ${focusId === f.id ? 'active' : ''}`}
-                    onClick={() => setFocusId(f.id)}
-                  >
-                    {profileName(f)}
-                  </button>
-                </span>
-              ))}
-            </nav>
           </div>
 
           {rows.length === 0 && looseRow.length === 0 && (
             <p className="muted small">No one on the chart yet.</p>
           )}
-          {rows.map((r) => tierRow(r.grade, r.parent, r.people))}
-          {looseRow.length > 0 && tierRow(null, null, looseRow)}
+          {rows.map((r) => tierRow(r.grade, r.people))}
+          {looseRow.length > 0 && tierRow(null, looseRow)}
         </section>
 
         {/* ---------- right: the person you opened ------------------------ */}
-        {selected && (
-          <aside className="wm-panel">
+        <aside className="wm-panel">
+          <div className="wm-panel-head">
+            <h2 className="wm-section-title">Profile details</h2>
+            {selected && (
+              <button className="modal-close" onClick={() => setSelectedId(null)} aria-label="Close">
+                ×
+              </button>
+            )}
+          </div>
+          {selected ? (
             <WorkerPanel
+              key={selected.id}
               person={selected}
               grade={gradeOf(selected) ?? null}
               team={teamOf(selected)}
               stationText={stationLabel(selected)}
               leader={
                 selected.supervisor_id
-                  ? profileName(profiles.find((x) => x.id === selected.supervisor_id))
+                  ? displayName(profiles.find((x) => x.id === selected.supervisor_id))
                   : null
               }
               jobs={jobs}
@@ -740,11 +732,15 @@ export default function WorkerManagement() {
                   : []
               }
               onChangeTier={(gradeId) => changeTier(selected, gradeId)}
+              onRename={(name) => renamePerson(selected, name)}
               onEdit={() => setEditWorker(selected)}
-              onClose={() => setSelectedId(null)}
             />
-          </aside>
-        )}
+          ) : (
+            <p className="muted small" style={{ margin: 0 }}>
+              Click any name to view profile.
+            </p>
+          )}
+        </aside>
       </div>
 
       {editWorker && (
@@ -779,8 +775,8 @@ function WorkerPanel({
   canEditProfile,
   tierOptions,
   onChangeTier,
+  onRename,
   onEdit,
-  onClose,
 }: {
   person: Profile
   grade: Grade | null
@@ -793,11 +789,15 @@ function WorkerPanel({
   canEditProfile: boolean
   tierOptions: Grade[]
   onChangeTier: (gradeId: string) => void
+  onRename: (name: string) => void
   onEdit: () => void
-  onClose: () => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
+  // Naming an account right here is the quickest way to get emails off
+  // the chart, so the name is editable in place.
+  const [namingOpen, setNamingOpen] = useState(false)
+  const [nameDraft, setNameDraft] = useState(person.full_name ?? '')
 
   const month = todayISO().slice(0, 7)
   const monthLabel = new Date(`${month}-01T00:00:00`).toLocaleDateString(undefined, {
@@ -874,14 +874,56 @@ function WorkerPanel({
 
   return (
     <>
-      <div className="wm-panel-head">
-        <h3>Worker details</h3>
-        <button className="modal-close" onClick={onClose} aria-label="Close details">×</button>
-      </div>
-
       <div className="wm-detail-id">
-        <div className="wm-row-name" style={{ fontSize: '1.05rem' }}>{profileName(person)}</div>
-        <div className="row-form" style={{ gap: '0.4rem', flexWrap: 'wrap' }}>
+        {namingOpen ? (
+          <div className="wm-name-edit">
+            <input
+              autoFocus
+              value={nameDraft}
+              placeholder="Full name"
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  onRename(nameDraft)
+                  setNamingOpen(false)
+                }
+                if (e.key === 'Escape') setNamingOpen(false)
+              }}
+            />
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => {
+                onRename(nameDraft)
+                setNamingOpen(false)
+              }}
+            >
+              Save
+            </button>
+          </div>
+        ) : (
+          <div className="wm-profile-name">
+            {displayName(person)}
+            {canEditProfile && (
+              <button
+                type="button"
+                className="wm-icon"
+                title={hasName(person) ? 'Rename' : 'Add a name'}
+                onClick={() => {
+                  setNameDraft(person.full_name ?? '')
+                  setNamingOpen(true)
+                }}
+              >
+                ✎
+              </button>
+            )}
+          </div>
+        )}
+        {!hasName(person) && !namingOpen && (
+          <div className="wm-name-hint">No name set — the chart is showing their email.</div>
+        )}
+        <div className="wm-row-meta">{person.email}</div>
+        <div className="row-form" style={{ gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.15rem' }}>
           {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
           {team && <span className="badge off">{team.name}</span>}
         </div>
