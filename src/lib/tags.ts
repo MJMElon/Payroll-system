@@ -45,6 +45,10 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   { key: 'tag-edit', label: "Edit tags' settings", group: 'Tag management setting' },
   // Users & stations
   { key: 'user-access', label: "Change other users' settings", group: 'User setting' },
+  // Worker management — claiming sign-ups into YOUR OWN team needs no
+  // capability (any leader may do it); these open up the wider functions.
+  { key: 'worker-edit', label: 'Edit worker profile & salary', group: 'Worker management setting' },
+  { key: 'worker-assign-any', label: "Assign workers to ANY team (not only your own)", group: 'Worker management setting' },
   { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
   // Views
   { key: 'report-view', label: 'See report module (dashboards)', group: 'View setting' },
