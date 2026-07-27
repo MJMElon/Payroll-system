@@ -20,7 +20,7 @@
 // Access: any leader may fill a team they own or belong to — that needs no
 // capability. Editing a profile needs "Edit worker profile & salary", and
 // filling someone else's team needs "Assign workers to ANY team"; both are
-// granted per tier in Settings → Tags management.
+// granted per tier in Settings → Tier & Station Tags setting.
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -36,12 +36,24 @@ import {
   type PieceRate,
   type ProductionEntry,
   type Profile,
+  type Role,
   type Station,
   type Team,
 } from '../../lib/supabase'
 
 const TIER1_UNIT_CAP = 4
 const RM = (n: number) => `RM ${n.toFixed(2)}`
+
+// Route access follows the tier tag: placing someone on the board also
+// settles which pages they may open. Carried over from the old Settings
+// "User access" tab, which was the only other place that kept the two in
+// step.
+function roleForTier(tier: number | null, name?: string): Role {
+  if (tier === null) return 'operator'
+  if (tier <= 2) return 'manager'
+  if (tier === 3 || (name ?? '').toLowerCase().includes('engineer')) return 'engineer'
+  return 'operator'
+}
 // Section key used for "no station" / "every station" groups.
 const ALL_STATIONS = '__all__'
 
@@ -425,9 +437,24 @@ export default function WorkerManagement() {
       patch.station_ids = [section.station.id]
       patch.station_id = section.station.id
     }
+    // Route access follows the tier tag, so placing someone also settles
+    // which pages they may open. An admin is never demoted by a tag.
+    if (person.role !== 'admin') patch.role = roleForTier(row.tier, row.grade.name)
 
-    const { error } = await supabase.from('access_profiles').update(patch).eq('id', person.id)
+    const { data, error } = await supabase
+      .from('access_profiles')
+      .update(patch)
+      .eq('id', person.id)
+      .select('id')
     if (error) return setError(error.message)
+    // Row-level security refuses by matching no row, which PostgREST reports
+    // as a success that changed nothing — so an empty result is a refusal.
+    if (!data || data.length === 0) {
+      return setError(
+        `The database would not let you place ${profileName(person)} — that needs a higher ` +
+          'tier, or the "Change other users\' settings" function.',
+      )
+    }
     const where = box.team ? box.team.name : `${row.grade.name}, no team`
     setNotice(`${profileName(person)} placed in ${where}.`)
     load()
@@ -920,7 +947,8 @@ function WorkerPanel({
 
 /* ------------------------------------------------------------------ */
 /* Worker profile pop-out: personal + payroll details for one worker. */
-/* Tags/tier/access stay in Settings -> User access, and the team is  */
+/* Tier, station and team come from where the person sits on the      */
+/* board, not from this form.                                         */
 /* set by dropping the person into a box on the board.                */
 /* ------------------------------------------------------------------ */
 
@@ -1031,7 +1059,8 @@ function WorkerProfileModal({
         </div>
 
         <p className="muted small" style={{ margin: 0 }}>
-          Tier tag, station tag and access settings stay in Settings → User access.
+          Tier tag, station tag and team are not set here — drag the person
+          into the team box they belong to on the board.
         </p>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
