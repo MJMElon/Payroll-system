@@ -1195,6 +1195,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-row-blocks {
   display: flex; gap: 0.55rem; align-items: flex-start;
   overflow-x: auto; padding: 0.25rem 0.1rem 0.35rem;
+  border-radius: 10px; border: 1px dashed transparent; min-height: 46px;
+}
+.wm-row-blocks.over { border-color: var(--accent-strong); background: var(--accent-soft); }
+.wm-row-empty {
+  margin: 0; padding: 0.5rem 0.2rem; color: #9aa3ae; font-size: 0.74rem; font-style: italic;
 }
 
 /* Asana-style block. */

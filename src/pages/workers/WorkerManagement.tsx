@@ -10,7 +10,10 @@
 //             ENGINEER                [ Wong ][ Siva ][ Tan ] …
 //             STATION HEAD            [ Ahmad ][ Chin ] …
 //
-//           Every name stays on its row — clicking a block only opens it.
+//           EVERY tier gets a row, including the ones nobody stands on, so
+//           it is always clear where a card can go: dropping on the row
+//           itself settles the tier and leaves the leader alone. Every name
+//           stays on its row — clicking a block only opens it.
 //   RIGHT   Profile details for whoever was clicked, where an account can
 //           also be given a name (the chart shows the email until it has
 //           one, which is why naming lives one click away).
@@ -202,6 +205,9 @@ export default function WorkerManagement() {
   /** May I move this person out of where they are now? */
   const canMove = (p: Profile) =>
     p.id !== profile?.id && (canAssignAnywhere || inMyBranch(p) || p.supervisor_id === profile?.id)
+  /** May I put someone on this tier without giving them a leader yet? */
+  const canPlaceOnTier = (g: Grade) =>
+    canAssignAnywhere || (myTier !== null && g.sort_order > myTier)
 
   const selected = selectedId ? profiles.find((p) => p.id === selectedId) ?? null : null
 
@@ -238,18 +244,19 @@ export default function WorkerManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, grades])
 
-  // One row per tier, top tier first. Every name stays on its row — the
-  // chart shows the whole floor, and clicking a block only opens it.
-  const rows = useMemo(() => {
-    const out: { grade: Grade; people: Profile[] }[] = []
-    for (const g of grades) {
-      const people = visible
-        .filter((p) => p.grade_id === g.id)
-        .sort((a, b) => displayName(a).localeCompare(displayName(b)))
-      if (people.length > 0) out.push({ grade: g, people })
-    }
-    return out
-  }, [grades, visible])
+  // One row per tier, top tier first — EVERY tier, including the ones
+  // nobody stands on yet, so it is obvious where a card can be dropped.
+  // Every name stays on its row; clicking a block only opens it.
+  const rows = useMemo(
+    () =>
+      grades.map((g) => ({
+        grade: g,
+        people: visible
+          .filter((p) => p.grade_id === g.id)
+          .sort((a, b) => displayName(a).localeCompare(displayName(b))),
+      })),
+    [grades, visible],
+  )
 
   // People with no tier tag at all.
   const looseRow = useMemo(() => visible.filter((p) => !p.grade_id), [visible])
@@ -325,13 +332,20 @@ export default function WorkerManagement() {
 
   async function placeUnder(person: Profile, leader: Profile, team: Team | null) {
     if (person.id === leader.id) return
+    if (person.id === profile?.id) {
+      return setError('You cannot move yourself on the chart — someone above you has to do that.')
+    }
     if (!canPlaceUnder(leader)) {
       return setError(
-        'You can only add people into your own branch. The "Assign workers to ANY team" function opens this up.',
+        `You can only add people under yourself or under someone who reports up to you, and ` +
+          `${displayName(leader)} is neither. The "Assign workers to ANY team" function opens this up.`,
       )
     }
     if (person.tags_confirmed && !canMove(person)) {
-      return setError('You can only move workers who are already in your branch.')
+      return setError(
+        `You can only move someone who reports up to you, and ${displayName(person)} does not. ` +
+          'The "Assign workers to ANY team" function opens this up.',
+      )
     }
     if (inMyBranch(person) && person.id !== profile?.id) {
       // Moving someone onto their own subordinate would cut the chain loose.
@@ -416,7 +430,7 @@ export default function WorkerManagement() {
     const grade = grades.find((g) => g.id === gradeId)
     if (!grade) return
     if (!canAssignAnywhere && !inMyBranch(person)) {
-      return setError('You can only re-tier people in your own branch.')
+      return setError('You can only re-tier someone who reports up to you.')
     }
     if (myTier !== null && !canAssignAnywhere && grade.sort_order <= myTier) {
       return setError('You can only put someone on a tier below your own.')
@@ -443,6 +457,60 @@ export default function WorkerManagement() {
     }
     setNotice(`${displayName(person)} is now ${grade.name}.`)
     load()
+  }
+
+  /**
+   * Drop on the row itself, not on a block: it settles the tier and leaves
+   * the leader alone. This is how an empty tier gets its first person —
+   * without it, a tier nobody stands on can never be filled, since every
+   * other route needs a block already sitting one tier above.
+   */
+  async function placeOnTier(person: Profile, grade: Grade) {
+    if (person.id === profile?.id) {
+      return setError('You cannot move yourself on the chart — someone above you has to do that.')
+    }
+    if (!canPlaceOnTier(grade)) {
+      return setError(`${grade.name} is not below your own tier, so you cannot put someone on it.`)
+    }
+    if (person.tags_confirmed && !canMove(person)) {
+      return setError(
+        `You can only move someone who reports up to you, and ${displayName(person)} does not. ` +
+          'The "Assign workers to ANY team" function opens this up.',
+      )
+    }
+    setError(null)
+    const patch: Record<string, unknown> = { grade_id: grade.id, tags_confirmed: true }
+    if (person.role !== 'admin') patch.role = roleForTier(grade.sort_order, grade.name)
+    // A leader who is no longer above them cannot stay their leader.
+    const sup = person.supervisor_id ? profiles.find((x) => x.id === person.supervisor_id) : null
+    const supTier = sup ? tierOf(sup) : null
+    if (!sup || supTier === null || supTier >= grade.sort_order) {
+      patch.supervisor_id = null
+      patch.team_id = null
+    }
+    const { data, error } = await supabase
+      .from('access_profiles')
+      .update(patch)
+      .eq('id', person.id)
+      .select('id')
+    if (error) return setError(error.message)
+    if (!data || data.length === 0) {
+      return setError(
+        `The database would not let you put ${displayName(person)} on ${grade.name} — that needs ` +
+          'a higher tier, or the "Change other users\' settings" function.',
+      )
+    }
+    setNotice(`${displayName(person)} is now ${grade.name}.`)
+    load()
+  }
+
+  function handleTierDrop(grade: Grade, e: React.DragEvent) {
+    e.preventDefault()
+    const carried = e.dataTransfer.getData('text/plain')
+    const dragged = profiles.find((p) => p.id === (carried || dragId))
+    setDragId(null)
+    setDropKey(null)
+    if (dragged) placeOnTier(dragged, grade)
   }
 
   // The dragged id travels in the DataTransfer as well as in state: on a
@@ -560,6 +628,20 @@ export default function WorkerManagement() {
   function tierRow(grade: Grade | null, people: Profile[]) {
     const clusters = clustersFor(people)
     const bare = clusters.length === 1 && !clusters[0].team
+    const rowKey = `tier:${grade?.id ?? 'untagged'}`
+    // Dropping on the row itself only settles the tier — that is how the
+    // first person lands on a tier nobody stands on yet.
+    const rowDrop = grade && canPlaceOnTier(grade)
+      ? {
+          onDragOver: (e: React.DragEvent) => {
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'move' as const
+            setDropKey(rowKey)
+          },
+          onDragLeave: () => setDropKey((cur) => (cur === rowKey ? null : cur)),
+          onDrop: (e: React.DragEvent) => handleTierDrop(grade, e),
+        }
+      : {}
     return (
       <section className="wm-tier-row" key={grade?.id ?? 'untagged'}>
         <div className="wm-tier-head">
@@ -567,7 +649,14 @@ export default function WorkerManagement() {
           <h2 className="wm-tier-name">{grade?.name ?? 'No tier tag'}</h2>
           <span className="wm-tier-n">{people.length}</span>
         </div>
-        <div className="wm-row-blocks">
+        <div className={`wm-row-blocks ${dropKey === rowKey ? 'over' : ''}`} {...rowDrop}>
+          {people.length === 0 && (
+            <p className="wm-row-empty">
+              {grade && canPlaceOnTier(grade)
+                ? `Nobody on this tier yet — drop a name here to make them ${grade.name}.`
+                : 'Nobody on this tier yet.'}
+            </p>
+          )}
           {bare
             ? clusters[0].people.map(block)
             : clusters.map((c) => {
