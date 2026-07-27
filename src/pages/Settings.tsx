@@ -7,7 +7,6 @@ import {
   CAPABILITY_OPTIONS,
   DEFAULT_MODULES,
   MODULE_OPTIONS,
-  capabilityLabel,
   effectiveCapabilities,
   nextTagColor,
   sortCapabilities,
@@ -22,9 +21,9 @@ type Tab = 'tags' | 'audit'
 export default function Settings() {
   const { profile } = useAuth()
   const [tab, setTab] = useState<Tab>('tags')
-  // Settings holds wide tables — let it use the whole window like the
-  // Payroll and Worker Management pages instead of the narrow page cap.
-  const wideStyle = useWideShell()
+  // Settings holds wide tables, so it reaches past the narrow page cap —
+  // but with a real margin left on each side, not hard against the window.
+  const wideStyle = useWideShell(64)
   // The audit log's RLS only answers to admins/managers — showing the tab
   // to anyone else would just render an empty (confusing) table.
   const canAudit = profile?.role === 'admin' || profile?.role === 'manager'
@@ -33,6 +32,9 @@ export default function Settings() {
     <div className="stack" style={wideStyle}>
       <div>
         <Link to="/" className="small muted backlink">← Back to main page</Link>
+        {/* The top bar carries the module name ("Settings"), so the page
+            heading carries the system name — the two swapped places. */}
+        <h1>Piece Rate &amp; Payroll System</h1>
       </div>
 
       <div className="tabs glass">
@@ -60,6 +62,9 @@ function TagsTab() {
   const [stations, setStations] = useState<Station[]>([])
   const [dragId, setDragId] = useState<string | null>(null)
   const [editor, setEditor] = useState<'closed' | 'new' | Grade>('closed')
+  // Read-only look at one tier's access — the "Can do" list left the table
+  // so the summary stays short.
+  const [viewer, setViewer] = useState<Grade | null>(null)
   const [addingStation, setAddingStation] = useState(false)
   const [stationName, setStationName] = useState('')
   const [dragStation, setDragStation] = useState<string | null>(null)
@@ -193,13 +198,12 @@ function TagsTab() {
               {canMoveTags && <th></th>}
               <th>Tier</th>
               <th>Tag</th>
-              <th>Can do</th>
-              {canEditTags && <th className="right">Actions</th>}
+              <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {grades.length === 0 && (
-              <tr><td colSpan={6} className="muted">No tags yet.</td></tr>
+              <tr><td colSpan={4} className="muted">No tags yet.</td></tr>
             )}
             {grades.map((g) => {
               const isSuper = g.sort_order === 1
@@ -225,23 +229,22 @@ function TagsTab() {
                   )}
                   <td className="muted">{g.sort_order}</td>
                   <td><span className={tagClass(g.color)}>{g.name}</span></td>
-                  <td className="muted small">
-                    {isSuper ? (
-                      <span className="badge off">Super admin — every ability</span>
-                    ) : sortCapabilities(g.capabilities ?? []).length > 0 ? (
-                      sortCapabilities(g.capabilities ?? []).map((c) => (
-                        <span key={c} className="badge off" style={{ marginRight: '0.3rem' }}>
-                          {capabilityLabel(c)}
-                        </span>
-                      ))
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  {canEditTags && (
-                    <td className="right">
-                      {editable && (
-                        <span className="row-actions">
+                  <td className="right">
+                    <span className="row-actions">
+                      <button
+                        className="icon-btn sm"
+                        title="View what this tier can see and do"
+                        aria-label={`View access of ${g.name}`}
+                        onClick={() => setViewer(g)}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      </button>
+                      {canEditTags && editable && (
+                        <>
                           <button
                             className="icon-btn sm"
                             title="Edit tag"
@@ -268,10 +271,10 @@ function TagsTab() {
                               </svg>
                             </button>
                           )}
-                        </span>
+                        </>
                       )}
-                    </td>
-                  )}
+                    </span>
+                  </td>
                 </tr>
               )
             })}
@@ -376,6 +379,8 @@ function TagsTab() {
         />
       )}
 
+      {viewer && <TagViewModal grade={viewer} onClose={() => setViewer(null)} />}
+
       {editor !== 'closed' && (
         <TagEditModal
           grade={editor === 'new' ? null : editor}
@@ -388,6 +393,84 @@ function TagsTab() {
           }}
         />
       )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Tag view pop-out: what ONE tier can see and do, read only. Opened  */
+/* by the eye button — the tier tags table stays a short summary.     */
+/* ------------------------------------------------------------------ */
+
+function TagViewModal({ grade, onClose }: { grade: Grade; onClose: () => void }) {
+  // Tier 1 is the super admin: every module, every ability, always.
+  const isSuper = grade.sort_order === 1
+  const caps = isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade.capabilities ?? [])
+  const mods = isSuper ? MODULE_OPTIONS.map((m) => m.key) : grade.modules ?? []
+  // Only the groups this tier actually holds something in, so the sheet
+  // reads as "what it CAN do" rather than a mostly-empty checklist.
+  const groups = CAPABILITY_OPTIONS.reduce<Record<string, string[]>>((acc, c) => {
+    if (!caps.includes(c.key)) return acc
+    ;(acc[c.group] ??= []).push(c.label)
+    return acc
+  }, {})
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="row-form spread">
+          <h2>Tier access</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <div className="row-form" style={{ gap: '0.5rem', alignItems: 'center' }}>
+          <span className={tagClass(grade.color)}>{grade.name}</span>
+          <span className="muted small">tier {grade.sort_order}</span>
+        </div>
+
+        {isSuper && (
+          <p className="muted small" style={{ margin: 0 }}>
+            The super admin tier — every module and every ability, always.
+          </p>
+        )}
+
+        <div className="tag-section">
+          <div className="tag-section-title">Can see</div>
+          {mods.length === 0 ? (
+            <p className="tag-section-hint">No web modules — this tier sees the mobile view only.</p>
+          ) : (
+            <div className="cap-cols">
+              {MODULE_OPTIONS.filter((m) => mods.includes(m.key)).map((m) => (
+                <span key={m.key} className="small">· {m.label}</span>
+              ))}
+            </div>
+          )}
+          <p className="tag-section-hint">
+            Data always follows the fixed rule: this tier and every tier below it;
+            station tags narrow it to those stations.
+          </p>
+        </div>
+
+        <div className="tag-section">
+          <div className="tag-section-title">Can do</div>
+          {caps.length === 0 ? (
+            <p className="tag-section-hint">Nothing granted — this tier can view only.</p>
+          ) : (
+            Object.entries(groups).map(([group, labels]) => (
+              <div key={group} className="cap-group">
+                <div className="cap-group-name">{group}</div>
+                {labels.map((l) => (
+                  <span key={l} className="small">· {l}</span>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
     </div>
   )
 }

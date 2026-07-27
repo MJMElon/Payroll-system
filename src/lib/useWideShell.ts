@@ -9,21 +9,24 @@ import { useLayoutEffect, useState } from 'react'
  * includes the scrollbar gutter on some browsers and can silently
  * introduce page-level horizontal scroll — clientWidth cannot.
  *
+ * `gutter` is the breathing room left on each side, in pixels. It defaults
+ * to the shared .content side padding so a widened shell lines up with
+ * every other page; pass a larger value for a page that reads better with
+ * the window edges kept at arm's length.
+ *
  * Returns a style object to spread onto the shell, or undefined when the
  * window is too narrow to be worth widening.
  */
-export function useWideShell() {
+export function useWideShell(gutter = 20) {
   const [style, setStyle] = useState<{ width: number; marginLeft: number } | undefined>()
 
   useLayoutEffect(() => {
-    const GUTTER = 20 // matches the shared .content side padding (1.25rem)
-
     function measure() {
       const vw = document.documentElement.clientWidth
       const maxw =
         parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--maxw')) || 1080
       const contentInner = maxw - 40 // .content's own 1.25rem left+right padding
-      const wide = vw - GUTTER * 2
+      const wide = vw - gutter * 2
       if (wide > contentInner) {
         setStyle({ width: wide, marginLeft: (contentInner - wide) / 2 })
       } else {
@@ -34,7 +37,7 @@ export function useWideShell() {
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
-  }, [])
+  }, [gutter])
 
   return style
 }
