@@ -1153,3 +1153,108 @@ update public.grades set capabilities = capabilities || '{worker-assign-any}'
 update public.grades set capabilities =
   '{data-entry,verify,approve,rate-create,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,worker-edit,worker-assign-any,station-create,report-view}'
   where sort_order = 1;
+
+-- ---------------------------------------------------------------------------
+-- TEAMS — the boxes on the Worker Management board.
+--
+-- A team is created ON a tier row ("+ Team" beside that tier) and groups
+-- people from that tier DOWNWARD: the teams a Station Head creates at their
+-- station also hold that team's assistant station heads and operators one
+-- row below. grade_id is the tier that OWNS the team (only that tier, and
+-- the tiers above it, may rename or remove it); station_id is null for
+-- teams created above the station-head tier — those belong to every
+-- station. A worker's box is access_profiles.team_id.
+-- ---------------------------------------------------------------------------
+create table if not exists public.teams (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  grade_id uuid references public.grades (id) on delete cascade,
+  station_id uuid references public.stations (id) on delete cascade,
+  created_by uuid references public.access_profiles (id) on delete set null,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+alter table public.access_profiles add column if not exists team_id uuid
+  references public.teams (id) on delete set null;
+
+create index if not exists access_profiles_team_idx on public.access_profiles (team_id);
+
+alter table public.teams enable row level security;
+
+-- Everyone signed in sees the board.
+drop policy if exists "authenticated read teams" on public.teams;
+create policy "authenticated read teams" on public.teams
+  for select using (auth.uid() is not null);
+
+-- Create / rename / remove: the tier that owns the row and every tier above
+-- it, plus the granted worker-management functions.
+drop policy if exists "leaders manage teams" on public.teams;
+create policy "leaders manage teams" on public.teams
+  for all using (
+    public.my_tag_tier() = 1
+    or public.my_capabilities() && array['user-access', 'worker-assign-any']
+    or (
+      public.my_tag_tier() is not null
+      and grade_id is not null
+      and public.my_tag_tier() <= public.grade_tier(grade_id)
+    )
+  )
+  with check (
+    public.my_tag_tier() = 1
+    or public.my_capabilities() && array['user-access', 'worker-assign-any']
+    or (
+      public.my_tag_tier() is not null
+      and grade_id is not null
+      and public.my_tag_tier() <= public.grade_tier(grade_id)
+    )
+  );
+
+-- My own team box (security definer: policies may not re-read the table).
+create or replace function public.my_team_id()
+returns uuid
+language sql stable security definer set search_path = public as $$
+  select team_id from public.access_profiles where id = auth.uid();
+$$;
+
+-- Teams I may fill: every team owned by my tier or a tier below it. My own
+-- team is added on top, so an assistant station head can pull a new sign-up
+-- into the team they themselves sit in.
+create or replace function public.manageable_team_ids()
+returns uuid[]
+language sql stable security definer set search_path = public as $$
+  select coalesce(array_agg(t.id), '{}'::uuid[])
+  from public.teams t
+  join public.grades g on g.id = t.grade_id
+  where public.my_tag_tier() is not null
+    and public.my_tag_tier() <= g.sort_order;
+$$;
+
+-- Placing a worker in a team is an ordinary profile update, so a leader
+-- needs update rights on people who are unplaced, already in one of their
+-- teams, or in their own team — always a strictly lower tier.
+drop policy if exists "team leaders place their workers" on public.access_profiles;
+create policy "team leaders place their workers" on public.access_profiles
+  for update using (
+    public.my_tag_tier() is not null
+    and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
+    and (
+      team_id is null
+      or team_id = public.my_team_id()
+      or team_id = any(public.manageable_team_ids())
+    )
+  )
+  with check (
+    public.my_tag_tier() is not null
+    and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
+    and (
+      team_id is null
+      or team_id = public.my_team_id()
+      or team_id = any(public.manageable_team_ids())
+    )
+  );
+
+drop trigger if exists trg_audit_teams on public.teams;
+create trigger trg_audit_teams
+  after insert or update or delete on public.teams
+  for each row execute function public.log_audit();
