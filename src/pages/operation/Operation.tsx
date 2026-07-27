@@ -235,7 +235,6 @@ export default function Operation() {
     <div className="stack">
       <div>
         <Link to="/" className="small muted backlink">← Back to main page</Link>
-        <h1>Operation</h1>
         <p className="muted">Work entries recorded by operators, station by station.</p>
       </div>
 

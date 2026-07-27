@@ -147,7 +147,6 @@ export default function PieceRate() {
     <div className="stack">
       <div>
         <Link to="/" className="small muted backlink">← Back to main page</Link>
-        <h1>Piece Rate Management</h1>
       </div>
 
       {error && <div className="error">{error}</div>}

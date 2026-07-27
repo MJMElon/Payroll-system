@@ -310,7 +310,6 @@ export default function DemoMobile() {
     <div className="stack">
       <div>
         <Link to="/" className="small muted backlink">← Back to main page</Link>
-        <h1>Demo Mobile View</h1>
         <p className="muted">
           One app, one design — each person's access decides what they see.
           Use "View as" to preview any scenario, from a brand-new sign-up to

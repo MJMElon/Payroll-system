@@ -1,25 +1,31 @@
 // ---------------------------------------------------------------------------
-// WORKER MANAGEMENT — the team floor plan.
+// WORKER MANAGEMENT — the reporting chain, drawn as a tree.
 //
-// The page is a board, read top to bottom:
+// One manager covers seven engineers, one engineer covers two station heads,
+// and so on: the only layout that shows that is the chain itself, so the
+// board is an expandable tree of "who reports to whom".
 //
-//   TIER NAME                        one row per tier tag (Management aside)
-//     Station name                   from the station-head tier downward only
-//       [ Team A ][ Team B ][ + ]    teams, with their people inside
+//   ▾ Manager Raj            Manager                        22 under
+//      ▾ Engineer Wong       Engineer                        7 under
+//         ▾ Ahmad            Station Head · Sterilizer       6 under   + Team
+//            ├ Team A
+//            │  ▾ Bala       Asst Station Head               4 under
+//            │       Aminah  Operator
+//            └ Team B …
 //
-// A team is created ON a tier row ("+ Team") and groups people from that
-// tier DOWNWARD — so the teams a Station Head makes at their station also
-// hold that team's assistant station heads and operators one row below.
-// Only the tier that owns a team (and the tiers above it) may rename or
-// remove it; an assistant station head can still drop a new sign-up into
-// the team they themselves sit in, at their own station.
+// Teams are the brackets inside a leader's branch: "+ Team" on a leader's
+// row makes one at that leader's tier and station, and the name is editable
+// by that tier and the tiers above it. Drop someone on a row and they join
+// that leader (and that leader's team); drop them on a team bracket and
+// they join that team. A new sign-up with no tier yet lands on the tier
+// straight below the leader they are dropped on.
 //
-// New sign-ups live behind the header button, which carries an app-style
-// red counter. Open it and drag a card straight into a team box.
+// The tier strip above the tree counts every tier and expands the tree down
+// to it, so the shape is readable without scrolling the whole chain open.
 //
-// Access: any leader may fill a team they own or belong to — that needs no
-// capability. Editing a profile needs "Edit worker profile & salary", and
-// filling someone else's team needs "Assign workers to ANY team"; both are
+// Access: any leader may build their OWN branch — that needs no capability.
+// Editing a profile needs "Edit worker profile & salary", and moving people
+// in someone else's branch needs "Assign workers to ANY team"; both are
 // granted per tier in Settings → Tags management.
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from 'react'
@@ -42,24 +48,11 @@ import {
 
 const TIER1_UNIT_CAP = 4
 const RM = (n: number) => `RM ${n.toFixed(2)}`
-// Section key used for "no station" / "every station" groups.
-const ALL_STATIONS = '__all__'
 
-/** A team box drawn in one tier row; `team: null` is the loose box. */
-type TeamBox = { key: string; team: Team | null; people: Profile[] }
-/** A station group inside a tier row (station null = belongs to all). */
-type BoardSection = { key: string; station: Station | null; boxes: TeamBox[]; count: number }
-/** One tier row of the board. */
-type BoardRow = {
-  key: string
-  grade: Grade | null
-  tier: number
-  stationScoped: boolean
-  sections: BoardSection[]
-  count: number
-}
+/** A bracket of children under one leader; `team: null` = no team. */
+type Group = { team: Team | null; people: Profile[] }
 
-/** First unused "Team A", "Team B", … for a box that has just been added. */
+/** First unused "Team A", "Team B", … for a bracket just added. */
 function nextTeamName(taken: string[]): string {
   for (let i = 0; i < 26; i++) {
     const name = `Team ${String.fromCharCode(65 + i)}`
@@ -80,7 +73,9 @@ export default function WorkerManagement() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editWorker, setEditWorker] = useState<Profile | null>(null)
   const [signupsOpen, setSignupsOpen] = useState(false)
-  const [closedRows, setClosedRows] = useState<Record<string, boolean>>({})
+  // Rows open by hand, over an auto-open depth the tier strip drives.
+  const [openMap, setOpenMap] = useState<Record<string, boolean>>({})
+  const [autoDepth, setAutoDepth] = useState(2)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [dragId, setDragId] = useState<string | null>(null)
@@ -119,13 +114,11 @@ export default function WorkerManagement() {
   const myTier = myGrade?.sort_order ?? null
   const myCaps = effectiveCapabilities(myGrade)
   const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
-  // An admin without a tier tag still outranks everyone on the board.
-  const myTierEff = myTier ?? (isAdmin ? 0 : Number.MAX_SAFE_INTEGER)
 
-  // Who sees every team vs. only their own corner of the board.
+  // Who sees the whole chain vs. only their own branch.
   const seesAll = isAdmin || myTier === 1 || myCaps.includes('user-access')
   const isLeader = seesAll || (myTier !== null && myTier < bottomTier)
-  // Granted functions. Filling a team you own or belong to is always allowed.
+  // Granted functions. Building your OWN branch is always allowed.
   const canEditProfile = isAdmin || myTier === 1 || myCaps.includes('worker-edit')
   const canAssignAnywhere =
     isAdmin || myTier === 1 || myCaps.includes('user-access') || myCaps.includes('worker-assign-any')
@@ -135,38 +128,23 @@ export default function WorkerManagement() {
   const gradeOf = (p: Profile) => grades.find((g) => g.id === p.grade_id)
   const teamOf = (p: Profile) => (p.team_id ? teams.find((t) => t.id === p.team_id) ?? null : null)
   const teamTier = (t: Team) => grades.find((g) => g.id === t.grade_id)?.sort_order ?? 0
+  const stationsOf = (p: Profile) =>
+    p.station_ids && p.station_ids.length > 0 ? p.station_ids : p.station_id ? [p.station_id] : []
   const stationLabel = (p: Profile) => {
-    const ids =
-      p.station_ids && p.station_ids.length > 0 ? p.station_ids : p.station_id ? [p.station_id] : []
+    const ids = stationsOf(p)
     if (ids.length === 0) return 'All stations'
     return ids.map((id) => stations.find((st) => st.id === id)?.name ?? '?').join(', ')
   }
 
-  const myStationIds = useMemo(
-    () =>
-      profile?.station_ids && profile.station_ids.length > 0
-        ? profile.station_ids
-        : profile?.station_id
-          ? [profile.station_id]
-          : [],
-    [profile],
-  )
-  // Stations I work with. Holding no station tag means "all of them".
-  const scopeStations = useMemo(
-    () =>
-      seesAll || myStationIds.length === 0
-        ? stations
-        : stations.filter((s) => myStationIds.includes(s.id)),
-    [seesAll, myStationIds, stations],
-  )
+  const myStationIds = useMemo(() => (profile ? stationsOf(profile as Profile) : []), [profile])
   const stationInScope = (id: string | null) =>
     id === null || seesAll || myStationIds.length === 0 || myStationIds.includes(id)
 
   const confirmed = profiles.filter((p) => p.tags_confirmed)
   const pending = profiles.filter((p) => !p.tags_confirmed)
 
-  // My subtree: me + everyone whose reporting chain reaches me.
-  const inMyTeam = (p: Profile): boolean => {
+  // My branch: me + everyone whose reporting chain reaches me.
+  const inMyBranch = (p: Profile): boolean => {
     let cur: Profile | undefined = p
     for (let hops = 0; cur && hops < 20; hops++) {
       if (cur.id === profile?.id) return true
@@ -174,168 +152,115 @@ export default function WorkerManagement() {
     }
     return false
   }
-  // A leader sees their reporting line, the teams they may fill, and the
-  // lower tiers at their own stations — the people they can actually place.
+  // A leader sees their own branch, their team, and the lower tiers at their
+  // stations — the people they can actually place.
   const visible = seesAll
     ? confirmed
     : confirmed.filter((p) => {
-        if (inMyTeam(p)) return true
-        if (p.team_id && (p.team_id === profile?.team_id || canFillTeamId(p.team_id))) return true
+        if (inMyBranch(p)) return true
+        if (p.team_id && p.team_id === profile?.team_id) return true
         const t = tierOf(p)
         if (t !== null && myTier !== null && t > myTier) {
-          const ids = p.station_ids?.length ? p.station_ids : p.station_id ? [p.station_id] : []
+          const ids = stationsOf(p)
           return ids.length === 0 || ids.some((id) => stationInScope(id))
         }
         return false
       })
 
-  function canFillTeamId(id: string): boolean {
-    const t = teams.find((x) => x.id === id)
-    return t ? canFillTeam(t) : false
-  }
-  /** May I rename / remove / add boxes at this tier + station? */
-  function canOwnTeamsAt(tier: number, stationId: string | null): boolean {
-    if (canAssignAnywhere) return true
-    return myTier !== null && myTier <= tier && stationInScope(stationId)
-  }
-  /** May I drop someone into this box? */
-  function canFillTeam(t: Team): boolean {
-    if (t.id === profile?.team_id) return true
-    return canOwnTeamsAt(teamTier(t), t.station_id)
-  }
+  /** May I rename / remove / add a team at this tier + station? */
+  const canOwnTeamsAt = (tier: number, stationId: string | null) =>
+    canAssignAnywhere || (myTier !== null && myTier <= tier && stationInScope(stationId))
   const canManageTeam = (t: Team) => canOwnTeamsAt(teamTier(t), t.station_id)
+  /** May I hang someone under this leader? */
+  const canPlaceUnder = (leader: Profile) =>
+    canAssignAnywhere || leader.id === profile?.id || inMyBranch(leader)
+  /** May I move this person out of where they are now? */
+  const canMove = (p: Profile) =>
+    p.id !== profile?.id && (canAssignAnywhere || inMyBranch(p) || p.supervisor_id === profile?.id)
 
   const selected = selectedId ? profiles.find((p) => p.id === selectedId) ?? null : null
 
-  /* ---------------- board model ---------------- */
+  /* ---------------- the chain ---------------- */
 
-  // The first tier that is tied to ONE station — everything from here down
-  // is grouped by station name, the tiers above belong to every station.
-  // Read from the tag names, and if none look like a station tier, from the
-  // data (the highest tier whose people carry station tags).
-  const stationTier = useMemo(() => {
-    const named = grades
-      .filter((g) => /station/i.test(g.name))
-      .sort((a, b) => a.sort_order - b.sort_order)[0]
-    if (named) return named.sort_order
-    const tiers = grades
-      .filter((g) =>
-        profiles.some(
-          (p) =>
-            p.grade_id === g.id && ((p.station_ids?.length ?? 0) > 0 || Boolean(p.station_id)),
-        ),
-      )
-      .map((g) => g.sort_order)
-    return tiers.length > 0 ? Math.min(...tiers) : null
-  }, [grades, profiles])
-
-  const board: BoardRow[] = useMemo(() => {
-    const teamById = new Map(teams.map((t) => [t.id, t]))
-    const stationById = new Map(stations.map((s) => [s.id, s]))
-    const tierOfTeam = (t: Team) => grades.find((g) => g.id === t.grade_id)?.sort_order ?? 0
-
-    // Which station group a person is drawn in: their team's station wins,
-    // otherwise their first station tag.
-    const sectionKeyOf = (p: Profile): string => {
-      const t = p.team_id ? teamById.get(p.team_id) : undefined
-      if (t) return t.station_id ?? ALL_STATIONS
-      const ids = p.station_ids?.length ? p.station_ids : p.station_id ? [p.station_id] : []
-      return ids[0] ?? ALL_STATIONS
+  const tree = useMemo(() => {
+    const ids = new Set(visible.map((p) => p.id))
+    const kids = new Map<string, Profile[]>()
+    const roots: Profile[] = []
+    for (const p of visible) {
+      const sup =
+        p.supervisor_id && p.supervisor_id !== p.id && ids.has(p.supervisor_id)
+          ? p.supervisor_id
+          : null
+      if (sup) kids.set(sup, [...(kids.get(sup) ?? []), p])
+      else roots.push(p)
     }
-    const orderOf = (key: string) =>
-      key === ALL_STATIONS ? Number.MAX_SAFE_INTEGER : stationById.get(key)?.sort_order ?? 9999
-
-    const rows: BoardRow[] = []
-    const laneGrades = grades.filter((g) => g.sort_order !== 1)
-
-    for (const g of laneGrades) {
-      const tier = g.sort_order
-      const people = visible.filter((p) => p.grade_id === g.id)
-      const stationScoped = stationTier !== null && tier >= stationTier
-      // Teams created at this tier or any tier above it reach down to here.
-      const rowTeams = teams.filter(
-        (t) => tierOfTeam(t) <= tier && (stationScoped || t.station_id === null),
-      )
-
-      const keys = new Set<string>()
-      if (stationScoped) {
-        scopeStations.forEach((s) => keys.add(s.id))
-        people.forEach((p) => keys.add(sectionKeyOf(p)))
-        rowTeams.forEach((t) => keys.add(t.station_id ?? ALL_STATIONS))
-      } else {
-        keys.add(ALL_STATIONS)
-      }
-
-      const sections = Array.from(keys)
-        .sort((a, b) => orderOf(a) - orderOf(b))
-        .map<BoardSection>((key) => {
-          const station = key === ALL_STATIONS ? null : stationById.get(key) ?? null
-          const secPeople = stationScoped ? people.filter((p) => sectionKeyOf(p) === key) : people
-          const secTeams = rowTeams.filter((t) => (t.station_id ?? ALL_STATIONS) === key)
-          const boxes: TeamBox[] = secTeams.map((t) => ({
-            key: t.id,
-            team: t,
-            people: secPeople.filter((p) => p.team_id === t.id),
-          }))
-          boxes.push({
-            key: `loose:${g.id}:${key}`,
-            team: null,
-            people: secPeople.filter((p) => !p.team_id || !secTeams.some((t) => t.id === p.team_id)),
-          })
-          return { key, station, boxes, count: secPeople.length }
-        })
-        // Keep the station groups this viewer actually works with: the ones
-        // holding people, plus the empty ones they may still put a team in.
-        // The "all stations" group (teams made above the station tier) only
-        // shows where it holds someone, or to a full-board viewer.
-        .filter((sec) => {
-          if (!stationScoped) return true
-          if (sec.count > 0) return true
-          if (!sec.station) return seesAll
-          if (!stationInScope(sec.station.id)) return false
-          return sec.boxes.some((b) => b.team) || canOwnTeamsAt(tier, sec.station.id)
-        })
-
-      // A tier you cannot reach into and hold nobody in is just noise —
-      // the full-board viewer keeps it, since an empty tier is news.
-      if (seesAll || people.length > 0 || tier > myTierEff) {
-        rows.push({ key: g.id, grade: g, tier, stationScoped, sections, count: people.length })
-      }
+    const byRank = (a: Profile, b: Profile) =>
+      (tierOf(a) ?? 99) - (tierOf(b) ?? 99) || profileName(a).localeCompare(profileName(b))
+    kids.forEach((list) => list.sort(byRank))
+    roots.sort(byRank)
+    // Everyone under each person (the seen set guards a supervisor loop).
+    const total = new Map<string, number>()
+    const walk = (p: Profile, seen: Set<string>): number => {
+      if (seen.has(p.id)) return 0
+      seen.add(p.id)
+      let n = 0
+      for (const k of kids.get(p.id) ?? []) n += 1 + walk(k, seen)
+      total.set(p.id, n)
+      return n
     }
-
-    const untagged = visible.filter((p) => !p.grade_id)
-    if (untagged.length > 0) {
-      rows.push({
-        key: 'untagged',
-        grade: null,
-        tier: bottomTier + 1,
-        stationScoped: false,
-        count: untagged.length,
-        sections: [
-          {
-            key: ALL_STATIONS,
-            station: null,
-            count: untagged.length,
-            boxes: [{ key: 'loose:untagged', team: null, people: untagged }],
-          },
-        ],
-      })
-    }
-    return rows
+    roots.forEach((r) => walk(r, new Set()))
+    return { kids, roots, total }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grades, stations, teams, visible, scopeStations, stationTier, seesAll, bottomTier, myTierEff])
+  }, [visible, grades])
 
-  const leaderName = (p: Profile) => {
-    const sup = p.supervisor_id ? profiles.find((x) => x.id === p.supervisor_id) : null
-    return sup ? profileName(sup) : null
+  // Tier strip: every tier with how many people stand on it.
+  const tierStrip = useMemo(
+    () =>
+      grades.map((g, i) => ({
+        grade: g,
+        depth: i + 1,
+        count: visible.filter((p) => p.grade_id === g.id).length,
+      })),
+    [grades, visible],
+  )
+  const topTier = Math.min(...visible.map((p) => tierOf(p) ?? 99), 99)
+
+  const isOpen = (id: string, depth: number) => openMap[id] ?? depth < autoDepth
+  const toggleOpen = (id: string, depth: number) =>
+    setOpenMap((m) => ({ ...m, [id]: !(m[id] ?? depth < autoDepth) }))
+  const openToDepth = (d: number) => {
+    setAutoDepth(d)
+    setOpenMap({})
+  }
+
+  /** The brackets under one leader: their teams, then whoever has no team. */
+  function groupsFor(leader: Profile, kids: Profile[]): Group[] {
+    const mine = teams.filter((t) => t.created_by === leader.id)
+    const spread = new Set(kids.map((k) => k.team_id ?? null))
+    // Nothing to bracket: this leader made no team and their people all sit
+    // in the same one (usually the leader's own) — the rows say so already.
+    if (mine.length === 0 && spread.size <= 1) return [{ team: null, people: kids }]
+    const childTeams = new Set(kids.map((k) => k.team_id).filter(Boolean) as string[])
+    const shown = teams
+      .filter((t) => t.created_by === leader.id || childTeams.has(t.id))
+      .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
+    if (shown.length === 0) return [{ team: null, people: kids }]
+    const groups: Group[] = shown.map((t) => ({
+      team: t,
+      people: kids.filter((k) => k.team_id === t.id),
+    }))
+    const rest = kids.filter((k) => !k.team_id || !shown.some((t) => t.id === k.team_id))
+    if (rest.length > 0) groups.push({ team: null, people: rest })
+    return groups
   }
 
   /* ---------------- team actions ---------------- */
 
-  async function createTeam(grade: Grade, station: Station | null) {
-    const siblings = teams.filter(
-      (t) => t.grade_id === grade.id && (t.station_id ?? null) === (station?.id ?? null),
-    )
+  async function createTeam(leader: Profile) {
+    const grade = gradeOf(leader)
+    if (!grade) return setError('Give this leader a tier tag first (Settings → User access).')
+    const station = stationsOf(leader)[0] ?? null
+    const siblings = teams.filter((t) => t.created_by === leader.id)
     const name = nextTeamName(siblings.map((t) => t.name))
     setError(null)
     const { data, error } = await supabase
@@ -343,19 +268,15 @@ export default function WorkerManagement() {
       .insert({
         name,
         grade_id: grade.id,
-        station_id: station?.id ?? null,
-        created_by: profile?.id ?? null,
+        station_id: station,
+        created_by: leader.id,
         sort_order: siblings.length,
       })
       .select()
       .single()
     if (error) return setError(error.message)
-    // Making a team at your OWN tier puts you in it, so the box has a
-    // leader from the start.
-    if (data && profile && profile.grade_id === grade.id && !profile.team_id) {
-      await supabase.from('access_profiles').update({ team_id: data.id }).eq('id', profile.id)
-    }
-    setNotice(`${name} added to ${grade.name}${station ? ` · ${station.name}` : ''}.`)
+    setOpenMap((m) => ({ ...m, [leader.id]: true }))
+    setNotice(`${name} added under ${profileName(leader)}.`)
     if (data) {
       setRenamingId(data.id)
       setRenameDraft(data.name)
@@ -376,7 +297,7 @@ export default function WorkerManagement() {
   async function removeTeam(team: Team, members: number) {
     const warn =
       members > 0
-        ? `Remove ${team.name}? Its ${members} member${members === 1 ? '' : 's'} stay on the board, out of a team.`
+        ? `Remove ${team.name}? Its ${members} member${members === 1 ? '' : 's'} stay in the chain, out of a team.`
         : `Remove ${team.name}?`
     if (!window.confirm(warn)) return
     const { error } = await supabase.from('teams').delete().eq('id', team.id)
@@ -386,69 +307,76 @@ export default function WorkerManagement() {
     load()
   }
 
-  /* ---------------- placing people ---------------- */
+  /* ---------------- moving people ---------------- */
 
-  async function place(person: Profile, row: BoardRow, section: BoardSection, box: TeamBox) {
-    if (!row.grade) return setError('That row has no tier tag to place someone into.')
-    if (person.id === profile?.id) return
-    if (row.tier <= myTierEff) {
-      return setError('You can only place someone into a tier below your own.')
-    }
-    if (box.team ? !canFillTeam(box.team) : !canOwnTeamsAt(row.tier, section.station?.id ?? null)) {
+  async function placeUnder(person: Profile, leader: Profile, team: Team | null) {
+    if (person.id === leader.id) return
+    if (!canPlaceUnder(leader)) {
       return setError(
-        'That box is not yours to fill. The "Assign workers to ANY team" function opens this up.',
+        'You can only add people into your own branch. The "Assign workers to ANY team" function opens this up.',
       )
     }
-    if (person.tags_confirmed && person.team_id && !canFillTeamId(person.team_id)) {
-      return setError('You can only move workers out of a team you manage.')
+    if (person.tags_confirmed && !canMove(person)) {
+      return setError('You can only move workers who are already in your branch.')
     }
+    if (inMyBranch(person) && person.id !== profile?.id) {
+      // Moving someone onto their own subordinate would cut the chain loose.
+      let cur: Profile | undefined = leader
+      for (let hops = 0; cur && hops < 20; hops++) {
+        if (cur.id === person.id) return setError('That would put a leader under their own team member.')
+        cur = profiles.find((x) => x.id === cur?.supervisor_id)
+      }
+    }
+    const lt = tierOf(leader)
+    const pt = tierOf(person)
+    if (lt === null) return setError('Give this leader a tier tag first (Settings → User access).')
+    if (pt !== null && lt >= pt) {
+      return setError('A worker can only be placed under a strictly higher tier.')
+    }
+    // A new sign-up with no tier yet lands on the tier straight below.
+    const nextGrade =
+      pt === null ? grades.filter((g) => g.sort_order > lt).sort((a, b) => a.sort_order - b.sort_order)[0] : null
+    if (pt === null && !nextGrade) return setError('There is no tier below this leader to place them on.')
     setError(null)
 
-    // The team's own leader takes the reporting line where there is one.
-    const leader = box.team
-      ? profiles.find(
-          (p) => p.id === box.team?.created_by && (tierOf(p) ?? Number.MAX_SAFE_INTEGER) < row.tier,
-        ) ??
-        profiles.find(
-          (p) => p.team_id === box.team?.id && (tierOf(p) ?? Number.MAX_SAFE_INTEGER) < row.tier,
-        )
-      : null
-    const supervisor = leader ?? (myTierEff < row.tier ? profile : null)
-
+    const leaderStations = stationsOf(leader)
     const patch: Record<string, unknown> = {
-      grade_id: row.grade.id,
-      team_id: box.team?.id ?? null,
-      supervisor_id: supervisor?.id ?? person.supervisor_id ?? null,
+      supervisor_id: leader.id,
+      team_id: team?.id ?? null,
       tags_confirmed: true,
     }
-    if (row.stationScoped && section.station) {
-      patch.station_ids = [section.station.id]
-      patch.station_id = section.station.id
+    if (nextGrade) patch.grade_id = nextGrade.id
+    if (leaderStations.length > 0) {
+      patch.station_ids = leaderStations
+      patch.station_id = leaderStations[0]
     }
-
     const { error } = await supabase.from('access_profiles').update(patch).eq('id', person.id)
     if (error) return setError(error.message)
-    const where = box.team ? box.team.name : `${row.grade.name}, no team`
-    setNotice(`${profileName(person)} placed in ${where}.`)
+    setOpenMap((m) => ({ ...m, [leader.id]: true }))
+    setNotice(
+      `${profileName(person)} now reports to ${profileName(leader)}${team ? ` · ${team.name}` : ''}.`,
+    )
     load()
   }
 
   // The dragged id travels in the DataTransfer as well as in state: on a
   // real drag both agree, but the payload is what the drop event actually
   // carries, so it stays correct even if React has not re-rendered yet.
-  function handleDrop(row: BoardRow, section: BoardSection, box: TeamBox, e: React.DragEvent) {
+  function handleDrop(leader: Profile, team: Team | null, e: React.DragEvent) {
     e.preventDefault()
+    e.stopPropagation()
     const carried = e.dataTransfer.getData('text/plain')
     const dragged = profiles.find((p) => p.id === (carried || dragId))
     setDragId(null)
     setDropKey(null)
-    if (dragged) place(dragged, row, section, box)
+    if (dragged) placeUnder(dragged, leader, team)
   }
 
   function dragProps(p: Profile) {
     return {
       draggable: true,
       onDragStart: (e: React.DragEvent) => {
+        e.stopPropagation()
         e.dataTransfer.setData('text/plain', p.id)
         e.dataTransfer.effectAllowed = 'move'
         setDragId(p.id)
@@ -460,6 +388,169 @@ export default function WorkerManagement() {
     }
   }
 
+  function dropProps(key: string, leader: Profile, team: Team | null, allowed: boolean) {
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        if (!allowed || dragId === leader.id) return
+        e.preventDefault()
+        e.stopPropagation()
+        e.dataTransfer.dropEffect = 'move' as const
+        setDropKey(key)
+      },
+      onDragLeave: () => setDropKey((cur) => (cur === key ? null : cur)),
+      onDrop: (e: React.DragEvent) => handleDrop(leader, team, e),
+    }
+  }
+
+  /* ---------------- rendering the tree ---------------- */
+
+  function renderNode(p: Profile, depth: number, seen: Set<string>): React.ReactNode {
+    if (seen.has(p.id)) return null
+    const mine = new Set(seen)
+    mine.add(p.id)
+    const kids = tree.kids.get(p.id) ?? []
+    const groups = groupsFor(p, kids)
+    const hasBranch = groups.some((g) => g.team || g.people.length > 0)
+    const under = tree.total.get(p.id) ?? 0
+    const opened = isOpen(p.id, depth) && hasBranch
+    const grade = gradeOf(p)
+    const team = teamOf(p)
+    const tier = tierOf(p)
+    const isMe = p.id === profile?.id
+    const rowKey = `row:${p.id}`
+    const allowed = canPlaceUnder(p)
+    const canAddTeam =
+      Boolean(grade) && tier !== null && tier < bottomTier && canOwnTeamsAt(tier, stationsOf(p)[0] ?? null)
+
+    return (
+      <li className="wm-node" key={p.id}>
+        <div
+          className={[
+            'wm-row',
+            selectedId === p.id ? 'selected' : '',
+            dragId === p.id ? 'dragging' : '',
+            dropKey === rowKey ? 'over' : '',
+            isMe ? 'me' : '',
+          ].join(' ')}
+          onClick={() => setSelectedId(p.id)}
+          {...dragProps(p)}
+          {...dropProps(rowKey, p, team, allowed)}
+        >
+          <button
+            type="button"
+            className={`wm-caret ${hasBranch ? '' : 'leaf'}`}
+            aria-label={opened ? 'Collapse' : 'Expand'}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (hasBranch) toggleOpen(p.id, depth)
+            }}
+          >
+            {hasBranch ? (opened ? '▾' : '▸') : '·'}
+          </button>
+          <span className={`tag-dot dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
+          <span className="wm-row-name">
+            {profileName(p)}
+            {isMe && <span className="you-chip">you</span>}
+          </span>
+          <span className={grade ? tagClass(grade.color) : 'badge warn'}>
+            {grade?.name ?? 'No tier'}
+          </span>
+          <span className="wm-row-meta">
+            {stationLabel(p)}
+            {team ? ` · ${team.name}` : ''}
+            {p.employee_code ? ` · ${p.employee_code}` : ''}
+          </span>
+          {!p.supervisor_id && tier !== null && tier > topTier && (
+            <span className="badge warn wm-flag">no leader</span>
+          )}
+          <span className="wm-row-tail">
+            {under > 0 && <span className="wm-under">{under} under</span>}
+            {canAddTeam && (
+              <button
+                type="button"
+                className="wm-add"
+                title={`Add a team under ${profileName(p)}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  createTeam(p)
+                }}
+              >
+                + Team
+              </button>
+            )}
+          </span>
+        </div>
+
+        {opened && (
+          <ul className="wm-children">
+            {groups.map((g) => {
+              // No teams here: the children hang straight off the row.
+              if (!g.team && groups.length === 1) {
+                return g.people.map((k) => renderNode(k, depth + 1, mine))
+              }
+              const key = `team:${p.id}:${g.team?.id ?? 'none'}`
+              return (
+                <li className="wm-bracket" key={key}>
+                  <div
+                    className={`wm-bracket-head ${dropKey === key ? 'over' : ''}`}
+                    {...dropProps(key, p, g.team, allowed)}
+                  >
+                    {g.team && renamingId === g.team.id ? (
+                      <input
+                        className="wm-bracket-input"
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onBlur={() => saveTeamName(g.team as Team)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveTeamName(g.team as Team)
+                          if (e.key === 'Escape') setRenamingId(null)
+                        }}
+                      />
+                    ) : (
+                      <span className={`wm-bracket-name ${g.team ? '' : 'none'}`}>
+                        {g.team ? g.team.name : 'No team'}
+                      </span>
+                    )}
+                    <span className="wm-bracket-count">{g.people.length}</span>
+                    {g.team && canManageTeam(g.team) && renamingId !== g.team.id && (
+                      <>
+                        <button
+                          type="button"
+                          className="wm-icon"
+                          title="Rename team"
+                          onClick={() => {
+                            setRenamingId(g.team!.id)
+                            setRenameDraft(g.team!.name)
+                          }}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          className="wm-icon danger"
+                          title="Remove team"
+                          onClick={() => removeTeam(g.team as Team, g.people.length)}
+                        >
+                          ×
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {g.people.length > 0 && (
+                    <ul className="wm-children">
+                      {g.people.map((k) => renderNode(k, depth + 1, mine))}
+                    </ul>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </li>
+    )
+  }
+
   if (loading) return <p className="muted">Loading…</p>
 
   if (!isLeader) {
@@ -467,7 +558,6 @@ export default function WorkerManagement() {
       <div className="wm-page">
         <header className="wm-head">
           <Link to="/" className="btn ghost wm-back">← Back to main page</Link>
-          <h1 className="wm-title">Worker Management</h1>
         </header>
         <div className="card"><p className="muted">Only team leaders (upper tiers) can manage workers.</p></div>
       </div>
@@ -478,7 +568,6 @@ export default function WorkerManagement() {
     <div className="wm-page" style={wideStyle}>
       <header className="wm-head">
         <Link to="/" className="btn ghost wm-back">← Back to main page</Link>
-        <h1 className="wm-title">Worker Management</h1>
         <div className="wm-head-actions">
           <button
             type="button"
@@ -487,7 +576,7 @@ export default function WorkerManagement() {
             onClick={() => setSignupsOpen((v) => !v)}
           >
             New sign ups
-            <span className="wm-caret" aria-hidden="true">{signupsOpen ? '▲' : '▼'}</span>
+            <span className="wm-signup-caret" aria-hidden="true">{signupsOpen ? '▲' : '▼'}</span>
             {pending.length > 0 && <span className="count-badge">{pending.length}</span>}
           </button>
         </div>
@@ -509,7 +598,7 @@ export default function WorkerManagement() {
                   {...dragProps(p)}
                 >
                   <span className="wm-signup-name">{profileName(p)}</span>
-                  <span className="wm-signup-meta">{p.email ?? gradeOf(p)?.name ?? 'No tier yet'}</span>
+                  <span className="wm-signup-meta">{p.email ?? 'No tier yet'}</span>
                 </article>
               ))}
             </div>
@@ -518,171 +607,32 @@ export default function WorkerManagement() {
       )}
 
       <div className={`wm-body ${selected ? 'with-panel' : ''}`}>
-        <section className="wm-board">
-          {board.length === 0 && <p className="muted small">No tiers to show yet.</p>}
+        <section className="wm-chart">
+          <div className="wm-tiers">
+            {tierStrip.map((t) => (
+              <button
+                key={t.grade.id}
+                type="button"
+                className="wm-tier-chip"
+                title={`Open the chain down to ${t.grade.name}`}
+                onClick={() => openToDepth(t.depth)}
+              >
+                <span className={`tag-dot dot-${t.grade.color}`} aria-hidden="true" />
+                {t.grade.name}
+                <b>{t.count}</b>
+              </button>
+            ))}
+            <span className="wm-tiers-actions">
+              <button type="button" className="linkbtn" onClick={() => openToDepth(99)}>Expand all</button>
+              <button type="button" className="linkbtn" onClick={() => openToDepth(0)}>Collapse all</button>
+            </span>
+          </div>
 
-          {board.map((row) => {
-            const shut = closedRows[row.key]
-            return (
-              <div className="wm-row" key={row.key}>
-                <div className="wm-row-head">
-                  <button
-                    type="button"
-                    className="wm-row-toggle"
-                    aria-expanded={!shut}
-                    onClick={() => setClosedRows((c) => ({ ...c, [row.key]: !c[row.key] }))}
-                  >
-                    <span className="wm-row-caret" aria-hidden="true">{shut ? '▸' : '▾'}</span>
-                    <span className={`tag-dot dot-${row.grade?.color ?? 'grey'}`} aria-hidden="true" />
-                    <h2 className="wm-row-title">{row.grade?.name ?? 'No tier tag'}</h2>
-                    <span className="wm-row-count">{row.count}</span>
-                  </button>
-                  {row.grade && !row.stationScoped && canOwnTeamsAt(row.tier, null) && (
-                    <button
-                      type="button"
-                      className="wm-add"
-                      title={`Add a team at ${row.grade.name}`}
-                      onClick={() => createTeam(row.grade as Grade, null)}
-                    >
-                      + Team
-                    </button>
-                  )}
-                </div>
-
-                {!shut &&
-                  row.sections.map((section) => (
-                    <div className="wm-section" key={`${row.key}:${section.key}`}>
-                      {row.stationScoped && (
-                        <div className="wm-section-head">
-                          <span className="wm-station-name">
-                            {section.station?.name ?? 'All stations'}
-                          </span>
-                          <span className="wm-section-count">{section.count}</span>
-                          {row.grade && section.station && canOwnTeamsAt(row.tier, section.station.id) && (
-                            <button
-                              type="button"
-                              className="wm-add"
-                              title={`Add a team at ${row.grade.name}${section.station ? ` · ${section.station.name}` : ''}`}
-                              onClick={() => createTeam(row.grade as Grade, section.station)}
-                            >
-                              + Team
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="wm-boxes">
-                        {section.boxes.map((box) => {
-                          const key = `${row.key}:${section.key}:${box.key}`
-                          const canFill = box.team
-                            ? canFillTeam(box.team)
-                            : canOwnTeamsAt(row.tier, section.station?.id ?? null)
-                          const editable = box.team ? canManageTeam(box.team) : false
-                          return (
-                            <div
-                              key={key}
-                              className={[
-                                'wm-box',
-                                box.team ? '' : 'loose',
-                                dropKey === key ? 'over' : '',
-                                canFill ? '' : 'locked',
-                              ].join(' ')}
-                              onDragOver={(e) => {
-                                if (!canFill) return
-                                e.preventDefault()
-                                e.dataTransfer.dropEffect = 'move'
-                                setDropKey(key)
-                              }}
-                              onDragLeave={() => setDropKey((cur) => (cur === key ? null : cur))}
-                              onDrop={(e) => handleDrop(row, section, box, e)}
-                            >
-                              <div className="wm-box-head">
-                                {box.team && renamingId === box.team.id ? (
-                                  <input
-                                    className="wm-box-input"
-                                    autoFocus
-                                    value={renameDraft}
-                                    onChange={(e) => setRenameDraft(e.target.value)}
-                                    onBlur={() => saveTeamName(box.team as Team)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') saveTeamName(box.team as Team)
-                                      if (e.key === 'Escape') setRenamingId(null)
-                                    }}
-                                  />
-                                ) : (
-                                  <span className="wm-box-name">
-                                    {box.team ? box.team.name : 'No team'}
-                                  </span>
-                                )}
-                                <span className="wm-box-count">{box.people.length}</span>
-                                {box.team && editable && renamingId !== box.team.id && (
-                                  <span className="wm-box-tools">
-                                    <button
-                                      type="button"
-                                      className="wm-icon"
-                                      title="Rename team"
-                                      onClick={() => {
-                                        setRenamingId(box.team!.id)
-                                        setRenameDraft(box.team!.name)
-                                      }}
-                                    >
-                                      ✎
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="wm-icon danger"
-                                      title="Remove team"
-                                      onClick={() => removeTeam(box.team as Team, box.people.length)}
-                                    >
-                                      ×
-                                    </button>
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="wm-box-body">
-                                {box.people.length === 0 ? (
-                                  <span className="wm-box-empty">
-                                    {canFill ? 'Drop someone here' : 'Empty'}
-                                  </span>
-                                ) : (
-                                  box.people.map((p) => {
-                                    const isMe = p.id === profile?.id
-                                    const lead = leaderName(p)
-                                    return (
-                                      <div
-                                        key={p.id}
-                                        className={[
-                                          'wm-person',
-                                          selectedId === p.id ? 'selected' : '',
-                                          dragId === p.id ? 'dragging' : '',
-                                          isMe ? 'me' : '',
-                                        ].join(' ')}
-                                        onClick={() => setSelectedId(p.id)}
-                                        {...dragProps(p)}
-                                      >
-                                        <span className="wm-person-name">
-                                          {profileName(p)}
-                                          {isMe && <span className="you-chip">you</span>}
-                                        </span>
-                                        <span className="wm-person-meta">
-                                          {p.employee_code ? `${p.employee_code} · ` : ''}
-                                          {lead ? `▲ ${lead}` : stationLabel(p)}
-                                        </span>
-                                      </div>
-                                    )
-                                  })
-                                )}
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )
-          })}
+          {tree.roots.length === 0 ? (
+            <p className="muted small">No one in the chain yet.</p>
+          ) : (
+            <ul className="wm-tree">{tree.roots.map((r) => renderNode(r, 0, new Set()))}</ul>
+          )}
         </section>
 
         {selected && (
@@ -692,7 +642,11 @@ export default function WorkerManagement() {
               grade={gradeOf(selected) ?? null}
               team={teamOf(selected)}
               stationText={stationLabel(selected)}
-              leader={leaderName(selected)}
+              leader={
+                selected.supervisor_id
+                  ? profileName(profiles.find((x) => x.id === selected.supervisor_id))
+                  : null
+              }
               jobs={jobs}
               rates={rates}
               stations={stations}
@@ -720,7 +674,7 @@ export default function WorkerManagement() {
 
 /* ------------------------------------------------------------------ */
 /* Worker panel — everything about ONE person, opened by clicking     */
-/* their card on the board.                                           */
+/* their row in the chain.                                            */
 /* ------------------------------------------------------------------ */
 
 function WorkerPanel({
@@ -832,13 +786,13 @@ function WorkerPanel({
       </div>
 
       <div className="wm-detail-id">
-        <div className="wm-person-name" style={{ fontSize: '1.05rem' }}>{profileName(person)}</div>
+        <div className="wm-row-name" style={{ fontSize: '1.05rem' }}>{profileName(person)}</div>
         <div className="row-form" style={{ gap: '0.4rem', flexWrap: 'wrap' }}>
           {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
           {team && <span className="badge off">{team.name}</span>}
         </div>
-        <div className="wm-person-meta">{stationText}</div>
-        {leader && <div className="wm-person-meta">Reports to {leader}</div>}
+        <div className="wm-row-meta">{stationText}</div>
+        {leader && <div className="wm-row-meta">Reports to {leader}</div>}
       </div>
 
       <div className="wm-stat">
@@ -861,7 +815,7 @@ function WorkerPanel({
               <div className="wm-line" key={j.id}>
                 <span>
                   {j.name}
-                  <span className="wm-person-meta"> {stationName(j.station_id)} · {j.unit}</span>
+                  <span className="wm-row-meta"> {stationName(j.station_id)} · {j.unit}</span>
                 </span>
                 <span className="wm-line-amt">
                   {r
@@ -921,7 +875,7 @@ function WorkerPanel({
 /* ------------------------------------------------------------------ */
 /* Worker profile pop-out: personal + payroll details for one worker. */
 /* Tags/tier/access stay in Settings -> User access, and the team is  */
-/* set by dropping the person into a box on the board.                */
+/* set by dropping the person into a bracket in the chain.            */
 /* ------------------------------------------------------------------ */
 
 function WorkerProfileModal({
