@@ -84,8 +84,6 @@
 .pr-wd-wagecalc-seg.result { background: linear-gradient(120deg, var(--pr-brand-strong), var(--pr-brand)); border-color: transparent; }
 .pr-wd-wagecalc-seg.result .l { color: rgba(255,255,255,0.82); }
 .pr-wd-wagecalc-seg.result .v { color: #fff; font-size: 1.2rem; }
-.pr-wd-wagecalc-note { margin: 0.9rem 0 0; font-size: 0.79rem; color: var(--pr-text-secondary); line-height: 1.5; }
-.pr-wd-wagecalc-note b { color: var(--text); }
 
 /* ---------------- KPI tile color variants (extends .pr-kpi-icon) ---------------- */
 .pr-kpi-icon.blue { background: var(--pr-info-bg); color: var(--pr-info-text); }

@@ -336,9 +336,6 @@ export default function WorkerPayrollDetail({ row, onBack }: { row: WorkerRow; o
                     <span className="v">RM {fmt(row.wages)}</span>
                   </div>
                 </div>
-                <p className="pr-wd-wagecalc-note">
-                  Every FFB Reception worker is paid <b>Piece Rate (cages tipped) + Wage Pay (days worked × daily rate)</b> — the two are added together, not one or the other. Daily wage is fixed at hiring and paid regardless of cage output. <b>Paid leave counts the same as a day worked</b> — it isn't deducted from wages, so Total Payable Days includes both days actually worked and approved paid leave days.
-                </p>
               </div>
 
               <div className="pr-table-card">
