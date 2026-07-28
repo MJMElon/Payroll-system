@@ -54,7 +54,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { effectiveCapabilities, tagClass } from '../../lib/tags'
+import { effectiveCapabilities, roleForTier, tagClass } from '../../lib/tags'
 import { useWideShell } from '../../lib/useWideShell'
 import {
   supabase,
@@ -63,23 +63,11 @@ import {
   type Job,
   type PieceRate,
   type Profile,
-  type Role,
   type Station,
   type Team,
 } from '../../lib/supabase'
 
 const RM = (n: number) => `RM ${n.toFixed(2)}`
-
-// Route access follows the tier tag: placing someone in the chain also
-// settles which pages they may open. Carried over from the old Settings
-// "User access" tab, which was the only other place that kept the two in
-// step.
-function roleForTier(tier: number | null, name?: string): Role {
-  if (tier === null) return 'operator'
-  if (tier <= 2) return 'manager'
-  if (tier === 3 || (name ?? '').toLowerCase().includes('engineer')) return 'engineer'
-  return 'operator'
-}
 
 /** Has this account been given a real name, or is it still the email? */
 function hasName(p: Profile | undefined | null): boolean {

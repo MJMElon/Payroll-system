@@ -3274,6 +3274,8 @@ function TeamTab({
   const [error, setError] = useState<string | null>(null)
   // The "you can only set tier up to …" pop-out.
   const [notice, setNotice] = useState<string | null>(null)
+  // The sign up waiting on a yes/no before they are pulled into the team.
+  const [confirmAdd, setConfirmAdd] = useState<Profile | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [overGrade, setOverGrade] = useState<string | null>(null)
 
@@ -3342,6 +3344,11 @@ function TeamTab({
   const lowerTiers = tier
     ? grades.filter((g) => g.sort_order > tier.sort_order).sort((a, b) => a.sort_order - b.sort_order)
     : []
+  // The admin tier runs access, not the floor, so it is never offered as a
+  // tier to place someone on.
+  const placeableTiers = grades
+    .filter((g) => g.sort_order > ADMIN_TIER_ORDER)
+    .sort((a, b) => a.sort_order - b.sort_order)
 
   const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
   // Who may work a team is a SETTING, not a position on the ladder. Sitting
@@ -3369,10 +3376,37 @@ function TeamTab({
   const myLeader = profile?.supervisor_id
     ? people.find((p) => p.id === profile.supervisor_id) ?? null
     : null
-  const myTeamName =
-    profile?.team_name ??
-    myLeader?.team_name ??
-    (myLeader ? `${profileName(myLeader)}'s team` : 'No team yet')
+  const NO_TEAM_NAME = 'No team name is assigned'
+  const myTeamName = profile?.team_name ?? myLeader?.team_name ?? NO_TEAM_NAME
+
+  /**
+   * A Station Head does not supervise a flat list — they run TEAMS, one per
+   * person on the rung directly under them, each of those leading their own
+   * people further down. So when there is more than one rung below, the
+   * board splits into a column per team that swipes sideways: the team
+   * name, its leader, then that leader's people.
+   *
+   * With only one rung below (nothing can lead anything) it stays a plain
+   * set of lanes. All read off position — no tier is named in code.
+   */
+  const teamLeaderTier = nextBelow
+  const runsTeams = lowerTiers.length > 1 && teamLeaderTier != null
+  const teamColumns = runsTeams
+    ? myTeam
+        .filter((p) => p.grade_id === teamLeaderTier.id)
+        .map((leader) => ({
+          key: leader.id,
+          leader,
+          name: leader.team_name ?? NO_TEAM_NAME,
+          members: people.filter((p) => p.supervisor_id === leader.id),
+        }))
+    : []
+  // Anyone under me who is not one of those leaders has no team yet — a
+  // freshly claimed sign up, most often. They get a column of their own so
+  // they can be dragged into a real one.
+  const looseMembers = runsTeams
+    ? myTeam.filter((p) => p.grade_id !== teamLeaderTier.id)
+    : myTeam
 
   /**
    * Pull a new sign up into my team. They keep the tier they signed up on,
@@ -3403,9 +3437,14 @@ function TeamTab({
     load()
   }
 
-  /** Move a team member onto another tier — the drag/drop target. */
-  async function moveTo(p: Profile, g: Grade) {
-    if (p.grade_id === g.id) return
+  /**
+   * Move a team member onto another tier. When the drop lands inside a team
+   * column, they also join that team — the column IS the team, so dropping
+   * into it and not joining it would be a lie.
+   */
+  async function moveTo(p: Profile, g: Grade, joinLeader?: Profile | null) {
+    const nextSupervisor = joinLeader === undefined ? p.supervisor_id : joinLeader?.id ?? profile?.id ?? null
+    if (p.grade_id === g.id && nextSupervisor === p.supervisor_id) return
     if (!mayAssign(g)) {
       setNotice(
         nextBelow
@@ -3418,18 +3457,113 @@ function TeamTab({
     setError(null)
     const { error: err } = await supabase
       .from('access_profiles')
-      .update({ grade_id: g.id })
+      .update(
+        joinLeader === undefined
+          ? { grade_id: g.id }
+          : { grade_id: g.id, supervisor_id: nextSupervisor },
+      )
       .eq('id', p.id)
     setBusy(null)
     if (err) return setError(err.message)
     load()
   }
 
-  function dropOn(g: Grade) {
-    const person = myTeam.find((p) => p.id === dragId)
+  // A drop target is identified by tier AND, inside a team column, by the
+  // team it belongs to — the same tier appears once per column.
+  const dropKey = (g: Grade, leaderId?: string | null) => `${leaderId ?? 'self'}:${g.id}`
+
+  function dropOn(g: Grade, joinLeader?: Profile | null) {
+    // The dragged person may live under me OR under one of my leaders, so
+    // look across everyone I can reach rather than just my direct reports.
+    const reachable = people.filter(
+      (p) => p.supervisor_id === profile?.id || teamColumns.some((c) => c.leader.id === p.supervisor_id),
+    )
+    const person = reachable.find((p) => p.id === dragId)
     setDragId(null)
     setOverGrade(null)
-    if (person) moveTo(person, g)
+    if (person) moveTo(person, g, joinLeader)
+  }
+
+  /**
+   * One rung inside the board: the tier's name, then the people on it.
+   * `leader` says which team the rung belongs to — a Profile for a team
+   * column, null for the loose column (they answer to me), and undefined
+   * for the flat layout, where a drop changes the tier and leaves the
+   * reporting line alone.
+   */
+  const Lane = ({
+    grade,
+    leader,
+    members,
+  }: {
+    grade: Grade
+    leader?: Profile | null
+    members: Profile[]
+  }) => {
+    const key = dropKey(grade, leader === undefined ? undefined : leader?.id ?? null)
+    return (
+      <div
+        className={`mob-lane ${overGrade === key ? 'over' : ''}`}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setOverGrade(key)
+        }}
+        onDragLeave={() => setOverGrade((cur) => (cur === key ? null : cur))}
+        onDrop={(e) => {
+          e.preventDefault()
+          dropOn(grade, leader)
+        }}
+      >
+        <div className="mob-lane-head">
+          <span className={`tag-dot dot-${grade.color}`} aria-hidden="true" />
+          <span className="mob-lane-name">{grade.name}</span>
+        </div>
+        {members.length === 0 ? (
+          <div className="mob-lane-empty">{canManageTeam ? 'Drop here' : '—'}</div>
+        ) : (
+          members.map((p) => (
+            <div
+              className={`mob-member ${dragId === p.id ? 'dragging' : ''}`}
+              key={p.id}
+              draggable={canManageTeam && !busy}
+              onDragStart={(e) => {
+                setDragId(p.id)
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', p.id)
+              }}
+              onDragEnd={() => {
+                setDragId(null)
+                setOverGrade(null)
+              }}
+            >
+              {canManageTeam && <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>}
+              <span className="mob-org-text">
+                <span className="mob-person-name">{profileName(p)}</span>
+                <span className="mob-station-meta">{stationLabel(p)}</span>
+              </span>
+              {/* Same rule, without a mouse: pick the tier directly. The
+                  admin tier is never on the list — it does not work the
+                  floor. */}
+              {canManageTeam && (
+                <select
+                  className="mob-member-pick"
+                  value={grade.id}
+                  disabled={busy === p.id}
+                  onChange={(e) => {
+                    const next = grades.find((x) => x.id === e.target.value)
+                    if (next) moveTo(p, next, leader)
+                  }}
+                >
+                  {placeableTiers.map((x) => (
+                    <option key={x.id} value={x.id}>{x.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    )
   }
 
   // Every rung of this chart is the reader's own station, so the node
@@ -3449,13 +3583,15 @@ function TeamTab({
     onDropHere?: () => void
   }) => (
     <div
-      className={`mob-org-node ${me ? 'me' : ''} ${overGrade === grade?.id ? 'over' : ''}`}
+      className={`mob-org-node ${me ? 'me' : ''} ${grade && overGrade === dropKey(grade) ? 'over' : ''}`}
       onDragOver={(e) => {
-        if (!onDropHere) return
+        if (!onDropHere || !grade) return
         e.preventDefault()
-        setOverGrade(grade?.id ?? null)
+        setOverGrade(dropKey(grade))
       }}
-      onDragLeave={() => setOverGrade((cur) => (cur === grade?.id ? null : cur))}
+      onDragLeave={() =>
+        setOverGrade((cur) => (grade && cur === dropKey(grade) ? null : cur))
+      }
       onDrop={(e) => {
         if (!onDropHere) return
         e.preventDefault()
@@ -3505,7 +3641,7 @@ function TeamTab({
                   <button
                     className="mob-icon-btn"
                     disabled={busy === p.id}
-                    onClick={() => claim(p)}
+                    onClick={() => setConfirmAdd(p)}
                     title="Add to my team"
                     aria-label={`Add ${profileName(p)} to my team`}
                   >
@@ -3578,78 +3714,52 @@ function TeamTab({
                 </div>
               )}
 
-              {/* Below you: a lane per tier, holding your people. */}
-              {lowerTiers.map((g) => {
-                const members = myTeam.filter((p) => p.grade_id === g.id)
-                if (!canManageTeam && members.length === 0) return null
-                return (
-                  <div
-                    key={g.id}
-                    className={`mob-lane ${overGrade === g.id ? 'over' : ''}`}
-                    onDragOver={(e) => {
-                      e.preventDefault()
-                      setOverGrade(g.id)
-                    }}
-                    onDragLeave={() => setOverGrade((cur) => (cur === g.id ? null : cur))}
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      dropOn(g)
-                    }}
-                  >
-                    <div className="mob-lane-head">
-                      <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
-                      <span className="mob-lane-name">{g.name}</span>
+              {/* Below you. One column per team when there is a rung that
+                  can lead one — swipe sideways for the next team — and a
+                  plain set of lanes when there is not. */}
+              {runsTeams ? (
+                <div className="mob-teamscroll">
+                  {teamColumns.map((col) => (
+                    <div className="mob-teamcol" key={col.key}>
+                      <div className="mob-teamcol-name">{col.name}</div>
+                      <Lane
+                        grade={teamLeaderTier}
+                        leader={null}
+                        members={[col.leader]}
+                      />
+                      {lowerTiers
+                        .filter((g) => g.sort_order > teamLeaderTier.sort_order)
+                        .map((g) => (
+                          <Lane
+                            key={g.id}
+                            grade={g}
+                            leader={col.leader}
+                            members={col.members.filter((p) => p.grade_id === g.id)}
+                          />
+                        ))}
                     </div>
-                    {members.length === 0 ? (
-                      <div className="mob-lane-empty">Drop here</div>
-                    ) : (
-                      members.map((p) => (
-                        <div
-                          className={`mob-member ${dragId === p.id ? 'dragging' : ''}`}
-                          key={p.id}
-                          draggable={canManageTeam && !busy}
-                          onDragStart={(e) => {
-                            setDragId(p.id)
-                            e.dataTransfer.effectAllowed = 'move'
-                            e.dataTransfer.setData('text/plain', p.id)
-                          }}
-                          onDragEnd={() => {
-                            setDragId(null)
-                            setOverGrade(null)
-                          }}
-                        >
-                          {canManageTeam && (
-                            <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>
-                          )}
-                          <span className="mob-org-text">
-                            <span className="mob-person-name">{profileName(p)}</span>
-                            <span className="mob-station-meta">{stationLabel(p)}</span>
-                          </span>
-                          {/* Same rule, without a mouse: pick the tier directly. */}
-                          {canManageTeam && (
-                            <select
-                              className="mob-member-pick"
-                              value={g.id}
-                              disabled={busy === p.id}
-                              onChange={(e) => {
-                                const next = grades.find((x) => x.id === e.target.value)
-                                if (next) moveTo(p, next)
-                              }}
-                            >
-                              {grades
-                                .slice()
-                                .sort((a, b) => a.sort_order - b.sort_order)
-                                .map((x) => (
-                                  <option key={x.id} value={x.id}>{x.name}</option>
-                                ))}
-                            </select>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )
-              })}
+                  ))}
+                  {(looseMembers.length > 0 || canManageTeam) && (
+                    <div className="mob-teamcol loose">
+                      <div className="mob-teamcol-name">Not in a team yet</div>
+                      {lowerTiers.map((g) => (
+                        <Lane
+                          key={g.id}
+                          grade={g}
+                          leader={null}
+                          members={looseMembers.filter((p) => p.grade_id === g.id)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                lowerTiers.map((g) => {
+                  const members = myTeam.filter((p) => p.grade_id === g.id)
+                  if (!canManageTeam && members.length === 0) return null
+                  return <Lane key={g.id} grade={g} leader={undefined} members={members} />
+                })
+              )}
 
               {canManageTeam && myTeam.length === 0 && (
                 <div className="mob-sub">
@@ -3662,6 +3772,32 @@ function TeamTab({
       </div>
 
       {/* The ceiling pop-out — says exactly how high this leader may go. */}
+      {/* Adding someone to your team is a real change to their account, so
+          it asks first and names who it is about. */}
+      {confirmAdd && (
+        <div className="mob-modal-wrap" role="dialog" aria-modal="true">
+          <div className="mob-modal">
+            <div className="mob-card-label">Add to my team</div>
+            <div className="mob-person-name">{profileName(confirmAdd)}</div>
+            <div className="mob-sub">Confirm add this user to your team?</div>
+            <button
+              className="mob-btn"
+              disabled={busy === confirmAdd.id}
+              onClick={() => {
+                const who = confirmAdd
+                setConfirmAdd(null)
+                claim(who)
+              }}
+            >
+              Yes, add to my team
+            </button>
+            <button className="mob-btn ghost" onClick={() => setConfirmAdd(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {notice && (
         <div className="mob-modal-wrap" role="dialog" aria-modal="true">
           <div className="mob-modal">
