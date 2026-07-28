@@ -1157,12 +1157,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 
 /* Approvals queue chips + action buttons */
-.mob-queue-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.mob-queue-chips { display: flex; gap: 0.35rem; }
+/* One row, the three states sharing the width evenly — they are a tally,
+   so an even split says none of them is the odd one out. */
 .mob-queue-chips button {
   appearance: none; border: none; cursor: pointer;
+  flex: 1 1 0; min-width: 0;
   background: #eef0f4; color: var(--muted); border-radius: 999px;
-  padding: 0.35rem 0.7rem; font-size: 0.72rem; font-weight: 700;
-  white-space: nowrap;
+  padding: 0.35rem 0.4rem; font-size: 0.72rem; font-weight: 700;
+  white-space: nowrap; text-align: center;
 }
 .mob-queue-chips button.on { background: var(--accent-strong); color: #fff; }
 .mob-btn.approve {
@@ -2350,3 +2353,41 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
     border-right: none; border-bottom: 1px solid var(--border); justify-content: flex-start;
   }
 }
+
+/* Today's row in a week chart — the day you are standing on, so the
+   numbers either side of it read as before and after. */
+.mob-barrow.today .lbl { color: var(--accent-strong); font-weight: 800; white-space: nowrap; }
+.mob-barrow.today .val { color: var(--accent-strong); font-weight: 800; }
+.mob-barrow.today .mob-bartrack { box-shadow: 0 0 0 1px var(--accent-strong); }
+
+/* A record waiting on you: whose it is (station tag, tier tag, name),
+   what it is, and the step it is at — then tap through to decide. */
+.mob-review {
+  appearance: none; border: 1px solid #e3e7ec; cursor: pointer;
+  background: #fff; border-radius: 14px; padding: 0.6rem 0.7rem;
+  display: flex; flex-direction: column; gap: 0.3rem; text-align: left; width: 100%;
+  font-family: inherit;
+}
+.mob-review:hover { border-color: var(--accent-strong); }
+.mob-review-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.mob-review-tags .tagbadge { font-size: 0.62rem; padding: 0.05rem 0.4rem; }
+.mob-review-name { font-weight: 800; font-size: 0.85rem; }
+.mob-review-line { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; }
+.mob-review-go {
+  align-self: flex-end; font-size: 0.7rem; font-weight: 800; color: var(--accent-strong);
+}
+
+/* Submitted parameters, one row per stamp: when, how much, at what rate,
+   and the photo that backs it. */
+.mob-paramrows { display: flex; flex-direction: column; gap: 0.3rem; }
+.mob-paramrow {
+  display: grid; grid-template-columns: 3.4rem 1fr 1fr 2.6rem;
+  align-items: center; gap: 0.4rem;
+  font-size: 0.72rem; padding: 0.25rem 0; border-top: 1px solid #eef0f4;
+}
+.mob-paramrow:first-child { border-top: none; }
+.mob-paramrow-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mob-paramrow-qty { font-weight: 700; }
+.mob-paramrow-rate { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mob-paramrow-photo { justify-self: end; }
+.mob-photo.sm { width: 34px; height: 34px; object-fit: cover; border-radius: 7px; }
