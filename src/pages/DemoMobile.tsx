@@ -4068,8 +4068,58 @@ function TeamTab({
    * station not yet in one. Built once and rendered either inline under a
    * station button (from above) or straight out (at station level).
    */
+  /** The move toggle — a hand, because what it does is pick people up. */
+  const MoveButton = () => (
+    <button
+      className={`mob-icon-btn corner ${moveMode ? 'on' : ''}`}
+      onClick={() => {
+        setMoveMode((v) => !v)
+        setStaged(new Map())
+      }}
+      title={moveMode ? 'Done moving' : 'Move people between tiers'}
+      aria-label={moveMode ? 'Done moving' : 'Move people between tiers'}
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 11.5V6a1.5 1.5 0 0 1 3 0v5" />
+        <path d="M12 11V4.6a1.5 1.5 0 0 1 3 0V11" />
+        <path d="M15 11V6.8a1.5 1.5 0 0 1 3 0V13" />
+        <path d="M9 11.5v-1.8a1.5 1.5 0 0 0-3 0v4.6c0 3.6 2.6 6.2 6.2 6.2h.6a5.2 5.2 0 0 0 5.2-5.2V13" />
+      </svg>
+    </button>
+  )
+
   const board = (
     <>
+      {canManageTeam && (
+        <div className={`mob-movebar ${moveMode ? 'on' : ''}`}>
+          <MoveButton />
+          <span className="mob-sub">
+            {!moveMode
+              ? 'Move people'
+              : staged.size === 0
+                ? 'Drag a name onto another tier'
+                : `${staged.size} move${staged.size === 1 ? '' : 's'} ready`}
+          </span>
+          {moveMode && (
+            <>
+              <button className="mob-mini" disabled={staged.size === 0 || busy === 'save-moves'} onClick={saveMoves}>
+                Save
+              </button>
+              <button
+                className="mob-mini"
+                onClick={() => {
+                  setStaged(new Map())
+                  setMoveMode(false)
+                }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {headTier && (
         <div className="mob-lane static">
           <div className="mob-lane-head">
@@ -4085,35 +4135,6 @@ function TeamTab({
               </div>
             ))
           )}
-        </div>
-      )}
-
-      {draftName != null && (
-        <div className="mob-newteam">
-          <input
-            className="mob-input"
-            autoFocus
-            placeholder="Team name"
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') saveTeam()
-              if (e.key === 'Escape') setDraftName(null)
-            }}
-          />
-          <div className="row-form">
-            <button
-              className="mob-btn"
-              style={{ flex: 1 }}
-              disabled={!draftName.trim() || busy === 'new-team'}
-              onClick={saveTeam}
-            >
-              Save
-            </button>
-            <button className="mob-btn ghost" style={{ flex: 1 }} onClick={() => setDraftName(null)}>
-              Cancel
-            </button>
-          </div>
         </div>
       )}
 
@@ -4134,6 +4155,41 @@ function TeamTab({
               </div>
             ))}
 
+            {/* Naming the new team happens in its own column, where the
+                team itself will be. */}
+            {draftName != null && (
+              <div className="mob-teamcol draft">
+                <div className="mob-teamcol-name">New team</div>
+                <input
+                  className="mob-input"
+                  autoFocus
+                  placeholder="Team name"
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveTeam()
+                    if (e.key === 'Escape') setDraftName(null)
+                  }}
+                />
+                <button
+                  className="mob-mini"
+                  disabled={!draftName.trim() || busy === 'new-team'}
+                  onClick={saveTeam}
+                >
+                  Save
+                </button>
+                <button className="mob-mini" onClick={() => setDraftName(null)}>Cancel</button>
+              </div>
+            )}
+
+            {/* A thin column at the end of the row: the place a new team
+                would go, shaped like one. */}
+            {canCreateTeam && canManageTeam && draftName == null && (
+              <button className="mob-teamcol add" onClick={() => setDraftName('')} aria-label="Add new team">
+                <span aria-hidden="true">+</span>
+              </button>
+            )}
+
             {looseMembers.length > 0 && (
               <div className="mob-teamcol loose">
                 <div className="mob-teamcol-name">Not in a team yet</div>
@@ -4148,10 +4204,6 @@ function TeamTab({
               </div>
             )}
           </div>
-
-          {teamColumns.length === 0 && draftName == null && (
-            <div className="mob-sub">No teams yet — use + to make one.</div>
-          )}
 
           {teamColumns.length > 1 && (
             <div className="mob-teamnav">
@@ -4228,66 +4280,10 @@ function TeamTab({
             At station level and below it is your own line and your own
             people, as before. */}
         <div className="mob-card">
-          <div className="mob-card-label">
+          <div className={`mob-card-label ${hasHeadRow ? 'centred' : ''}`}>
             <span>{hasHeadRow ? 'Stations' : 'My Team'}</span>
-            {hasHeadRow && <span className="mob-chip">{myStations.length}</span>}
-            {!hasHeadRow && myTeam.length > 0 && <span className="mob-chip">{myTeam.length}</span>}
-            {canManageTeam && (
-              <button
-                className={`mob-icon-btn corner ${moveMode ? 'on' : ''}`}
-                onClick={() => {
-                  setMoveMode((v) => !v)
-                  setStaged(new Map())
-                }}
-                title={moveMode ? 'Done moving' : 'Move people between tiers'}
-                aria-label={moveMode ? 'Done moving' : 'Move people between tiers'}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 9l-3 3 3 3M19 9l3 3-3 3M9 5l3-3 3 3M9 19l3 3 3-3" />
-                  <path d="M2 12h20M12 2v20" />
-                </svg>
-              </button>
-            )}
-            {runsTeams && canCreateTeam && (!hasHeadRow || activeStation) && (
-              <button
-                className="mob-icon-btn corner"
-                onClick={() => setDraftName('')}
-                title="Add new team"
-                aria-label="Add new team"
-              >
-                +
-              </button>
-            )}
+            {!hasHeadRow && canManageTeam && <MoveButton />}
           </div>
-
-          {/* Moving is a mode with an end: drag as many people as needed,
-              nothing is written until Save. */}
-          {moveMode && (
-            <div className="mob-movebar">
-              <span className="mob-sub">
-                {staged.size === 0
-                  ? 'Drag a name onto another tier'
-                  : `${staged.size} move${staged.size === 1 ? '' : 's'} ready`}
-              </span>
-              <button
-                className="mob-mini"
-                disabled={staged.size === 0 || busy === 'save-moves'}
-                onClick={saveMoves}
-              >
-                Save
-              </button>
-              <button
-                className="mob-mini"
-                onClick={() => {
-                  setStaged(new Map())
-                  setMoveMode(false)
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          )}
 
           {loading ? (
             <div className="mob-sub">Loading…</div>
@@ -4298,28 +4294,13 @@ function TeamTab({
               )}
               {myStations.map((st) => {
                 const open = pickedStation === st.id
-                const heads = stationTier
-                  ? people.filter((p) => {
-                      const ids = p.station_ids && p.station_ids.length > 0
-                        ? p.station_ids
-                        : p.station_id ? [p.station_id] : []
-                      return p.grade_id === stationTier.id && ids.includes(st.id)
-                    })
-                  : []
-                const nTeams = teams.filter((t) => t.station_id === st.id).length
                 return (
                   <div key={st.id}>
                     <button
                       className={`mob-lineitem ${open ? 'open' : ''}`}
                       onClick={() => setPickedStation(open ? null : st.id)}
                     >
-                      <span>
-                        <span className="mob-person-name">{st.name}</span>
-                        <span className="mob-station-meta" style={{ display: 'block' }}>
-                          {heads.length > 0 ? heads.map(profileName).join(', ') : 'No head yet'}
-                          {' · '}{nTeams} team{nTeams === 1 ? '' : 's'}
-                        </span>
-                      </span>
+                      <span className="mob-person-name">{st.name}</span>
                       <span className={`mob-caret ${open ? 'open' : ''}`}>›</span>
                     </button>
                     {open && <div className="mob-expand">{board}</div>}
