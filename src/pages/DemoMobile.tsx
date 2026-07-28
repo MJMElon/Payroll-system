@@ -51,14 +51,6 @@ const ADMIN_TIER_ORDER = 1
  */
 const ADMIN_TIER_NAMES = /^(admin|administrator|management)$/i
 
-/**
- * How long a name must be held before it can be moved. Nothing on this
- * board should shift because a thumb brushed it while scrolling, so a move
- * has to be asked for: hold, the name starts shaking the way an iPhone
- * home screen does, and only then does it lift.
- */
-const HOLD_TO_MOVE_MS = 5000
-
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
 // A tiered piece rate (e.g. cage tipping) pays Tier 1 for the first N units
@@ -3585,10 +3577,11 @@ function TeamTab({
   const [pickedStation, setPickedStation] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
-  // The name that has been held long enough to be moved — it shakes until
-  // it is dropped or let go.
-  const [armedId, setArmedId] = useState<string | null>(null)
-  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Moving is a MODE, entered from the move button beside +. Inside it a
+  // name drags straight away and nothing is written until Save, so a
+  // reshuffle is one decision rather than a write per drag.
+  const [moveMode, setMoveMode] = useState(false)
+  const [staged, setStaged] = useState<Map<string, { gradeId: string; teamId: string | null }>>(new Map())
   const [overGrade, setOverGrade] = useState<string | null>(null)
 
   async function load() {
@@ -3661,7 +3654,6 @@ function TeamTab({
         .filter((g) => g.sort_order < tier.sort_order)
         .sort((a, b) => b.sort_order - a.sort_order) // nearest upper first
     : []
-  const chartTop = operatingTiers[0] ?? null
   // Below you — the rungs your own people sit on, and the only ones that
   // can take a drop.
   const lowerTiers = tier ? operatingTiers.filter((g) => g.sort_order > tier.sort_order) : []
@@ -3835,93 +3827,12 @@ function TeamTab({
    * column, they also join that team — the column IS the team, so dropping
    * into it and not joining it would be a lie.
    */
-  /**
-   * Move someone onto a rung. `team` is the column it happened in: null for
-   * the loose column (they answer to me, in no team) and undefined for the
-   * flat layout, where only the tier changes. Landing in a column joins
-   * that team and reports to its head, because the column IS the team.
-   */
-  async function moveTo(p: Profile, g: Grade, team?: Team | null) {
-    const head =
-      team && teamLeaderTier
-        ? people.find((x) => x.team_id === team.id && x.grade_id === teamLeaderTier.id) ?? null
-        : null
-    const nextTeamId = team === undefined ? p.team_id ?? null : team?.id ?? null
-    // The head of a team answers to me, not to themselves.
-    const nextSupervisor =
-      team === undefined
-        ? p.supervisor_id ?? null
-        : head && head.id !== p.id && g.id !== teamLeaderTier?.id
-          ? head.id
-          : profile?.id ?? null
-    if (p.grade_id === g.id && nextTeamId === (p.team_id ?? null) && nextSupervisor === p.supervisor_id) return
-    if (!mayAssign(g)) {
-      setNotice(
-        nextBelow
-          ? `You can only set a tier up to ${nextBelow.name}. Tier above requires a higher permission to do so.`
-          : `There is no tier below ${tier?.name ?? 'yours'}. Tier above requires a higher permission to do so.`,
-      )
-      return
-    }
-    setBusy(p.id)
-    setError(null)
-    const { error: err } = await supabase
-      .from('access_profiles')
-      .update(
-        team === undefined
-          ? { grade_id: g.id }
-          : { grade_id: g.id, supervisor_id: nextSupervisor, team_id: nextTeamId },
-      )
-      .eq('id', p.id)
-    setBusy(null)
-    if (err) return setError(err.message)
-    load()
-  }
-
-  // A drop target is identified by tier AND, inside a team column, by the
-  // team it belongs to — the same tier appears once per column.
-  const dropKey = (g: Grade, teamId?: string | null) => `${teamId ?? 'self'}:${g.id}`
-
-  /**
-   * A team is written only when it is named and saved — the column does not
-   * exist until then. It is created ON the rung that leads it, at my
-   * station, matching how the web board makes one.
-   */
-  async function saveTeam() {
-    const name = (draftName ?? '').trim()
-    if (!name || !teamLeaderTier) return
-    const clash = myTeams.some((t) => t.name.trim().toLowerCase() === name.toLowerCase())
-    if (clash) return setError(`You already have a team called "${name}".`)
-    setBusy('new-team')
-    setError(null)
-    const { error: err } = await supabase.from('teams').insert({
-      name,
-      grade_id: teamLeaderTier.id,
-      station_id: myStationIds[0] ?? null,
-      created_by: profile?.id ?? null,
-      sort_order: myTeams.length,
-    })
-    setBusy(null)
-    if (err) {
-      // Almost always the teams table missing from a half-applied
-      // setup.sql, so say that rather than pass the raw message through.
-      return setError(
-        /relation .*teams.* does not exist/i.test(err.message)
-          ? 'The teams table is not set up yet — run supabase/setup.sql.'
-          : err.message,
-      )
-    }
-    setDraftName(null)
-    load()
-  }
-
   /** Put a claimed sign up straight onto the rung that asked for them. */
   async function addToLane(p: Profile) {
-    if (!adding) return
+    if (!adding || !profile) return
     const target = adding
     setAdding(null)
     const team = target.teamId ? myTeams.find((t) => t.id === target.teamId) ?? null : null
-    if (!profile) return
     setBusy(p.id)
     setError(null)
     const { error: err } = await supabase
@@ -3942,17 +3853,6 @@ function TeamTab({
     load()
   }
 
-  function startHold(id: string) {
-    if (!canManageTeam || busy) return
-    if (holdTimer.current) clearTimeout(holdTimer.current)
-    holdTimer.current = setTimeout(() => setArmedId(id), HOLD_TO_MOVE_MS)
-  }
-  function cancelHold() {
-    if (holdTimer.current) clearTimeout(holdTimer.current)
-    holdTimer.current = null
-  }
-  useEffect(() => cancelHold, [])
-
   /** Step the team scroller one column left or right. */
   function stepTeams(dir: -1 | 1) {
     const el = scrollRef.current
@@ -3962,6 +3862,65 @@ function TeamTab({
     el.scrollBy({ left: dir * step, behavior: 'smooth' })
   }
 
+  // A drop target is identified by tier AND, inside a team column, by the
+  // team it belongs to — the same tier appears once per column.
+  const dropKey = (g: Grade, teamId?: string | null) => `${teamId ?? 'self'}:${g.id}`
+
+  /**
+   * A team is written only when it is named and saved — the column does not
+   * exist until then. It is created ON the rung that leads it, at the
+   * station being looked at.
+   */
+  async function saveTeam() {
+    const name = (draftName ?? '').trim()
+    if (!name || !teamLeaderTier) return
+    const clash = myTeams.some((t) => t.name.trim().toLowerCase() === name.toLowerCase())
+    if (clash) return setError(`This station already has a team called "${name}".`)
+    setBusy('new-team')
+    setError(null)
+    const { error: err } = await supabase.from('teams').insert({
+      name,
+      grade_id: teamLeaderTier.id,
+      station_id: activeStation?.id ?? myStationIds[0] ?? null,
+      created_by: profile?.id ?? null,
+      sort_order: myTeams.length,
+    })
+    setBusy(null)
+    if (err) {
+      return setError(
+        /relation .*teams.* does not exist/i.test(err.message)
+          ? 'The teams table is not set up yet — run supabase/setup.sql.'
+          : err.message,
+      )
+    }
+    setDraftName(null)
+    load()
+  }
+
+  /** Write every staged move in one go, then leave the mode. */
+  async function saveMoves() {
+    if (staged.size === 0) return
+    setBusy('save-moves')
+    setError(null)
+    for (const [id, to] of staged) {
+      const { error: err } = await supabase
+        .from('access_profiles')
+        .update({ grade_id: to.gradeId, team_id: to.teamId })
+        .eq('id', id)
+      if (err) {
+        setBusy(null)
+        return setError(err.message)
+      }
+    }
+    setBusy(null)
+    setStaged(new Map())
+    setMoveMode(false)
+    load()
+  }
+
+  /** Where a person sits once the staged moves are taken into account. */
+  const placedGrade = (p: Profile) => staged.get(p.id)?.gradeId ?? p.grade_id
+
   function dropOn(g: Grade, team?: Team | null) {
     // The dragged person may report to me OR sit in one of my teams, so
     // look across everyone I can reach, not just my direct reports.
@@ -3970,9 +3929,26 @@ function TeamTab({
     )
     const person = reachable.find((p) => p.id === dragId)
     setDragId(null)
-    setArmedId(null)
     setOverGrade(null)
-    if (person) moveTo(person, g, team)
+    if (!person) return
+    if (!mayAssign(g)) {
+      setNotice(
+        nextBelow
+          ? `You can only set a tier up to ${nextBelow.name}. Tier above requires a higher permission to do so.`
+          : `There is no tier below ${tier?.name ?? 'yours'}. Tier above requires a higher permission to do so.`,
+      )
+      return
+    }
+    // Nothing is written mid-reshuffle — the move is remembered and shown,
+    // and Save commits the lot.
+    setStaged((prev) => {
+      const next = new Map(prev)
+      next.set(person.id, {
+        gradeId: g.id,
+        teamId: team === undefined ? person.team_id ?? null : team?.id ?? null,
+      })
+      return next
+    })
   }
 
   /**
@@ -4023,14 +3999,9 @@ function TeamTab({
         ) : (
           members.map((p) => (
             <div
-              className={`mob-member ${dragId === p.id ? 'dragging' : ''} ${armedId === p.id ? 'armed' : ''}`}
+              className={`mob-member ${dragId === p.id ? 'dragging' : ''} ${moveMode ? 'movable' : ''} ${staged.has(p.id) ? 'staged' : ''}`}
               key={p.id}
-              draggable={canManageTeam && !busy && armedId === p.id}
-              onPointerDown={() => startHold(p.id)}
-              onPointerUp={cancelHold}
-              onPointerLeave={cancelHold}
-              onPointerCancel={cancelHold}
-              onContextMenu={(e) => e.preventDefault()}
+              draggable={moveMode && !busy}
               onDragStart={(e) => {
                 setDragId(p.id)
                 e.dataTransfer.effectAllowed = 'move'
@@ -4038,11 +4009,10 @@ function TeamTab({
               }}
               onDragEnd={() => {
                 setDragId(null)
-                setArmedId(null)
                 setOverGrade(null)
               }}
             >
-              {canManageTeam && <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>}
+              {moveMode && <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>}
               <span className="mob-person-name">{profileName(p)}</span>
             </div>
           ))
@@ -4090,6 +4060,115 @@ function TeamTab({
       </span>
       {me && <span className="mob-chip ok">You</span>}
     </div>
+  )
+
+  /**
+   * The structure under a station: who heads it, then a column per team
+   * with that team's leader and people, and a column for anyone at the
+   * station not yet in one. Built once and rendered either inline under a
+   * station button (from above) or straight out (at station level).
+   */
+  const board = (
+    <>
+      {headTier && (
+        <div className="mob-lane static">
+          <div className="mob-lane-head">
+            <span className={`tag-dot dot-${headTier.color}`} aria-hidden="true" />
+            <span className="mob-lane-name">{headTier.name}</span>
+          </div>
+          {stationHeads.length === 0 ? (
+            <div className="mob-lane-empty">Nobody yet</div>
+          ) : (
+            stationHeads.map((p) => (
+              <div className="mob-member" key={p.id}>
+                <span className="mob-person-name">{profileName(p)}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {draftName != null && (
+        <div className="mob-newteam">
+          <input
+            className="mob-input"
+            autoFocus
+            placeholder="Team name"
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') saveTeam()
+              if (e.key === 'Escape') setDraftName(null)
+            }}
+          />
+          <div className="row-form">
+            <button
+              className="mob-btn"
+              style={{ flex: 1 }}
+              disabled={!draftName.trim() || busy === 'new-team'}
+              onClick={saveTeam}
+            >
+              Save
+            </button>
+            <button className="mob-btn ghost" style={{ flex: 1 }} onClick={() => setDraftName(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {runsTeams ? (
+        <>
+          <div className="mob-teamscroll" ref={scrollRef}>
+            {teamColumns.map((col) => (
+              <div className="mob-teamcol" key={col.key}>
+                <div className="mob-teamcol-name">{col.name}</div>
+                {memberTiers.map((g) => (
+                  <Lane
+                    key={g.id}
+                    grade={g}
+                    team={col.team}
+                    members={col.members.filter((p) => placedGrade(p) === g.id)}
+                  />
+                ))}
+              </div>
+            ))}
+
+            {looseMembers.length > 0 && (
+              <div className="mob-teamcol loose">
+                <div className="mob-teamcol-name">Not in a team yet</div>
+                {memberTiers.map((g) => (
+                  <Lane
+                    key={g.id}
+                    grade={g}
+                    team={null}
+                    members={looseMembers.filter((p) => placedGrade(p) === g.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {teamColumns.length === 0 && draftName == null && (
+            <div className="mob-sub">No teams yet — use + to make one.</div>
+          )}
+
+          {teamColumns.length > 1 && (
+            <div className="mob-teamnav">
+              <button className="mob-mini" aria-label="Previous team" onClick={() => stepTeams(-1)}>‹</button>
+              <span className="mob-sub">{teamColumns.length} teams</span>
+              <button className="mob-mini" aria-label="Next team" onClick={() => stepTeams(1)}>›</button>
+            </div>
+          )}
+        </>
+      ) : (
+        memberTiers.map((g) => {
+          const members = myTeam.filter((p) => placedGrade(p) === g.id)
+          if (!canManageTeam && members.length === 0) return null
+          return <Lane key={g.id} grade={g} team={undefined} members={members} />
+        })
+      )}
+    </>
   )
 
   return (
@@ -4143,21 +4222,34 @@ function TeamTab({
           </div>
         )}
 
-        {/* 2 — ONE chart. The line above you, then you, then your own
-            people arranged on the tiers below — the rungs above are not
-            repeated as empty lanes, they are already drawn above you. */}
+        {/* 2 — the board. Above station level it is a list of stations
+            that open in place: tap one and its structure unfolds under
+            the button, the other stations still listed above and below.
+            At station level and below it is your own line and your own
+            people, as before. */}
         <div className="mob-card">
-          {/* Drilled into a station from above: leaving is a row of its own,
-              not a word tucked beside the station's name. */}
-          {activeStation && (hasHeadRow || myStations.length > 1) && (
-            <button className="mob-backrow" onClick={() => setPickedStation(null)}>
-              ‹ All stations
-            </button>
-          )}
           <div className="mob-card-label">
-            <span>{hasHeadRow && !activeStation ? 'Stations' : 'My Team'}</span>
-            {myTeam.length > 0 && !hasHeadRow && <span className="mob-chip">{myTeam.length}</span>}
-            {runsTeams && canCreateTeam && activeStation && (
+            <span>{hasHeadRow ? 'Stations' : 'My Team'}</span>
+            {hasHeadRow && <span className="mob-chip">{myStations.length}</span>}
+            {!hasHeadRow && myTeam.length > 0 && <span className="mob-chip">{myTeam.length}</span>}
+            {canManageTeam && (
+              <button
+                className={`mob-icon-btn corner ${moveMode ? 'on' : ''}`}
+                onClick={() => {
+                  setMoveMode((v) => !v)
+                  setStaged(new Map())
+                }}
+                title={moveMode ? 'Done moving' : 'Move people between tiers'}
+                aria-label={moveMode ? 'Done moving' : 'Move people between tiers'}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 9l-3 3 3 3M19 9l3 3-3 3M9 5l3-3 3 3M9 19l3 3 3-3" />
+                  <path d="M2 12h20M12 2v20" />
+                </svg>
+              </button>
+            )}
+            {runsTeams && canCreateTeam && (!hasHeadRow || activeStation) && (
               <button
                 className="mob-icon-btn corner"
                 onClick={() => setDraftName('')}
@@ -4168,64 +4260,79 @@ function TeamTab({
               </button>
             )}
           </div>
-          <div className="mob-chart-where">
-            {activeStation ? (
-              <>
-                {myStations.length > 1 && (
-                  <button className="mob-back" onClick={() => setPickedStation(null)}>‹ Stations</button>
-                )}
-                <span className="mob-chart-station">{activeStation.name}</span>
-              </>
-            ) : (
-              <span className="mob-chart-station">{myStationName}</span>
-            )}
-            {!headTier && <span className="mob-station-meta">{myTeamName}</span>}
-          </div>
 
-          {/* Above station level the tab opens on the stations covered —
-              pick one to see its head, its teams and their people. */}
-          {!activeStation && !loading && (
-            <>
-              {myStations.length === 0 && (
-                <div className="mob-sub">No stations tagged to you yet.</div>
-              )}
-              {myStations.map((st) => {
-                const heads = headTier
-                  ? people.filter((p) => {
-                      const ids = p.station_ids && p.station_ids.length > 0
-                        ? p.station_ids
-                        : p.station_id ? [p.station_id] : []
-                      return p.grade_id === headTier.id && ids.includes(st.id)
-                    })
-                  : []
-                const count = teams.filter((t) => t.station_id === st.id).length
-                return (
-                  <button className="mob-lineitem" key={st.id} onClick={() => setPickedStation(st.id)}>
-                    <span>
-                      <span className="mob-person-name">{st.name}</span>
-                      <span className="mob-station-meta" style={{ display: 'block' }}>
-                        {heads.length > 0 ? heads.map(profileName).join(', ') : 'No head yet'}
-                        {' · '}{count} team{count === 1 ? '' : 's'}
-                      </span>
-                    </span>
-                    <span className="mob-caret">›</span>
-                  </button>
-                )
-              })}
-            </>
+          {/* Moving is a mode with an end: drag as many people as needed,
+              nothing is written until Save. */}
+          {moveMode && (
+            <div className="mob-movebar">
+              <span className="mob-sub">
+                {staged.size === 0
+                  ? 'Drag a name onto another tier'
+                  : `${staged.size} move${staged.size === 1 ? '' : 's'} ready`}
+              </span>
+              <button
+                className="mob-mini"
+                disabled={staged.size === 0 || busy === 'save-moves'}
+                onClick={saveMoves}
+              >
+                Save
+              </button>
+              <button
+                className="mob-mini"
+                onClick={() => {
+                  setStaged(new Map())
+                  setMoveMode(false)
+                }}
+              >
+                Cancel
+              </button>
+            </div>
           )}
 
           {loading ? (
             <div className="mob-sub">Loading…</div>
+          ) : hasHeadRow ? (
+            <>
+              {myStations.length === 0 && (
+                <div className="mob-sub">No stations yet.</div>
+              )}
+              {myStations.map((st) => {
+                const open = pickedStation === st.id
+                const heads = stationTier
+                  ? people.filter((p) => {
+                      const ids = p.station_ids && p.station_ids.length > 0
+                        ? p.station_ids
+                        : p.station_id ? [p.station_id] : []
+                      return p.grade_id === stationTier.id && ids.includes(st.id)
+                    })
+                  : []
+                const nTeams = teams.filter((t) => t.station_id === st.id).length
+                return (
+                  <div key={st.id}>
+                    <button
+                      className={`mob-lineitem ${open ? 'open' : ''}`}
+                      onClick={() => setPickedStation(open ? null : st.id)}
+                    >
+                      <span>
+                        <span className="mob-person-name">{st.name}</span>
+                        <span className="mob-station-meta" style={{ display: 'block' }}>
+                          {heads.length > 0 ? heads.map(profileName).join(', ') : 'No head yet'}
+                          {' · '}{nTeams} team{nTeams === 1 ? '' : 's'}
+                        </span>
+                      </span>
+                      <span className={`mob-caret ${open ? 'open' : ''}`}>›</span>
+                    </button>
+                    {open && <div className="mob-expand">{board}</div>}
+                  </div>
+                )
+              })}
+            </>
           ) : (
             <>
-              {/* Above station level your own line is not the subject —
-                  the stations are — so the chart of yourself is skipped
-                  and the board opens straight onto them. */}
-              {!hasHeadRow && (
-              <>
-              {/* Above you, and you. These accept a drop only to explain
-                  why they cannot take one. */}
+              <div className="mob-chart-where">
+                <span className="mob-chart-station">{myStationName}</span>
+                <span className="mob-station-meta">{myTeamName}</span>
+              </div>
               <div className="mob-org">
                 {[...upperTiers].reverse().map((g) => {
                   const person = holderOf(g)
@@ -4239,134 +4346,10 @@ function TeamTab({
                   )
                 })}
                 {tier && (
-                  <Node
-                    grade={tier}
-                    label={profileName(profile)}
-                    me
-                    onDropHere={() => dropOn(tier)}
-                  />
+                  <Node grade={tier} label={profileName(profile)} me onDropHere={() => dropOn(tier)} />
                 )}
               </div>
-
-              {upperTiers.length === 0 && (
-                <div className="mob-sub">
-                  {tier
-                    ? `The ${tier.name} tier sits at or above ${chartTop?.name ?? 'the top of the chart'} — nothing above it here.`
-                    : 'No tier selected.'}
-                </div>
-              )}
-              </>
-              )}
-
-              {/* Below you. One column per team — swipe, or step with the
-                  arrows — and a plain set of lanes when teams are not run
-                  from this tier. */}
-              {activeStation && (runsTeams ? (
-                <>
-                  {/* Who heads this station, when that is not the reader. */}
-                  {headTier && (
-                    <div className="mob-lane static">
-                      <div className="mob-lane-head">
-                        <span className={`tag-dot dot-${headTier.color}`} aria-hidden="true" />
-                        <span className="mob-lane-name">{headTier.name}</span>
-                      </div>
-                      {stationHeads.length === 0 ? (
-                        <div className="mob-lane-empty">Nobody yet</div>
-                      ) : (
-                        stationHeads.map((p) => (
-                          <div className="mob-member" key={p.id}>
-                            <span className="mob-person-name">{profileName(p)}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-
-                  {draftName != null && (
-                    <div className="mob-newteam">
-                      <input
-                        className="mob-input"
-                        autoFocus
-                        placeholder="Team name"
-                        value={draftName}
-                        onChange={(e) => setDraftName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveTeam()
-                          if (e.key === 'Escape') setDraftName(null)
-                        }}
-                      />
-                      <div className="row-form">
-                        <button
-                          className="mob-btn"
-                          style={{ flex: 1 }}
-                          disabled={!draftName.trim() || busy === 'new-team'}
-                          onClick={saveTeam}
-                        >
-                          Save
-                        </button>
-                        <button
-                          className="mob-btn ghost"
-                          style={{ flex: 1 }}
-                          onClick={() => setDraftName(null)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mob-teamscroll" ref={scrollRef}>
-                    {teamColumns.map((col) => (
-                      <div className="mob-teamcol" key={col.key}>
-                        <div className="mob-teamcol-name">{col.name}</div>
-                        {memberTiers.map((g) => (
-                          <Lane
-                            key={g.id}
-                            grade={g}
-                            team={col.team}
-                            members={col.members.filter((p) => p.grade_id === g.id)}
-                          />
-                        ))}
-                      </div>
-                    ))}
-
-                    {looseMembers.length > 0 && (
-                      <div className="mob-teamcol loose">
-                        <div className="mob-teamcol-name">Not in a team yet</div>
-                        {memberTiers.map((g) => (
-                          <Lane
-                            key={g.id}
-                            grade={g}
-                            team={null}
-                            members={looseMembers.filter((p) => p.grade_id === g.id)}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {teamColumns.length === 0 && draftName == null && (
-                    <div className="mob-sub">No teams yet — use + to make one.</div>
-                  )}
-
-                  {teamColumns.length > 1 && (
-                    <div className="mob-teamnav">
-                      <button className="mob-mini" aria-label="Previous team" onClick={() => stepTeams(-1)}>‹</button>
-                      <span className="mob-sub">
-                        {teamColumns.length} team{teamColumns.length === 1 ? '' : 's'}
-                      </span>
-                      <button className="mob-mini" aria-label="Next team" onClick={() => stepTeams(1)}>›</button>
-                    </div>
-                  )}
-                </>
-              ) : (
-                memberTiers.map((g) => {
-                  const members = myTeam.filter((p) => p.grade_id === g.id)
-                  if (!canManageTeam && members.length === 0) return null
-                  return <Lane key={g.id} grade={g} team={undefined} members={members} />
-                })
-              ))}
-
+              {board}
             </>
           )}
         </div>

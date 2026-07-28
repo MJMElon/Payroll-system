@@ -919,19 +919,27 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   box-shadow: 0 1px 2px rgba(10, 40, 28, 0.06); cursor: grab;
 }
 .mob-member.dragging { opacity: 0.45; cursor: grabbing; }
-/* Held long enough to be moved. The wobble is the whole signal — until a
-   name does this, nothing on the board can be dragged. */
-@keyframes mob-wobble {
-  0%, 100% { transform: rotate(-1.1deg); }
-  50% { transform: rotate(1.1deg); }
+/* In move mode a name lifts straight away — the mode is the permission,
+   so there is nothing to hold. A staged move shows until it is saved. */
+.mob-member.movable { cursor: grab; box-shadow: 0 0 0 1px #dfe4ea; }
+.mob-member.staged { box-shadow: 0 0 0 1.5px var(--accent-strong); background: var(--accent-soft); }
+
+/* The move mode's own bar: what is pending, and the way to commit it. */
+.mob-movebar {
+  display: flex; align-items: center; gap: 0.4rem;
+  background: var(--accent-soft); border-radius: 10px; padding: 0.35rem 0.5rem;
 }
-.mob-member.armed {
-  animation: mob-wobble 0.22s ease-in-out infinite;
-  box-shadow: 0 0 0 1.5px var(--accent-strong), 0 3px 8px rgba(10, 40, 28, 0.14);
+.mob-movebar .mob-sub { flex: 1; color: var(--accent-strong); font-weight: 700; }
+.mob-icon-btn.on { background: var(--accent-strong); color: #fff; }
+
+/* A station opened in place, its structure under its own button. */
+.mob-expand {
+  display: flex; flex-direction: column; gap: 0.45rem;
+  padding: 0.5rem 0 0.6rem 0.5rem; margin-left: 0.2rem;
+  border-left: 2px solid var(--accent-soft);
 }
-@media (prefers-reduced-motion: reduce) {
-  .mob-member.armed { animation: none; }
-}
+.mob-lineitem.open { background: var(--accent-soft); }
+.mob-lineitem .mob-caret.open { transform: rotate(90deg); }
 /* A press-and-hold must not turn into a text selection or a magnifier. */
 .mob-member { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
 .mob-member-grip { color: #c3cad2; font-size: 0.75rem; letter-spacing: -2px; flex: none; }
