@@ -807,6 +807,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-lineitem:first-of-type { border-top: none; }
 .mob-lineitem .mob-person-name { font-size: 0.86rem; }
+
+/* A station is the heading of everything under it, so its row is given
+   room to sit as one — and carries the move control once it is open. */
+.mob-stationrow {
+  display: flex; align-items: center; gap: 0.3rem;
+  border-top: 1px solid #eef0f4; border-radius: 10px;
+}
+.mob-stationrow:first-of-type { border-top: none; }
+.mob-stationrow .mob-lineitem {
+  flex: 1; border-top: none; padding: 0.75rem 0.4rem;
+}
+.mob-stationrow.open { background: var(--accent-soft); }
+.mob-stationrow.open .mob-lineitem:hover { background: none; }
+.mob-stationrow .mob-icon-btn.corner { margin-right: 0.35rem; }
 .mob-lineitem:hover { background: #f6f8fa; }
 
 /* Profile — the selfie. The whole circle is the button, with a camera
@@ -966,7 +980,6 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   padding: 0.5rem 0 0.6rem 0.5rem; margin-left: 0.2rem;
   border-left: 2px solid var(--accent-soft);
 }
-.mob-lineitem.open { background: var(--accent-soft); }
 .mob-lineitem .mob-caret.open { transform: rotate(90deg); }
 /* A press-and-hold must not turn into a text selection or a magnifier. */
 .mob-member { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }

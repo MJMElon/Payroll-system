@@ -1511,3 +1511,28 @@ update public.grades g set capabilities = g.capabilities || '{team-create}'
 update public.grades set capabilities =
   '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,team-create,worker-edit,worker-salary,station-create}'
   where sort_order = 1;
+
+-- ---------------------------------------------------------------------------
+-- A person's own Worker ID and phone number, edited from the mobile Profile
+-- tab. Same narrow door as set_my_avatar(), and for the same reason: a row
+-- policy cannot be limited to a couple of columns, so "update your own row"
+-- would also be "rewrite your own tier and salary". This touches exactly
+-- these two columns, always for the caller.
+--
+-- Email is deliberately not here — it is the account itself, and changing
+-- the profile copy would not change how anybody signs in.
+-- ---------------------------------------------------------------------------
+create or replace function public.set_my_details(code text, phone_no text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.access_profiles
+     set employee_code = nullif(btrim(coalesce(code, '')), ''),
+         phone = nullif(btrim(coalesce(phone_no, '')), '')
+   where id = auth.uid();
+$$;
+
+revoke all on function public.set_my_details(text, text) from public;
+grant execute on function public.set_my_details(text, text) to authenticated;
