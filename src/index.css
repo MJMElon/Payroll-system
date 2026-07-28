@@ -700,6 +700,51 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   text-transform: uppercase; color: var(--accent-strong);
 }
 
+/* Performance — a bar row you can tap through to the station behind it.
+   Font size is restated because a <button> would otherwise reset it and
+   swamp the row. */
+.mob-barrow.tappable {
+  appearance: none; background: none; border: none; cursor: pointer;
+  padding: 0.15rem 0.1rem; width: 100%; border-radius: 8px;
+  font-family: inherit; font-size: 0.7rem; color: var(--muted);
+  text-align: left;
+}
+.mob-barrow.tappable:hover { background: #f6f8fa; }
+/* Station names need the room; the tally beside them is short. */
+.mob-barrow .lbl.station { width: 104px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mob-barrow .val.qty { width: 38px; }
+
+/* The 100%-target scorecard: one track, filled by what was approved and
+   then by what came back rejected. Whatever is left is still in the
+   queue, so the empty remainder is the "waiting" slice by construction. */
+.mob-scorebar {
+  display: flex; height: 12px; border-radius: 999px; overflow: hidden;
+  background: #eef0f4; margin: 0.15rem 0 0.1rem;
+}
+.mob-scorebar > .done { background: linear-gradient(90deg, #15803d, #22c55e); }
+.mob-scorebar > .bad { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+.mob-scorekey {
+  display: flex; flex-wrap: wrap; gap: 0.15rem 0.7rem;
+  font-size: 0.7rem; color: var(--muted);
+}
+.mob-scorekey span { display: flex; align-items: center; gap: 0.3rem; }
+.mob-scorekey strong { color: var(--text); font-weight: 800; }
+.mob-scorekey .dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
+.mob-scorekey .dot.done { background: #22c55e; }
+.mob-scorekey .dot.bad { background: #ef4444; }
+.mob-scorekey .dot.wait { background: #cbd2da; }
+
+/* A tappable row inside a card — name on the left, value and chevron
+   on the right. */
+.mob-lineitem {
+  appearance: none; background: none; border: none; cursor: pointer;
+  font: inherit; color: inherit; text-align: left; width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.4rem 0.2rem; border-top: 1px solid #eef0f4; border-radius: 8px;
+}
+.mob-lineitem:first-of-type { border-top: none; }
+.mob-lineitem:hover { background: #f6f8fa; }
+
 /* Profile — the selfie. The whole circle is the button, with a camera
    badge so it reads as replaceable rather than decorative. */
 .mob-avatar-btn {

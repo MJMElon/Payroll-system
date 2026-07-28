@@ -697,9 +697,6 @@ function PerformanceTab({
     return () => clearInterval(t)
   }, [canEntry, profileId])
 
-  const myMonthEntries = myEntries.filter(
-    (e) => e.work_date >= monthStart && e.approval_status !== 'rejected',
-  )
   const needsFix = myEntries.filter((e) => e.approval_status === 'rejected').length
 
   // This week's daily quantity (Mon–Sun).
@@ -861,6 +858,34 @@ function PerformanceTab({
     return { workers, output, pct }
   }
   const totalOutput = stations.reduce((s, st) => s + statFor(st.id).output, 0)
+
+  // TODAY, per station. There is no daily target to measure against (a
+  // station's target is per hour, and how many hours it ran is not known
+  // here), so the bar compares the stations with each other and the number
+  // beside it is the real output.
+  const todayStatFor = (sid: string) => {
+    const rows = entries.filter((e) => e.station_id === sid && e.work_date === todayISO())
+    return {
+      workers: new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size,
+      output: rows.reduce((s, e) => s + e.quantity, 0),
+    }
+  }
+  const todayByStation = stations.map((s) => ({ station: s, ...todayStatFor(s.id) }))
+  const busiestToday = Math.max(1, ...todayByStation.map((s) => s.output))
+  const outputToday = todayByStation.reduce((s, x) => s + x.output, 0)
+
+  // My own scorecard, against a target of everything I submit ending up
+  // approved. Measured over the month, not today: work submitted today is
+  // still in the queue, so a daily reading would sit near 0% every morning
+  // and say nothing about how the person is actually doing.
+  const myMonthAll = myEntries.filter((e) => e.work_date >= monthStart)
+  const myStat = (k: string) => myMonthAll.filter((e) => (e.approval_status ?? 'approved') === k).length
+  const myDone = myStat('approved')
+  const myRejected = myStat('rejected')
+  const pctOf = (n: number) => (myMonthAll.length > 0 ? Math.round((n / myMonthAll.length) * 100) : 0)
+  const donePct = pctOf(myDone)
+  const rejectedPct = pctOf(myRejected)
+  const waitingPct = Math.max(0, 100 - donePct - rejectedPct)
   const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
   const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
   const compliance = scopedRows.length > 0 ? Math.round((doneAll / scopedRows.length) * 100) : null
@@ -879,12 +904,59 @@ function PerformanceTab({
           <div className="mob-sub">{monthLabel} · {scoped ? 'your stations' : 'all stations'}</div>
         </div>
 
+        {/* 1 — how the floor is running TODAY. Tap a station for its records. */}
+        <div className="mob-card">
+          <div className="mob-card-label">Station performance · today</div>
+          <div className="mob-sub">
+            {fmtQty(outputToday)} output across {todayByStation.filter((s) => s.output > 0).length} of{' '}
+            {stations.length} station{stations.length === 1 ? '' : 's'}
+          </div>
+          {stations.length === 0 && (
+            <div className="mob-sub">No stations for your tags yet — set station tags in Settings.</div>
+          )}
+          <div className="mob-bars">
+            {todayByStation.map(({ station: s, output }) => (
+              <button className="mob-barrow tappable" key={s.id} onClick={() => setStation(s)}>
+                <span className="lbl station">{s.name}</span>
+                <span className="mob-bartrack">
+                  <div
+                    className={output > 0 && output === busiestToday ? 'best' : ''}
+                    style={{ width: `${(output / busiestToday) * 100}%` }}
+                  />
+                </span>
+                <span className="val qty">{output > 0 ? fmtQty(output) : '·'}</span>
+              </button>
+            ))}
+          </div>
+          {todayByStation.some((s) => s.workers > 0) && (
+            <div className="mob-sub">
+              {todayByStation.reduce((n, s) => n + s.workers, 0)} working today
+            </div>
+          )}
+        </div>
+
+        {/* 2 — my own scorecard: everything I submit should end up approved. */}
+        {canEntry && (
+          <div className="mob-card">
+            <div className="mob-card-label">My work done · this month</div>
+            <div className="mob-sub">
+              Target 100% · {myMonthAll.length} record{myMonthAll.length === 1 ? '' : 's'} submitted
+            </div>
+            <div className="mob-scorebar" role="img"
+              aria-label={`${donePct}% done, ${rejectedPct}% rejected, ${waitingPct}% waiting`}>
+              <div className="done" style={{ width: `${donePct}%` }} />
+              <div className="bad" style={{ width: `${rejectedPct}%` }} />
+            </div>
+            <div className="mob-scorekey">
+              <span><i className="dot done" />Work done <strong>{donePct}%</strong></span>
+              <span><i className="dot bad" />Rejected <strong>{rejectedPct}%</strong></span>
+              <span><i className="dot wait" />Waiting <strong>{waitingPct}%</strong></span>
+            </div>
+          </div>
+        )}
+
         {canEntry && (
           <>
-            <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
-              My work · {myMonthEntries.length} record{myMonthEntries.length === 1 ? '' : 's'} this month
-            </div>
-
             {needsFix > 0 && (
               <button className="mob-alert" onClick={onMyWork}>
                 ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
@@ -962,7 +1034,7 @@ function PerformanceTab({
                 <div className="mob-bars">
                   {stationPct.map((s) => (
                     <div className="mob-barrow" key={s.id}>
-                      <span className="lbl wide">{s.name}</span>
+                      <span className="lbl station">{s.name}</span>
                       <span className="mob-bartrack">
                         <div className={s.pct! < 80 ? 'best' : ''} style={{ width: `${s.pct}%` }} />
                       </span>
@@ -1028,33 +1100,28 @@ function PerformanceTab({
           </div>
         </div>
 
-        <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Station performance — tap to open records</div>
-        {stations.length === 0 && (
-          <p className="muted small">No stations for your tags yet — set station tags in Settings.</p>
-        )}
-        {stations.map((s) => {
-          const st = statFor(s.id)
-          return (
-            <button className="mob-station perf" key={s.id} onClick={() => setStation(s)}>
-              <span className="perf-top">
-                <span>{s.name}</span>
-                <span className="mob-station-meta">
-                  {st.workers > 0 ? `${st.workers} worker${st.workers === 1 ? '' : 's'} · ` : ''}
-                  {fmtQty(st.output)} output ›
+        {/* Month-to-date per station, below the day's picture. */}
+        <div className="mob-card">
+          <div className="mob-card-label">Station output · this month</div>
+          {stations.map((s) => {
+            const st = statFor(s.id)
+            return (
+              <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
+                <span>
+                  <span className="mob-entry-name">{s.name}</span>
+                  <span className="mob-station-meta" style={{ display: 'block' }}>
+                    {st.workers > 0 ? `${st.workers} worker${st.workers === 1 ? '' : 's'} · ` : ''}
+                    {st.pct == null ? 'no records' : `${st.pct}% approved`}
+                  </span>
                 </span>
-              </span>
-              <span className="perf-bar-row">
-                <span className="mob-bartrack">
-                  <div
-                    className={st.pct != null && st.pct < 80 ? 'best' : ''}
-                    style={{ width: `${st.pct ?? 0}%` }}
-                  />
+                <span className="mob-entry-side">
+                  <span className="mob-entry-amt">{fmtQty(st.output)}</span>
+                  <span className="mob-caret">›</span>
                 </span>
-                <span className="val">{st.pct == null ? '—' : `${st.pct}%`}</span>
-              </span>
-            </button>
-          )
-        })}
+              </button>
+            )
+          })}
+        </div>
       </div>
     </>
   )
