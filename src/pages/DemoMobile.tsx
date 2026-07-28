@@ -3034,8 +3034,8 @@ function TeamTab({
     if (!mayAssign(g)) {
       setNotice(
         nextBelow
-          ? `You can only set a tier up to ${nextBelow.name}. Anything above that sits at or over your own level — it takes a higher permission than yours to place someone there.`
-          : `There is no tier below ${tier?.name ?? 'yours'}, so you cannot place anyone from here. Setting a tier takes a higher permission than yours.`,
+          ? `You can only set a tier up to ${nextBelow.name}. Tier above requires a higher permission to do so.`
+          : `There is no tier below ${tier?.name ?? 'yours'}. Tier above requires a higher permission to do so.`,
       )
       return
     }
