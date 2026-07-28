@@ -92,6 +92,13 @@ end $$;
 -- ---------------------------------------------------------------------------
 do $$
 declare
+  -- Only accounts that have never been placed are set up here: once a name
+  -- has been put somewhere on the chart, re-running this file leaves it
+  -- alone. Re-seeding a moved account would quietly undo real work.
+  untouched boolean := not exists (
+    select 1 from public.access_profiles
+     where email like '%@demo.mjm' and (grade_id is not null or tags_confirmed)
+  );
   g_manager uuid := (select id from public.grades where name = 'Manager' limit 1);
   g_eng     uuid := (select id from public.grades where name = 'Engineer' limit 1);
   g_sh      uuid := (select id from public.grades where name = 'Station Head' limit 1);
@@ -102,6 +109,11 @@ declare
   id_sh      uuid := (select id from public.access_profiles where email = 'norhayati.sh@demo.mjm');
   id_ash     uuid := (select id from public.access_profiles where email = 'siti.ash@demo.mjm');
 begin
+  if not untouched then
+    raise notice 'Demo accounts have been placed on the chart already — leaving them as they are.';
+    return;
+  end if;
+
   update public.access_profiles set
     grade_id = g_manager, role = 'manager', supervisor_id = null,
     station_ids = '{}', station_id = null, tags_confirmed = true,

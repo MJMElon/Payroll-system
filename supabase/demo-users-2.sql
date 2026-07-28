@@ -72,22 +72,29 @@ begin
     insert into public.access_profiles (id, full_name, email, role)
     values (new_id, person.full_name, person.email, 'operator')
     on conflict (id) do update set full_name = excluded.full_name;
+
+    -- Queue the account THIS RUN created — no tier, no leader, no team, no
+    -- station. Scoped to new_id on purpose: re-running this file must never
+    -- undo an allocation someone has already made on the chart.
+    update public.access_profiles set
+      grade_id = null, supervisor_id = null, team_id = null,
+      station_ids = '{}', station_id = null, tags_confirmed = false, role = 'operator'
+     where id = new_id;
   end loop;
 end $$;
-
--- Make sure all ten are waiting to be allocated: no tier, no leader, no
--- team, no station. This is also how you reset them after dragging.
-update public.access_profiles set
-  grade_id = null, supervisor_id = null, team_id = null,
-  station_ids = '{}', station_id = null, tags_confirmed = false, role = 'operator'
- where email in (
-   'hafiz.new@demo.mjm', 'sarah.new@demo.mjm', 'bakri.new@demo.mjm',
-   'kalai.new@demo.mjm', 'jeffry.new@demo.mjm', 'nurul.new@demo.mjm',
-   'hendra.new@demo.mjm', 'vimala.new@demo.mjm', 'azlan.new@demo.mjm',
-   'chongwei.new@demo.mjm'
- );
 
 select full_name, email, tags_confirmed as still_pending
   from public.access_profiles
  where email like '%.new@demo.mjm'
  order by full_name;
+
+-- ---------------------------------------------------------------------------
+-- RESET — run this BLOCK ON ITS OWN, and only when you want every demo name
+-- thrown back into Pending Allocation. It is deliberately not part of the
+-- seeding above: a seed that also resets would undo the allocations you had
+-- just made every time you added more users.
+-- ---------------------------------------------------------------------------
+-- update public.access_profiles set
+--   grade_id = null, supervisor_id = null, team_id = null,
+--   station_ids = '{}', station_id = null, tags_confirmed = false, role = 'operator'
+--  where email like '%@demo.mjm';
