@@ -51,6 +51,23 @@ function deleteError(err: { code?: string; message: string }, what: string): str
   return `${what} is still used by ${holder}, so it cannot be deleted. Remove or move those first, then delete it here.`
 }
 
+/**
+ * Names are compared with case and surrounding space ignored: "Operator"
+ * and " operator " are the same tag to a person reading a dropdown, so
+ * they must not both exist.
+ */
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/**
+ * The database has the last word on uniqueness — two people saving the
+ * same name at once would slip past a check made against the list on
+ * screen. Say it in the same words as that check.
+ */
+function saveError(err: { code?: string; message: string }, what: string, name: string): string {
+  if (err.code !== '23505') return err.message
+  return `A ${what} called "${name.trim()}" already exists.`
+}
+
 /** What tier 1 is for, shown under its name on both faces. */
 const MANAGEMENT_NOTE =
   'Able to create, delete and do setting of tags for ALL tiers & stations.'
@@ -191,30 +208,47 @@ function TagsTab() {
     next.splice(next.findIndex((g) => g.id === targetId) + (movingDown ? 1 : 0), 0, dragged)
     setDragId(null)
     setGrades(next.map((g, i) => ({ ...g, sort_order: i + 1 })))
-    const results = await Promise.all(
-      next.map((g, i) => supabase.from('grades').update({ sort_order: i + 1 }).eq('id', g.id)),
-    )
-    const err = results.find((r) => r.error)
-    if (err?.error) setError(err.error.message)
+    const err = await renumberTiers(next)
+    if (err) setError(err.message)
     load()
+  }
+
+  // Renumber every tag 1..n, top down. Tier numbers are not labels — the
+  // system reads them (which tier is above which, what route access a tag
+  // carries), so they must never carry a gap.
+  async function renumberTiers(list: Grade[]) {
+    const results = await Promise.all(
+      list.map((g, i) =>
+        g.sort_order === i + 1
+          ? null
+          : supabase.from('grades').update({ sort_order: i + 1 }).eq('id', g.id),
+      ),
+    )
+    return results.find((r) => r?.error)?.error ?? null
   }
 
   async function removeTag(g: Grade) {
     if (!window.confirm(`Delete tier tag "${g.name}"?`)) return
     const { error } = await supabase.from('grades').delete().eq('id', g.id)
     if (error) return setError(deleteError(error, `Tier tag "${g.name}"`))
-    setError(null)
+    // Closing the gap the delete left: tier 4 of 7 going means 5, 6, 7
+    // move up, not that the list runs 1, 2, 3, 5, 6, 7.
+    const gapErr = await renumberTiers(grades.filter((x) => x.id !== g.id))
+    setError(gapErr ? gapErr.message : null)
     load()
   }
 
   async function addStation(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    if (stations.some((x) => sameName(x.name, stationName))) {
+      return setError(`A station tag called "${stationName.trim()}" already exists.`)
+    }
     const sort = Math.max(0, ...stations.map((x) => x.sort_order)) + 1
     const { error } = await supabase
       .from('stations')
       .insert({ name: stationName.trim(), sort_order: sort })
-    if (error) return setError(error.message)
+    if (error) return setError(saveError(error, 'station tag', stationName))
     setStationName('')
     setAddingStation(false)
     load()
@@ -453,6 +487,7 @@ function TagsTab() {
           station={stationModal.station}
           mode={stationModal.mode}
           canEdit={canManageStations}
+          takenNames={stations.filter((x) => x.id !== stationModal.station.id).map((x) => x.name)}
           onMode={(mode) => setStationModal((s) => (s ? { ...s, mode } : s))}
           onClose={() => setStationModal(null)}
           onSaved={() => {
@@ -474,6 +509,7 @@ function TagsTab() {
           }
           nextTier={Math.max(0, ...grades.map((g) => g.sort_order)) + 1}
           usedColors={grades.map((g) => g.color)}
+          takenNames={grades.filter((g) => g.id !== tagModal.grade?.id).map((g) => g.name)}
           onMode={(mode) => setTagModal((s) => (s ? { ...s, mode } : s))}
           onClose={() => setTagModal(null)}
           onSaved={() => {
@@ -560,6 +596,7 @@ function StationModal({
   station,
   mode,
   canEdit,
+  takenNames,
   onMode,
   onClose,
   onSaved,
@@ -567,6 +604,8 @@ function StationModal({
   station: Station
   mode: Mode
   canEdit: boolean
+  /** Every OTHER station's name — no two may read the same. */
+  takenNames: string[]
   onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
@@ -582,13 +621,16 @@ function StationModal({
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    if (takenNames.some((n) => sameName(n, name))) {
+      return setError(`A station tag called "${name.trim()}" already exists.`)
+    }
     setSaving(true)
     const { error } = await supabase
       .from('stations')
       .update({ name: name.trim() })
       .eq('id', station.id)
     setSaving(false)
-    if (error) return setError(error.message)
+    if (error) return setError(saveError(error, 'station tag', name))
     onSaved()
   }
 
@@ -656,6 +698,7 @@ function TagModal({
   canEdit,
   nextTier,
   usedColors,
+  takenNames,
   onMode,
   onClose,
   onSaved,
@@ -665,6 +708,8 @@ function TagModal({
   canEdit: boolean
   nextTier: number
   usedColors: string[]
+  /** Every OTHER tier's name — no two may read the same. */
+  takenNames: string[]
   onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
@@ -710,6 +755,9 @@ function TagModal({
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    if (takenNames.some((n) => sameName(n, name))) {
+      return setError(`A tier tag called "${name.trim()}" already exists.`)
+    }
     setSaving(true)
     // Saved in the standardized order so "Can do" always reads the same,
     // no matter what sequence the boxes were ticked in.
@@ -722,7 +770,7 @@ function TagModal({
       ? await supabase.from('grades').update(fields).eq('id', grade.id)
       : await supabase.from('grades').insert({ ...fields, sort_order: nextTier })
     setSaving(false)
-    if (error) return setError(error.message)
+    if (error) return setError(saveError(error, 'tier tag', name))
     onSaved()
   }
 
