@@ -436,7 +436,7 @@ export default function DemoMobile() {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
-                    onRecord={() => setTab('record')}
+                    myEmail={profile?.email ?? 'unknown'}
                     onError={setError}
                   />
                 ) : tab === 'team' ? (
@@ -2251,6 +2251,76 @@ function EntryDetail({
   )
 }
 
+/**
+ * How many photos back an entry, and a way to look at them. Zero photos
+ * still says so — an entry with none is worth noticing.
+ */
+function PhotoChip({ n, onOpen }: { n: number; onOpen: () => void }) {
+  return (
+    <button className={`mob-photochip ${n === 0 ? 'none' : ''}`} onClick={onOpen} disabled={n === 0}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 8h3.2l1.6-2.4h8.4L18.8 8H21v11H3z" />
+        <circle cx="12" cy="13" r="3.4" />
+      </svg>
+      <span>{n === 0 ? 'no photo' : n}</span>
+    </button>
+  )
+}
+
+/** The photos behind one entry, fetched when it is opened. */
+function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () => void }) {
+  const [rows, setRows] = useState<PhotoRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    supabase
+      .from('photo_records')
+      .select('*')
+      .eq('entry_id', entry.id)
+      .order('taken_at', { ascending: true })
+      .then(({ data }) => {
+        setRows((data ?? []) as PhotoRecord[])
+        setLoading(false)
+      })
+  }, [entry.id])
+  const url = (path: string | null) =>
+    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
+  return (
+    <div className="mob-modal-wrap" role="dialog" aria-modal="true">
+      <div className="mob-modal">
+        <div className="mob-card-label">
+          <span>Photos</span>
+          <button className="mob-icon-btn corner close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="mob-sub">
+          {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+            day: 'numeric', month: 'long',
+          })}
+        </div>
+        {loading ? (
+          <div className="mob-sub">Loading…</div>
+        ) : rows.length === 0 ? (
+          <div className="mob-sub">No photos attached.</div>
+        ) : (
+          <div className="mob-photo-grid">
+            {rows.map((r) => {
+              const u = url(r.photo_path)
+              return u ? (
+                <a key={r.id} href={u} target="_blank" rel="noreferrer">
+                  <img className="mob-photo" src={u} alt="" />
+                </a>
+              ) : (
+                <span key={r.id} className="mob-chip">missing</span>
+              )
+            })}
+          </div>
+        )}
+        <button className="mob-btn ghost" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ */
 /* TAB 2 — MY WORK: the SAME screen for every tier — everything this  */
 /* person recorded, split into what is waiting for approval, what was */
@@ -2270,7 +2340,7 @@ function MyWorkTab({
   rateFor,
   amountFor,
   tier2RateFor,
-  onRecord,
+  myEmail,
   onError,
 }: {
   profileId: string | null
@@ -2281,28 +2351,90 @@ function MyWorkTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
-  onRecord: () => void
+  myEmail: string
   onError: (m: string | null) => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
+  // Other people's work waiting on MY action — only loaded for tiers whose
+  // tag grants verify or approve.
+  const [queue, setQueue] = useState<ProductionEntry[]>([])
+  const [names, setNames] = useState<Map<string, string>>(new Map())
+  const [photoCount, setPhotoCount] = useState<Map<string, number>>(new Map())
+  const [todayPhotos, setTodayPhotos] = useState(0)
+  const [viewPhotos, setViewPhotos] = useState<ProductionEntry | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [filter, setFilter] = useState<WorkFilter>('pending')
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
 
-  function load() {
+  // Which buttons show is decided by the tag, not the rung: tick verify on
+  // a tier and that tier verifies; tick approve and it approves. A tier
+  // holding both sees both.
+  const caps = effectiveCapabilities(tier)
+  const canVerify = caps.includes('verify')
+  const canApprove = caps.includes('approve')
+
+  async function load() {
     if (!profileId) return
-    supabase
+    const mine = await supabase
       .from('production_entries')
       .select('*')
       .eq('user_id', profileId)
       .order('created_at', { ascending: false })
       .limit(120)
-      .then(({ data, error }) => {
-        if (error) onError(error.message)
-        else setEntries(data ?? [])
-        setLoading(false)
-      })
+    if (mine.error) onError(mine.error.message)
+    const own = (mine.data ?? []) as ProductionEntry[]
+    setEntries(own)
+
+    // Never your own work — nobody verifies themselves.
+    let waiting: ProductionEntry[] = []
+    if (canVerify || canApprove) {
+      const { data } = await supabase
+        .from('production_entries')
+        .select('*')
+        .in('approval_status', ['pending', 'verified'])
+        .order('created_at', { ascending: true })
+      waiting = ((data ?? []) as ProductionEntry[]).filter(
+        (e) =>
+          e.user_id !== profileId &&
+          ((canVerify && e.approval_status === 'pending') ||
+            (canApprove && e.approval_status === 'verified')),
+      )
+      setQueue(waiting)
+      const ids = [...new Set(waiting.map((e) => e.user_id).filter(Boolean))] as string[]
+      if (ids.length > 0) {
+        const { data: p } = await supabase
+          .from('access_profiles')
+          .select('id, full_name, email')
+          .in('id', ids)
+        setNames(new Map(((p ?? []) as Profile[]).map((x) => [x.id, profileName(x)])))
+      }
+    }
+
+    // How many photos back each entry, so a row can say so without opening.
+    const entryIds = [...own, ...waiting].map((e) => e.id)
+    if (entryIds.length > 0) {
+      const { data: ph } = await supabase
+        .from('photo_records')
+        .select('id, entry_id')
+        .in('entry_id', entryIds)
+      const m = new Map<string, number>()
+      for (const r of ph ?? []) {
+        if (r.entry_id) m.set(r.entry_id, (m.get(r.entry_id) ?? 0) + 1)
+      }
+      setPhotoCount(m)
+    }
+
+    // Today's running total of photos this person has taken.
+    const start = new Date()
+    start.setHours(0, 0, 0, 0)
+    const { data: mineToday } = await supabase
+      .from('photo_records')
+      .select('id')
+      .eq('created_by', profileId)
+      .gte('taken_at', start.toISOString())
+    setTodayPhotos((mineToday ?? []).length)
+    setLoading(false)
   }
   useEffect(() => {
     load()
@@ -2334,6 +2466,34 @@ function MyWorkTab({
     load()
   }
 
+  /** Move someone else's entry along the flow, or send it back. */
+  async function act(e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') {
+    let reason: string | null = null
+    if (next === 'rejected') {
+      reason = window.prompt('Reason for rejecting (shown to the worker):') ?? null
+      if (reason === null) return
+    }
+    setBusy(e.id)
+    onError(null)
+    const now = new Date().toISOString()
+    const fields: Record<string, unknown> = { approval_status: next }
+    if (next === 'verified') Object.assign(fields, { verified_by: myEmail, verified_at: now })
+    if (next === 'approved') Object.assign(fields, { approved_by: myEmail, approved_at: now })
+    if (next === 'rejected') {
+      Object.assign(fields, {
+        rejected_reason: reason || null,
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      })
+    }
+    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    setBusy(null)
+    if (error) return onError(error.message)
+    load()
+  }
+
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
   const stationName = (id: string) => stations.find((st) => st.id === id)?.name ?? '?'
   const stat = (e: ProductionEntry) => e.approval_status ?? 'approved'
@@ -2343,6 +2503,9 @@ function MyWorkTab({
     k === 'pending' ? ['pending', 'verified'].includes(stat(e)) : stat(e) === k
   const count = (k: WorkFilter) => entries.filter((e) => inBucket(e, k)).length
   const shown = entries.filter((e) => inBucket(e, filter))
+  // Someone else's work only ever sits in the pending view — once acted on
+  // it leaves the queue entirely.
+  const queueShown = filter === 'pending' ? queue : []
   const total = shown.reduce((s, e) => s + amountFor(e.job_id, e.quantity), 0)
 
   if (detail) {
@@ -2394,11 +2557,6 @@ function MyWorkTab({
 
         {loading ? (
           <p className="muted small">Loading…</p>
-        ) : entries.length === 0 ? (
-          <div className="mob-card">
-            <div className="mob-sub">Nothing recorded yet.</div>
-            <button className="mob-btn" onClick={onRecord}>+ Add new entry</button>
-          </div>
         ) : (
           <>
             <div className="mob-card">
@@ -2407,31 +2565,33 @@ function MyWorkTab({
                 {' '}· {shown.length} record{shown.length === 1 ? '' : 's'}
               </div>
               <div className="mob-stat">{RM(total)}</div>
+              {filter === 'pending' && (
+                <div className="mob-sub">{todayPhotos} photo{todayPhotos === 1 ? '' : 's'} taken today</div>
+              )}
             </div>
 
-            {shown.length === 0 && (
+            {shown.length === 0 && queueShown.length === 0 && (
               <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
             )}
 
             {shown.map((e) => (
               <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
-                <button
-                  type="button"
-                  className="mob-plainbtn"
-                  onClick={() => setDetail(e)}
-                >
+                <button type="button" className="mob-plainbtn" onClick={() => setDetail(e)}>
                   <span className="perf-top">
                     <span>{jobName(e.job_id)}</span>
                     <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
                   </span>
                   <span className="perf-top">
                     <span className="mob-station-meta">
-                      {stationName(e.station_id)} · {e.quantity} ·{' '}
                       {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                      {' · '}{stationName(e.station_id)} · {e.quantity}
                     </span>
                     {statusChip(e.approval_status)}
                   </span>
                 </button>
+                <span className="perf-top">
+                  <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
+                </span>
                 {stat(e) === 'rejected' && e.rejected_reason && (
                   <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
                     Rejected: {e.rejected_reason}
@@ -2450,9 +2610,53 @@ function MyWorkTab({
                 )}
               </div>
             ))}
+
+            {/* Other people's work that is waiting on me. Which buttons
+                appear is the tag's doing, not the rung's. */}
+            {queueShown.length > 0 && (
+              <div className="mob-card-label" style={{ padding: '0 0.2rem' }}>
+                Waiting on you <span className="mob-chip warn">{queueShown.length}</span>
+              </div>
+            )}
+            {queueShown.map((e) => {
+              const verifyNow = canVerify && (e.approval_status ?? 'pending') === 'pending'
+              const approveNow = canApprove && e.approval_status === 'verified'
+              return (
+                <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
+                  <span className="perf-top">
+                    <span>{jobName(e.job_id)}</span>
+                    <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                  </span>
+                  <span className="perf-top">
+                    <span className="mob-station-meta">
+                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                      {' · '}{names.get(e.user_id ?? '') ?? 'Unknown'} · {e.quantity}
+                    </span>
+                    {statusChip(e.approval_status)}
+                  </span>
+                  <span className="perf-top">
+                    <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
+                  </span>
+                  <span className="row-form">
+                    {verifyNow && (
+                      <button className="mob-btn approve" style={{ flex: 1 }} disabled={busy === e.id}
+                        onClick={() => act(e, 'verified')}>✓ Verify</button>
+                    )}
+                    {approveNow && (
+                      <button className="mob-btn approve" style={{ flex: 1 }} disabled={busy === e.id}
+                        onClick={() => act(e, 'approved')}>✓ Approve</button>
+                    )}
+                    <button className="mob-btn reject" style={{ flex: 1 }} disabled={busy === e.id}
+                      onClick={() => act(e, 'rejected')}>✗ Reject</button>
+                  </span>
+                </div>
+              )
+            })}
           </>
         )}
       </div>
+
+      {viewPhotos && <PhotoSheet entry={viewPhotos} onClose={() => setViewPhotos(null)} />}
     </>
   )
 }

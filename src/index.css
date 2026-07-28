@@ -1065,6 +1065,16 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-photo { width: 100%; height: 90px; object-fit: cover; border-radius: 10px; display: block; }
 /* A photo waiting to be sent — removable while it still can be. */
 .mob-photo-slot { position: relative; display: block; }
+/* How many photos back a record — and the way into them. */
+.mob-photochip {
+  appearance: none; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  background: var(--accent-soft); color: var(--accent-strong);
+  border-radius: 999px; padding: 0.2rem 0.55rem;
+  font-size: 0.7rem; font-weight: 700;
+}
+.mob-photochip:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.mob-photochip.none { background: #eef0f4; color: var(--muted); cursor: default; }
 .mob-photo-x {
   position: absolute; top: 4px; right: 4px;
   appearance: none; border: none; cursor: pointer;
