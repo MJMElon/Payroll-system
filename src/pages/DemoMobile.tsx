@@ -2165,6 +2165,7 @@ function EntryDetail({
   onBack,
   workerTier,
   decide,
+  blocked,
 }: {
   entry: ProductionEntry
   myName: string
@@ -2179,6 +2180,9 @@ function EntryDetail({
   workerTier?: Grade | null
   /** Shown only when the viewer's tag grants the step this record is at. */
   decide?: { canVerify: boolean; canApprove: boolean; busy: boolean; act: (next: 'verified' | 'approved' | 'rejected') => void }
+  /** Why no decision is offered, when none is. The caller knows; guessing
+   *  it here got it wrong and told people their tag was at fault. */
+  blocked?: 'own' | 'no-permission'
 }) {
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
@@ -2197,8 +2201,6 @@ function EntryDetail({
     path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
 
   const workerTag = workerTier === undefined ? tier : workerTier
-  // No decide prop means one of two things, and they read differently.
-  const ownRecord = decide == null && workerTier === undefined
   const submittedAt = new Date(entry.created_at)
   const verified = Boolean(entry.verified_by) || status === 'approved'
   const approved = status === 'approved'
@@ -2314,11 +2316,11 @@ function EntryDetail({
         {/* An absent button is indistinguishable from a broken one, so the
             reason is stated: your own work, a tag without the permission,
             or a record already past the step you hold. */}
-        {decide == null && ['pending', 'verified'].includes(status) && (
+        {blocked && ['pending', 'verified'].includes(status) && (
           <div className="mob-card">
             <div className="mob-sub">
-              {ownRecord
-                ? 'This is your own record — somebody above you reviews it.'
+              {blocked === 'own'
+                ? 'This is your own record — it is reviewed by somebody above you.'
                 : 'Your tier tag has no verify or approve permission. Tick one in Settings → Tags management.'}
             </div>
           </div>
@@ -2773,6 +2775,13 @@ function MyWorkTab({
           detail.user_id && detail.user_id !== profileId
             ? grades.find((g) => g.id === submitters.get(detail.user_id!)?.grade_id) ?? null
             : tier
+        }
+        blocked={
+          detail.user_id === profileId
+            ? 'own'
+            : canVerify || canApprove
+              ? undefined
+              : 'no-permission'
         }
         decide={
           detail.user_id !== profileId && (canVerify || canApprove)
