@@ -3100,11 +3100,6 @@ function ProfileTab({
       : profile?.station_id
         ? [profile.station_id]
         : []
-  const stationNames =
-    myStationIds.length === 0
-      ? 'All stations'
-      : myStationIds.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
-
   /**
    * Above station level nobody is paid by the piece: no month of piece
    * work, no payslip built from it, no rate contract to read. Those
@@ -3117,12 +3112,11 @@ function ProfileTab({
     : 0
   const isPaidByPiece = tier != null && rungsBelow <= 2
 
-  const Row = ({ label, value }: { label: string; value: string }) => (
-    <div className="mob-row">
-      <span className="mob-field-label">{label}</span>
-      <span>{value}</span>
-    </div>
-  )
+  const stationNames =
+    !isPaidByPiece || myStationIds.length === 0
+      ? 'All Stations'
+      : myStationIds.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
+
 
   return (
     <>
@@ -3142,63 +3136,79 @@ function ProfileTab({
 
         {/* 2 — everything else about you, out of the way until asked for. */}
         <div className="mob-card">
-          <button
-            className="mob-disclosure"
-            aria-expanded={showDetails}
-            onClick={() => setShowDetails((v) => !v)}
-          >
-            <span className="mob-card-label">My details</span>
-            <span className={`mob-caret ${showDetails ? 'open' : ''}`} aria-hidden="true">›</span>
-          </button>
+          <div className="mob-disclosure-row">
+            <button
+              className="mob-disclosure"
+              aria-expanded={showDetails}
+              onClick={() => setShowDetails((v) => !v)}
+            >
+              <span className="mob-card-label">My details</span>
+              <span className={`mob-caret ${showDetails ? 'open' : ''}`} aria-hidden="true">›</span>
+            </button>
+            {showDetails && !editing && (
+              <button
+                className="mob-icon-btn corner"
+                onClick={() => {
+                  setForm({
+                    employee_code: saved?.employee_code ?? profile?.employee_code ?? '',
+                    phone: saved?.phone ?? profile?.phone ?? '',
+                  })
+                  setEditing(true)
+                }}
+                title="Edit my details"
+                aria-label="Edit my details"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {/* Editing keeps the very same rows — label left, value right —
+              so turning it on swaps a value for a field and changes
+              nothing else about the card's shape. */}
           {showDetails && (
-            editing ? (
-              <>
-                <div className="mob-field-label">Worker ID</div>
-                <input
-                  className="mob-input"
-                  value={form.employee_code}
-                  onChange={(e) => setForm({ ...form, employee_code: e.target.value })}
-                />
-                {/* Email is the account itself — changing it here would not
-                    change how you sign in, so it is shown, not edited. */}
-                <div className="mob-field-label">Email</div>
-                <div className="mob-param">{profile?.email ?? '—'}</div>
-                <div className="mob-field-label">Phone number</div>
-                <input
-                  className="mob-input"
-                  type="tel"
-                  value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                />
+            <>
+              <div className="mob-row">
+                <span className="mob-field-label">Worker ID</span>
+                {editing ? (
+                  <input
+                    className="mob-row-input"
+                    value={form.employee_code}
+                    onChange={(e) => setForm({ ...form, employee_code: e.target.value })}
+                  />
+                ) : (
+                  <span>{saved?.employee_code || profile?.employee_code || '—'}</span>
+                )}
+              </div>
+              <div className="mob-row">
+                <span className="mob-field-label">Email</span>
+                <span>{profile?.email ?? '—'}</span>
+              </div>
+              <div className="mob-row">
+                <span className="mob-field-label">Phone number</span>
+                {editing ? (
+                  <input
+                    className="mob-row-input"
+                    type="tel"
+                    value={form.phone}
+                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  />
+                ) : (
+                  <span>{saved?.phone || profile?.phone || '—'}</span>
+                )}
+              </div>
+              {editing && (
                 <div className="row-form">
-                  <button className="mob-btn" style={{ flex: 1 }} disabled={saving} onClick={saveDetails}>
+                  <button className="mob-mini" disabled={saving} onClick={saveDetails}>
                     {saving ? 'Saving…' : 'Save'}
                   </button>
-                  <button className="mob-btn ghost" style={{ flex: 1 }} onClick={() => setEditing(false)}>
-                    Cancel
-                  </button>
+                  <button className="mob-mini" onClick={() => setEditing(false)}>Cancel</button>
                 </div>
-              </>
-            ) : (
-              <>
-                <Row label="Worker ID" value={saved?.employee_code || profile?.employee_code || '—'} />
-                <Row label="Email" value={profile?.email ?? '—'} />
-                <Row label="Phone number" value={saved?.phone || profile?.phone || '—'} />
-                <button
-                  className="mob-mini"
-                  style={{ alignSelf: 'flex-start' }}
-                  onClick={() => {
-                    setForm({
-                      employee_code: profile?.employee_code ?? '',
-                      phone: profile?.phone ?? '',
-                    })
-                    setEditing(true)
-                  }}
-                >
-                  ✎ Edit
-                </button>
-              </>
-            )
+              )}
+            </>
           )}
         </div>
 
@@ -3437,32 +3447,54 @@ function ContractSection({
   // rung — it gets its own group at the end.
   const untagged = approved.filter((j) => !j.grade_id)
 
+  // Your own rung is always listed, with or without rates on it — "no
+  // contract yet" is an answer, and leaving the heading out entirely made
+  // the rungs below look like yours.
   const groups = shownTiers
     .map((g) => ({ grade: g, rows: approved.filter((j) => j.grade_id === g.id) }))
-    .filter((x) => x.rows.length > 0)
+    .filter((x) => x.rows.length > 0 || x.grade.id === tier?.id)
 
-  const JobRow = ({ job }: { job: Job }) => (
-    <div className="mob-row">
-      <span>
-        <span className="mob-entry-name">{job.name}</span>
-        {manyStations && (
-          <span className="mob-station-meta" style={{ display: 'block' }}>
-            {stationName(job.station_id)}
-          </span>
+  /**
+   * One job's terms, spelled out. A tiered rate is two different prices
+   * depending on how much is done inside the hour, so it is written as the
+   * two conditions it is rather than squeezed into one arrow.
+   */
+  const JobRow = ({ job }: { job: Job }) => {
+    const unit = job.unit.replace('/', '')
+    const tier2 = tier2RateFor(job.id)
+    return (
+      <div className="mob-contract-job">
+        <div className="mob-contract-name">
+          <span className="mob-person-name">{job.name}</span>
+          {manyStations && <span className="mob-station-meta">{stationName(job.station_id)}</span>}
+        </div>
+        {tier2 == null ? (
+          <div className="mob-contract-term">
+            <span>Every {unit}</span>
+            <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
+          </div>
+        ) : (
+          <>
+            <div className="mob-contract-term">
+              <span>First {TIER1_UNIT_CAP} {unit}s in an hour</span>
+              <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
+            </div>
+            <div className="mob-contract-term">
+              <span>{TIER1_UNIT_CAP + 1}th onward, same hour</span>
+              <span className="mob-entry-amt">{RM(tier2)}{job.unit}</span>
+            </div>
+            <div className="mob-contract-note">Counts back to the first rate each new hour.</div>
+          </>
         )}
-      </span>
-      <span className="mob-entry-amt">
-        {rateLabelFor(rateFor, tier2RateFor, job.id)}
-        <span className="mob-station-meta">{job.unit}</span>
-      </span>
-    </div>
-  )
+      </div>
+    )
+  }
 
   return (
     <div className="mob-card">
       <div className="mob-card-label">Piece rate contract</div>
       {groups.length === 0 && untagged.length === 0 && (
-        <div className="mob-sub">No approved piece rate for your tier yet.</div>
+        <div className="mob-sub">No approved piece rate at your station yet.</div>
       )}
       {groups.map(({ grade, rows }) => (
         <div key={grade.id}>
@@ -3471,7 +3503,11 @@ function ContractSection({
             <span>{grade.name}</span>
             {tier?.id === grade.id && <span className="mob-chip ok">You</span>}
           </div>
-          {rows.map((j) => <JobRow key={j.id} job={j} />)}
+          {rows.length === 0 ? (
+            <div className="mob-sub">No piece rate set for this tier yet.</div>
+          ) : (
+            rows.map((j) => <JobRow key={j.id} job={j} />)
+          )}
         </div>
       ))}
       {untagged.length > 0 && (

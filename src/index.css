@@ -930,7 +930,22 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; align-items: center; justify-content: center;
 }
 
-/* A card header that opens and closes what is under it. */
+/* A card header that opens and closes what is under it, with room for an
+   action beside it. */
+.mob-disclosure-row { display: flex; align-items: center; gap: 0.4rem; }
+.mob-disclosure-row .mob-disclosure { flex: 1; }
+.mob-disclosure-row .mob-icon-btn.corner { margin-left: 0; }
+
+/* Editing swaps a value for a field IN PLACE: same row, same height, the
+   field sized to where the value already sat. Nothing jumps. */
+.mob-row-input {
+  flex: none; width: 55%; text-align: right;
+  border: 1px solid #dfe4ea; border-radius: 8px;
+  background: #fbfcfd; color: var(--text);
+  font-family: inherit; font-size: 0.8rem; padding: 0.2rem 0.45rem;
+}
+.mob-row-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .mob-disclosure {
   appearance: none; background: none; border: none; padding: 0; margin: 0;
   cursor: pointer; color: inherit; font: inherit; width: 100%;
@@ -956,6 +971,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-contract-tier .tag-dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
 .mob-contract-tier .mob-chip { margin-left: auto; text-transform: none; letter-spacing: 0; }
+/* One job, then the conditions its price depends on — a tiered rate is
+   two prices, so it reads as two lines rather than an arrow. */
+.mob-contract-job { padding: 0.4rem 0 0.15rem; }
+.mob-contract-name { display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
+.mob-contract-name .mob-person-name { font-size: 0.84rem; }
+.mob-contract-term {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 0.6rem;
+  font-size: 0.75rem; color: var(--muted); padding: 0.12rem 0 0.12rem 0.6rem;
+  border-left: 2px solid #eef0f4; margin-top: 0.2rem;
+}
+.mob-contract-term .mob-entry-amt { color: var(--text); font-size: 0.78rem; }
+.mob-contract-note {
+  font-size: 0.66rem; color: var(--muted); padding-left: 0.6rem; margin-top: 0.15rem;
+}
 
 /* Team tab — one drop lane per tier. A lane the leader may not hand out
    (their own tier and anything above it) is locked and reads as inert. */
