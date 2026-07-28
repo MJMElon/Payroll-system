@@ -56,6 +56,17 @@ function deleteError(err: { code?: string; message: string }, what: string): str
  * and " operator " are the same tag to a person reading a dropdown, so
  * they must not both exist.
  */
+/** Enter commits an inline row, Escape abandons it. */
+function rowKeys(e: React.KeyboardEvent, save: () => void, cancel: () => void) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    save()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancel()
+  }
+}
+
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
 
 /**
@@ -93,6 +104,16 @@ const EyeIcon = () => (
 const PencilIcon = () => (
   <svg {...iconProps}>
     <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+  </svg>
+)
+const CheckIcon = () => (
+  <svg {...iconProps}>
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+)
+const CrossIcon = () => (
+  <svg {...iconProps}>
+    <path d="M18 6 6 18M6 6l12 12" />
   </svg>
 )
 const TrashIcon = () => (
@@ -155,7 +176,10 @@ function TagsTab() {
   const [addingStation, setAddingStation] = useState(false)
   const [stationName, setStationName] = useState('')
   const [dragStation, setDragStation] = useState<string | null>(null)
-  const [stationModal, setStationModal] = useState<{ station: Station; mode: Mode } | null>(null)
+  // A station is one field, so it is edited in the row rather than in a
+  // pop-out: this is the row being edited, and the name being typed.
+  const [editStationId, setEditStationId] = useState<string | null>(null)
+  const [stationDraft, setStationDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -238,9 +262,9 @@ function TagsTab() {
     load()
   }
 
-  async function addStation(e: FormEvent) {
-    e.preventDefault()
+  async function addStation() {
     setError(null)
+    if (stationName.trim() === '') return setError('A station tag needs a name.')
     if (stations.some((x) => sameName(x.name, stationName))) {
       return setError(`A station tag called "${stationName.trim()}" already exists.`)
     }
@@ -269,6 +293,47 @@ function TagsTab() {
     )
     const err = results.find((r) => r.error)
     if (err?.error) setError(err.error.message)
+    load()
+  }
+
+  function startAddStation() {
+    setError(null)
+    setEditStationId(null)
+    setStationName('')
+    setAddingStation(true)
+  }
+
+  function cancelAddStation() {
+    setStationName('')
+    setAddingStation(false)
+    setError(null)
+  }
+
+  function startEditStation(st: Station) {
+    setError(null)
+    setAddingStation(false)
+    setEditStationId(st.id)
+    setStationDraft(st.name)
+  }
+
+  function cancelStationEdit() {
+    setEditStationId(null)
+    setStationDraft('')
+    setError(null)
+  }
+
+  async function saveStationName() {
+    const st = stations.find((x) => x.id === editStationId)
+    if (!st) return
+    const next = stationDraft.trim()
+    if (next === '') return setError('A station tag needs a name.')
+    if (next === st.name) return cancelStationEdit()
+    if (stations.some((x) => x.id !== st.id && sameName(x.name, next))) {
+      return setError(`A station tag called "${next}" already exists.`)
+    }
+    const { error } = await supabase.from('stations').update({ name: next }).eq('id', st.id)
+    if (error) return setError(saveError(error, 'station tag', next))
+    cancelStationEdit()
     load()
   }
 
@@ -389,32 +454,18 @@ function TagsTab() {
         </table>
       </div>
 
-      {/* Section 2 — station tags */}
+      {/* Section 2 — station tags. A station is one field, so it is edited
+          in place: the row itself becomes the form, and adding one opens a
+          blank row at the end rather than a pop-out for a single name. */}
       <div className="card stack">
         <div className="row-form spread">
           <h3>Station tags</h3>
           {canManageStations && (
-            <button
-              className="btn"
-              onClick={() => {
-                setStationName('')
-                setAddingStation((v) => !v)
-              }}
-            >
-              {addingStation ? 'Cancel' : '+ Add station'}
+            <button className="btn" onClick={startAddStation} disabled={addingStation}>
+              + Add station
             </button>
           )}
         </div>
-
-        {addingStation && (
-          <form className="row-form" onSubmit={addStation}>
-            <label className="field inline grow">
-              <span>New station name</span>
-              <input value={stationName} onChange={(e) => setStationName(e.target.value)} autoFocus required />
-            </label>
-            <button className="btn" type="submit">Save station</button>
-          </form>
-        )}
 
         <table className="table">
           <thead>
@@ -426,76 +477,127 @@ function TagsTab() {
             </tr>
           </thead>
           <tbody>
-            {stations.map((st, i) => (
-              <tr
-                key={st.id}
-                className={`${canManageStations ? 'drag-row' : ''} ${dragStation === st.id ? 'dragging' : ''}`}
-                draggable={canManageStations}
-                onDragStart={() => canManageStations && setDragStation(st.id)}
-                onDragEnd={() => setDragStation(null)}
-                onDragOver={(e) => canManageStations && e.preventDefault()}
-                onDrop={(e) => {
-                  if (!canManageStations) return
-                  e.preventDefault()
-                  dropOnStation(st.id)
-                }}
-                title={canManageStations ? 'Drag to reorder' : undefined}
-              >
-                {canManageStations && <td className="drag-handle" aria-hidden="true">⠿</td>}
-                <td className="muted">{i + 1}</td>
-                <td>{st.name}</td>
+            {stations.length === 0 && !addingStation && (
+              <tr><td colSpan={4} className="muted">No station tags yet.</td></tr>
+            )}
+            {stations.map((st, i) => {
+              const editing = editStationId === st.id
+              return (
+                <tr
+                  key={st.id}
+                  className={`${canManageStations && !editing ? 'drag-row' : ''} ${
+                    dragStation === st.id ? 'dragging' : ''
+                  }`}
+                  /* Not while editing — dragging would fight selecting text. */
+                  draggable={canManageStations && !editing}
+                  onDragStart={() => canManageStations && !editing && setDragStation(st.id)}
+                  onDragEnd={() => setDragStation(null)}
+                  onDragOver={(e) => canManageStations && !editing && e.preventDefault()}
+                  onDrop={(e) => {
+                    if (!canManageStations || editing) return
+                    e.preventDefault()
+                    dropOnStation(st.id)
+                  }}
+                  title={canManageStations && !editing ? 'Drag to reorder' : undefined}
+                >
+                  {canManageStations && (
+                    <td className="drag-handle" aria-hidden="true">{editing ? '' : '⠿'}</td>
+                  )}
+                  <td className="muted">{i + 1}</td>
+                  <td>
+                    {editing ? (
+                      <input
+                        className="row-input"
+                        value={stationDraft}
+                        onChange={(e) => setStationDraft(e.target.value)}
+                        onKeyDown={(e) => rowKeys(e, saveStationName, cancelStationEdit)}
+                        aria-label="Station name"
+                        autoFocus
+                      />
+                    ) : (
+                      st.name
+                    )}
+                  </td>
+                  <td className="right">
+                    <span className="row-actions">
+                      {editing ? (
+                        <>
+                          <button
+                            className="icon-btn sm"
+                            title="Save"
+                            aria-label={`Save ${st.name}`}
+                            onClick={saveStationName}
+                          >
+                            <CheckIcon />
+                          </button>
+                          <button
+                            className="icon-btn sm"
+                            title="Cancel"
+                            aria-label="Cancel"
+                            onClick={cancelStationEdit}
+                          >
+                            <CrossIcon />
+                          </button>
+                        </>
+                      ) : (
+                        canManageStations && (
+                          <>
+                            <button
+                              className="icon-btn sm"
+                              title="Edit station"
+                              aria-label={`Edit ${st.name}`}
+                              onClick={() => startEditStation(st)}
+                            >
+                              <PencilIcon />
+                            </button>
+                            <button
+                              className="icon-btn sm danger"
+                              title="Delete station"
+                              aria-label={`Delete ${st.name}`}
+                              onClick={() => removeStation(st)}
+                            >
+                              <TrashIcon />
+                            </button>
+                          </>
+                        )
+                      )}
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
+
+            {/* The new station, typed straight into the list it joins. */}
+            {addingStation && (
+              <tr>
+                {canManageStations && <td className="drag-handle" aria-hidden="true"></td>}
+                <td className="muted">{stations.length + 1}</td>
+                <td>
+                  <input
+                    className="row-input"
+                    value={stationName}
+                    onChange={(e) => setStationName(e.target.value)}
+                    onKeyDown={(e) => rowKeys(e, addStation, cancelAddStation)}
+                    placeholder="New station name"
+                    aria-label="New station name"
+                    autoFocus
+                  />
+                </td>
                 <td className="right">
                   <span className="row-actions">
-                    <button
-                      className="icon-btn sm"
-                      title="View this station's settings"
-                      aria-label={`View ${st.name}`}
-                      onClick={() => setStationModal({ station: st, mode: 'view' })}
-                    >
-                      <EyeIcon />
+                    <button className="icon-btn sm" title="Save" aria-label="Save new station" onClick={addStation}>
+                      <CheckIcon />
                     </button>
-                    {canManageStations && (
-                      <>
-                        <button
-                          className="icon-btn sm"
-                          title="Edit station"
-                          aria-label={`Edit ${st.name}`}
-                          onClick={() => setStationModal({ station: st, mode: 'edit' })}
-                        >
-                          <PencilIcon />
-                        </button>
-                        <button
-                          className="icon-btn sm danger"
-                          title="Delete station"
-                          aria-label={`Delete ${st.name}`}
-                          onClick={() => removeStation(st)}
-                        >
-                          <TrashIcon />
-                        </button>
-                      </>
-                    )}
+                    <button className="icon-btn sm" title="Cancel" aria-label="Cancel" onClick={cancelAddStation}>
+                      <CrossIcon />
+                    </button>
                   </span>
                 </td>
               </tr>
-            ))}
+            )}
           </tbody>
         </table>
       </div>
-
-      {stationModal && (
-        <StationModal
-          station={stationModal.station}
-          mode={stationModal.mode}
-          canEdit={canManageStations}
-          takenNames={stations.filter((x) => x.id !== stationModal.station.id).map((x) => x.name)}
-          onMode={(mode) => setStationModal((s) => (s ? { ...s, mode } : s))}
-          onClose={() => setStationModal(null)}
-          onSaved={() => {
-            setStationModal(null)
-            load()
-          }}
-        />
-      )}
 
       {tagModal && (
         <TagModal
@@ -587,110 +689,63 @@ function ModuleTable({
 }
 
 /* ------------------------------------------------------------------ */
-/* Station pop-out. View shows the settings read-only and closes with */
-/* the × alone; Edit adds the form, with Cancel dropping back to view */
-/* rather than shutting the window.                                   */
-/* ------------------------------------------------------------------ */
-
-function StationModal({
-  station,
-  mode,
-  canEdit,
-  takenNames,
-  onMode,
-  onClose,
-  onSaved,
-}: {
-  station: Station
-  mode: Mode
-  canEdit: boolean
-  /** Every OTHER station's name — no two may read the same. */
-  takenNames: string[]
-  onMode: (mode: Mode) => void
-  onClose: () => void
-  onSaved: () => void
-}) {
-  const overlay = useOverlayClose(onClose)
-  const [name, setName] = useState(station.name)
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  // A station tag is a name and nothing else. How much work counts, and
-  // over what period, is a rate question — it belongs with the rates in
-  // the Piece Rate module, not on the tag.
-  async function save(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    if (takenNames.some((n) => sameName(n, name))) {
-      return setError(`A station tag called "${name.trim()}" already exists.`)
-    }
-    setSaving(true)
-    const { error } = await supabase
-      .from('stations')
-      .update({ name: name.trim() })
-      .eq('id', station.id)
-    setSaving(false)
-    if (error) return setError(saveError(error, 'station tag', name))
-    onSaved()
-  }
-
-  // Cancelling an edit puts the untouched name back, so reopening the
-  // form does not show what was typed and then abandoned.
-  function cancel() {
-    setName(station.name)
-    setError(null)
-    onMode('view')
-  }
-
-  return (
-    <div className="modal-overlay" {...overlay}>
-      <div className="modal modal-view" onClick={(e) => e.stopPropagation()}>
-        <div className="row-form spread">
-          <h2>{mode === 'view' ? 'Station' : 'Edit station'}</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-
-        {error && <div className="error">{error}</div>}
-
-        {mode === 'view' ? (
-          <>
-            <div className="tag-section">
-              <div className="tag-section-title">Station name</div>
-              <span>{station.name}</span>
-            </div>
-
-            {canEdit && (
-              <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-                <button type="button" className="btn" onClick={() => onMode('edit')}>
-                  Edit station
-                </button>
-              </div>
-            )}
-          </>
-        ) : (
-          <form className="stack" style={{ gap: '0.9rem' }} onSubmit={save}>
-            <label className="field">
-              <span>Station name</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-            </label>
-
-            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-              <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>
-              <button className="btn" type="submit" disabled={saving}>
-                {saving ? 'Saving…' : 'Save station'}
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
 /* Tag edit pop-out: name, colour plate, what it can see, what it can */
 /* do.                                                                */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* Who holds a tier. Team Manage draws the mill from the Manager tier   */
+/* down, so the top tier's people are listed here instead — under the   */
+/* module sheet of the tag itself.                                      */
+/* ------------------------------------------------------------------ */
+function TierPeople({ gradeId }: { gradeId: string }) {
+  const [people, setPeople] = useState<{ id: string; full_name: string | null; email: string | null }[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let live = true
+    supabase
+      .from('access_profiles')
+      .select('id, full_name, email')
+      .eq('grade_id', gradeId)
+      .order('full_name')
+      .then(({ data }) => {
+        if (!live) return
+        setPeople(data ?? [])
+        setLoading(false)
+      })
+    return () => {
+      live = false
+    }
+  }, [gradeId])
+
+  // A name if the account has one, otherwise the part before the @ — an
+  // email address is not a name.
+  const label = (p: { full_name: string | null; email: string | null }) => {
+    const n = p.full_name?.trim()
+    if (n && n.toLowerCase() !== (p.email ?? '').trim().toLowerCase()) return n
+    return (p.email ?? '').split('@')[0] || '—'
+  }
+
+  return (
+    <div className="tag-section">
+      <div className="tag-section-title">People on this tier ({people.length})</div>
+      {loading ? (
+        <span className="small muted">Loading…</span>
+      ) : people.length === 0 ? (
+        <span className="small muted">Nobody holds this tier yet.</span>
+      ) : (
+        <div className="tier-people">
+          {people.map((p) => (
+            <span className="tier-person" key={p.id} title={p.email ?? ''}>
+              {label(p)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function TagModal({
   grade,
@@ -838,6 +893,8 @@ function TagModal({
             />
           </div>
 
+          <TierPeople gradeId={grade.id} />
+
           {canEdit && (
             <div className="row-form" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="btn" onClick={() => onMode('edit')}>
@@ -893,6 +950,8 @@ function TagModal({
             onToggleCapability={toggleCapability}
           />
         </div>
+
+        {grade && <TierPeople gradeId={grade.id} />}
 
         {/* Anything that governs no single module keeps its own block. */}
         {looseGroups.map((group) => (

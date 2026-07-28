@@ -7,10 +7,13 @@
 //           card out to place someone, drag a name back in to un-place them.
 //   MIDDLE  Formation, in two halves that match how the mill is organised:
 //
-//           ABOVE the station-head tier — one row per tier, name only,
-//           since those tiers run every station:
-//             MANAGER    [ Rahim ]
-//             ENGINEER   [ Chandran ]
+//           ABOVE the station-head tier — one box, "Across all stations",
+//           since those tiers run the whole mill:
+//             Manager :    [ Rahim ]
+//             Executive :  [ Chandran ]
+//           The TOP tier is not here at all: it is managed in Settings →
+//           Tier Access Manage, which lists its people under the module
+//           sheet of the tag itself.
 //
 //           FROM the station-head tier down — one box per STATION, side by
 //           side (they are the same tier), and inside each box a grid:
@@ -95,9 +98,6 @@ function displayName(p: Profile | undefined | null): string {
   const local = (p.email ?? '').split('@')[0]
   return local || p.id.slice(0, 8)
 }
-
-/** A bracket of children under one leader; `team: null` = no team. */
-type Group = { team: Team | null; people: Profile[] }
 
 /** First unused "Team A", "Team B", … for a bracket just added. */
 function nextTeamName(taken: string[]): string {
@@ -282,9 +282,13 @@ export default function WorkerManagement() {
   // One row per tier, top tier first — EVERY tier, including the ones
   // nobody stands on yet, so it is obvious where a card can be dropped.
   // Every name stays on its row; clicking a block only opens it.
+  // The top tier is not on this chart: it is managed in Settings → Tier
+  // Access Manage, where its people are listed under the module sheet.
   const rows = useMemo(
     () =>
-      grades.map((g) => ({
+      grades
+        .filter((g) => g.sort_order !== 1)
+        .map((g) => ({
         grade: g,
         people: visible
           .filter((p) => p.grade_id === g.id)
@@ -295,34 +299,6 @@ export default function WorkerManagement() {
 
   // People with no tier tag at all.
   const looseRow = useMemo(() => visible.filter((p) => !p.grade_id), [visible])
-
-  /**
-   * Split a tier row into its teams, in team order, no-team last.
-   *
-   * A team shows on the row DIRECTLY BELOW the tier that owns it even while
-   * it is still empty — that row is where it gets filled from, and a team
-   * box that only appears once someone is in it can never be the thing you
-   * drop the first person into. It also shows on any row holding a member.
-   */
-  function clustersFor(people: Profile[], tier: number | null): Group[] {
-    const holdsAMember = (t: Team) => people.some((p) => p.team_id === t.id)
-    const isTheRowBelowItsOwner = (t: Team) => {
-      if (tier === null) return false
-      const owner = teamTier(t)
-      return owner < tier && !grades.some((g) => g.sort_order > owner && g.sort_order < tier)
-    }
-    const shown = teams
-      .filter((t) => holdsAMember(t) || isTheRowBelowItsOwner(t))
-      .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
-    if (shown.length === 0) return [{ team: null, people }]
-    const groups: Group[] = shown.map((t) => ({
-      team: t,
-      people: people.filter((p) => p.team_id === t.id),
-    }))
-    const rest = people.filter((p) => !p.team_id || !shown.some((t) => t.id === p.team_id))
-    if (rest.length > 0) groups.push({ team: null, people: rest })
-    return groups
-  }
 
   /* ---------------- team actions ---------------- */
 
@@ -877,7 +853,7 @@ export default function WorkerManagement() {
             {heads.length === 0 ? (
               <span className="wm-cluster-empty">Drop a name here</span>
             ) : (
-              heads.map((one) => block(one, false, true))
+              heads.map((one) => block(one, true, true))
             )}
           </div>
         </div>
@@ -981,111 +957,37 @@ export default function WorkerManagement() {
     )
   }
 
-  /** A tier row: every name on that tier, split into its teams. */
+  /**
+   * A tier row above the station floor: the tier name on the left, its
+   * people on the right — the same shape as a row inside a station box, so
+   * the whole chart reads one way.
+   */
   function tierRow(grade: Grade | null, people: Profile[]) {
-    const clusters = clustersFor(people, grade?.sort_order ?? null)
-    const bare = clusters.length === 1 && !clusters[0].team
     const rowKey = `tier:${grade?.id ?? 'untagged'}`
-    // Dropping on the row itself only settles the tier — that is how the
-    // first person lands on a tier nobody stands on yet.
-    const rowDrop = grade && canPlaceOnTier(grade)
-      ? {
-          onDragOver: (e: React.DragEvent) => {
-            e.preventDefault()
-            e.dataTransfer.dropEffect = 'move' as const
-            setDropKey(rowKey)
-          },
-          onDragLeave: () => setDropKey((cur) => (cur === rowKey ? null : cur)),
-          onDrop: (e: React.DragEvent) => handleTierDrop(grade, e),
-        }
-      : {}
+    const canDropHere = Boolean(grade) && canPlaceOnTier(grade as Grade)
     return (
-      <section className="wm-tier-row" key={grade?.id ?? 'untagged'}>
-        <div className="wm-tier-head">
-          <span className={`tag-dot dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
-          <h2 className="wm-tier-name">{grade?.name ?? 'No tier tag'}</h2>
-          <span className="wm-tier-n">{people.length}</span>
-        </div>
-        <div className={`wm-row-blocks ${dropKey === rowKey ? 'over' : ''}`} {...rowDrop}>
-          {people.length === 0 && !clusters.some((c) => c.team) && (
-            <p className="wm-row-empty">
-              {grade && canPlaceOnTier(grade)
-                ? `Nobody on this tier yet — drop a name here to make them ${grade.name}.`
-                : 'Nobody on this tier yet.'}
-            </p>
+      <div className="wm-srow" key={grade?.id ?? 'untagged'}>
+        <span className="wm-srow-label">{grade?.name ?? 'No tier tag'} :</span>
+        <div
+          className={`wm-srow-body ${dropKey === rowKey ? 'over' : ''}`}
+          onDragOver={(e) => {
+            if (!canDropHere) return
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'move'
+            setDropKey(rowKey)
+          }}
+          onDragLeave={() => setDropKey((cur) => (cur === rowKey ? null : cur))}
+          onDrop={(e) => grade && handleTierDrop(grade, e)}
+        >
+          {people.length === 0 ? (
+            <span className="wm-cluster-empty">
+              {canDropHere ? 'Drop a name here' : 'Nobody on this tier yet'}
+            </span>
+          ) : (
+            people.map((one) => block(one, true, true))
           )}
-          {bare
-            ? clusters[0].people.map((one) => block(one))
-            : clusters.map((c) => {
-                // A team's own leader takes the drop, so a card dropped on
-                // the cluster joins that team under the person who made it.
-                const owner = c.team?.created_by
-                  ? profiles.find((x) => x.id === c.team?.created_by) ?? null
-                  : null
-                const key = `cluster:${grade?.id ?? 'x'}:${c.team?.id ?? 'none'}`
-                return (
-                  <div className="wm-cluster" key={key}>
-                    <div
-                      className={`wm-cluster-head ${dropKey === key ? 'over' : ''}`}
-                      {...(owner ? dropProps(key, owner, c.team, canPlaceUnder(owner)) : {})}
-                    >
-                      {c.team && renamingId === c.team.id ? (
-                        <input
-                          className="wm-cluster-input"
-                          autoFocus
-                          value={renameDraft}
-                          onChange={(e) => setRenameDraft(e.target.value)}
-                          onBlur={() => saveTeamName(c.team as Team)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveTeamName(c.team as Team)
-                            if (e.key === 'Escape') setRenamingId(null)
-                          }}
-                        />
-                      ) : (
-                        <span className={`wm-cluster-name ${c.team ? '' : 'none'}`}>
-                          {c.team ? c.team.name : 'No team'}
-                          {owner && (
-                            <span className="wm-cluster-of">{' · '}{displayName(owner)}</span>
-                          )}
-                        </span>
-                      )}
-                      <span className="wm-cluster-n">{c.people.length}</span>
-                      {c.team && canManageTeam(c.team) && renamingId !== c.team.id && (
-                        <>
-                          <button
-                            type="button"
-                            className="wm-icon"
-                            title="Rename team"
-                            onClick={() => {
-                              setRenamingId(c.team!.id)
-                              setRenameDraft(c.team!.name)
-                            }}
-                          >
-                            ✎
-                          </button>
-                          <button
-                            type="button"
-                            className="wm-icon danger"
-                            title="Remove team"
-                            onClick={() => removeTeam(c.team as Team, c.people.length)}
-                          >
-                            ×
-                          </button>
-                        </>
-                      )}
-                    </div>
-                    <div className="wm-cluster-blocks">
-                      {c.people.length === 0 ? (
-                        <span className="wm-cluster-empty">Drop a name here</span>
-                      ) : (
-                        c.people.map((one) => block(one))
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
         </div>
-      </section>
+      </div>
     )
   }
 
@@ -1167,10 +1069,18 @@ export default function WorkerManagement() {
           {rows.length === 0 && looseRow.length === 0 && (
             <p className="muted small">No one on the chart yet.</p>
           )}
-          {/* Above the station tier: one row per tier. */}
-          {rows
-            .filter((r) => !worksAtAStation(r.grade.sort_order))
-            .map((r) => tierRow(r.grade, r.people))}
+          {/* Above the station floor: one box, since those tiers run the
+              whole mill rather than a station. */}
+          {rows.some((r) => !worksAtAStation(r.grade.sort_order)) && (
+            <section className="wm-station-box wm-all-stations">
+              <header className="wm-station-head">
+                <span className="wm-station-name">Across all stations</span>
+              </header>
+              {rows
+                .filter((r) => !worksAtAStation(r.grade.sort_order))
+                .map((r) => tierRow(r.grade, r.people))}
+            </section>
+          )}
           {/* Station tier and below: one box per station. */}
           {headGrade && (
             <div className="wm-stations">
