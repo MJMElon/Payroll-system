@@ -664,6 +664,42 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-org-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mob-org-text .mob-entry-name { font-size: 0.85rem; }
 
+/* A card's section label. Deliberately unlike a person's name: small,
+   uppercase, tracked out and muted, so a list of names underneath never
+   reads as a continuation of the heading. */
+.mob-card-label {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.64rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.1em;
+}
+/* …and the names themselves: the display face, bigger, sentence case. */
+.mob-person-name {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 0.92rem; font-weight: 700; letter-spacing: -0.01em;
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Round icon-only action — the whole button is the affordance, so it
+   takes the width of the glyph and no more. */
+.mob-icon-btn {
+  appearance: none; border: none; cursor: pointer; flex: none;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent-strong);
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+.mob-icon-btn:hover:not(:disabled) { background: var(--accent-strong); color: #fff; }
+.mob-icon-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Which station and team the chart below is drawn for. */
+.mob-chart-where {
+  display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap;
+  padding-bottom: 0.3rem;
+}
+.mob-chart-station {
+  font-size: 0.76rem; font-weight: 800; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--accent-strong);
+}
+
 /* Team tab — one drop lane per tier. A lane the leader may not hand out
    (their own tier and anything above it) is locked and reads as inert. */
 .mob-lane {

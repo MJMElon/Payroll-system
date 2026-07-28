@@ -2879,11 +2879,13 @@ function PayslipSection({ profile }: { profile: Profile | null }) {
 /* ------------------------------------------------------------------ */
 /* TAB 4 — TEAM                                                        */
 /*                                                                     */
-/* 1. New sign ups — name only, one button to pull them into your      */
+/* 1. Pending Allocation — name only, one icon to pull them into your  */
 /*    team. They land on the bottom (Operator) tier.                   */
-/* 2. Reporting line — your role, then the tier above, and the one     */
-/*    above that, stopping at Manager.                                 */
-/* 3. My team — one lane per tier. Drag a member onto the lane that    */
+/* 2. My Team — the chart for YOUR station and team. It starts at the  */
+/*    Manager rung (Management is an admin tier and stays off it) and  */
+/*    walks down a tier at a time to you: name and tier, nothing else, */
+/*    since every rung on this chart is your own station anyway.       */
+/* 3. Team members — one lane per tier. Drag a member onto the lane    */
 /*    matches what they actually do. A leader may hand out any tier    */
 /*    BELOW their own; their own tier and anything above it is locked, */
 /*    and dropping there explains the ceiling instead of failing       */
@@ -2994,6 +2996,18 @@ function TeamTab({
   const pending = people.filter((p) => !p.tags_confirmed)
   const myTeam = people.filter((p) => p.supervisor_id === profile?.id)
 
+  // The chart is scoped to one station and one team, so both are named
+  // once at the top instead of on every rung. A member with no team of
+  // their own inherits the label from the leader they report to.
+  const myStationName = stationLabel(profile)
+  const myLeader = profile?.supervisor_id
+    ? people.find((p) => p.id === profile.supervisor_id) ?? null
+    : null
+  const myTeamName =
+    profile?.team_name ??
+    myLeader?.team_name ??
+    (myLeader ? `${profileName(myLeader)}'s team` : 'No team yet')
+
   /** Pull a new sign up into my team, landing them on the intake tier. */
   async function claim(p: Profile) {
     if (!profile) return
@@ -3020,8 +3034,8 @@ function TeamTab({
     if (!mayAssign(g)) {
       setNotice(
         nextBelow
-          ? `You can only set a tier up to ${nextBelow.name}. ${g.name} is at or above your own ${tier?.name ?? ''} tier.`
-          : `You cannot set a tier from the ${tier?.name ?? 'bottom'} tier — there is nothing below you.`,
+          ? `You can only set a tier up to ${nextBelow.name}. Anything above that sits at or over your own level — it takes a higher permission than yours to place someone there.`
+          : `There is no tier below ${tier?.name ?? 'yours'}, so you cannot place anyone from here. Setting a tier takes a higher permission than yours.`,
       )
       return
     }
@@ -3043,25 +3057,23 @@ function TeamTab({
     if (person) moveTo(person, g)
   }
 
+  // Every rung of this chart is the reader's own station, so the node
+  // carries the name and the tier only — repeating the station would be
+  // the same word all the way down.
   const Node = ({
     grade,
-    person,
     label,
     me,
   }: {
     grade: Grade | null
-    person: Profile | null
     label: string
     me?: boolean
   }) => (
     <div className={`mob-org-node ${me ? 'me' : ''}`}>
       <span className={`tag-dot dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
       <span className="mob-org-text">
-        <span className="mob-entry-name">{label}</span>
-        <span className="mob-station-meta">
-          {grade?.name ?? '—'}
-          {person ? ` · ${stationLabel(person)}` : ''}
-        </span>
+        <span className="mob-person-name">{label}</span>
+        <span className="mob-station-meta">{grade?.name ?? '—'}</span>
       </span>
       {me && <span className="mob-chip ok">You</span>}
     </div>
@@ -3081,12 +3093,14 @@ function TeamTab({
 
         {error && <div className="mob-card"><div className="mob-sub" style={{ color: '#b91c1c' }}>{error}</div></div>}
 
-        {/* 1 — new sign ups: the name, and one button. */}
+        {/* 1 — Pending Allocation: the name, and one icon to claim them.
+            The section label is deliberately a small caps rule so it never
+            reads as one of the names underneath it. */}
         {isLeader && (
           <div className="mob-card">
-            <div className="mob-title">
-              New sign up{' '}
-              {pending.length > 0 && <span className="mob-chip warn">{pending.length} new</span>}
+            <div className="mob-card-label">
+              Pending Allocation{' '}
+              {pending.length > 0 && <span className="mob-chip warn">{pending.length}</span>}
             </div>
             {loading ? (
               <div className="mob-sub">Loading…</div>
@@ -3095,24 +3109,34 @@ function TeamTab({
             ) : (
               pending.map((p) => (
                 <div className="mob-row" key={p.id}>
-                  <span className="mob-entry-name">{profileName(p)}</span>
-                  <button className="mob-mini" disabled={busy === p.id} onClick={() => claim(p)}>
-                    + Add to my team
+                  <span className="mob-person-name">{profileName(p)}</span>
+                  <button
+                    className="mob-icon-btn"
+                    disabled={busy === p.id}
+                    onClick={() => claim(p)}
+                    title="Add to my team"
+                    aria-label={`Add ${profileName(p)} to my team`}
+                  >
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="9" cy="8" r="3.6" />
+                      <path d="M2.5 20c0-3.4 2.9-5.2 6.5-5.2 1.2 0 2.3.2 3.2.6" />
+                      <path d="M18 14v6M15 17h6" />
+                    </svg>
                   </button>
                 </div>
               ))
             )}
-            {pending.length > 0 && intakeGrade && (
-              <div className="mob-sub">
-                They join on {intakeGrade.name} — drag them to the right tier below.
-              </div>
-            )}
           </div>
         )}
 
-        {/* 2 — the reporting line, up to Manager. */}
+        {/* 2 — the chart: Manager down to you, for your own station. */}
         <div className="mob-card">
-          <div className="mob-title">Reporting line</div>
+          <div className="mob-card-label">My Team</div>
+          <div className="mob-chart-where">
+            <span className="mob-chart-station">{myStationName}</span>
+            <span className="mob-station-meta">{myTeamName}</span>
+          </div>
           {loading ? (
             <div className="mob-sub">Loading…</div>
           ) : (
@@ -3123,12 +3147,11 @@ function TeamTab({
                   <Node
                     key={g.id}
                     grade={g}
-                    person={person}
-                    label={person ? profileName(person) : `${g.name} — not assigned yet`}
+                    label={person ? profileName(person) : 'Not assigned yet'}
                   />
                 )
               })}
-              <Node grade={tier} person={profile} label={profileName(profile)} me />
+              <Node grade={tier} label={profileName(profile)} me />
             </div>
           )}
           {!loading && upperTiers.length === 0 && (
@@ -3143,8 +3166,8 @@ function TeamTab({
         {/* 3 — the tier lanes: drag each member to what they actually do. */}
         {isLeader ? (
           <div className="mob-card">
-            <div className="mob-title">
-              My team <span className="mob-chip">{myTeam.length}</span>
+            <div className="mob-card-label">
+              Team members <span className="mob-chip">{myTeam.length}</span>
             </div>
             <div className="mob-sub">
               Drag a member onto their real tier
@@ -3230,12 +3253,12 @@ function TeamTab({
             )}
 
             {!loading && myTeam.length === 0 && (
-              <div className="mob-sub">Nobody in your team yet — add a new sign up above.</div>
+              <div className="mob-sub">Nobody in your team yet — claim someone from Pending Allocation.</div>
             )}
           </div>
         ) : (
           <div className="mob-card">
-            <div className="mob-title">My team</div>
+            <div className="mob-card-label">Team members</div>
             <div className="mob-sub">Nobody reports to you.</div>
           </div>
         )}
@@ -3245,7 +3268,7 @@ function TeamTab({
       {notice && (
         <div className="mob-modal-wrap" role="dialog" aria-modal="true">
           <div className="mob-modal">
-            <div className="mob-title">Tier not allowed</div>
+            <div className="mob-title">Exceed permission</div>
             <div className="mob-sub">{notice}</div>
             <button className="mob-btn" onClick={() => setNotice(null)}>Got it</button>
           </div>
