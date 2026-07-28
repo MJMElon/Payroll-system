@@ -2270,6 +2270,23 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .op-tl-none { color: var(--border); }
 .op-tl-no { font-weight: 800; color: var(--muted); }
 .op-tl-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Space between the row's sign-off buttons, and the little "i" that
+   answers who verified and who approved on hover. */
+.op-tl-actions .linkbtn { margin-left: 0.9rem; }
+.op-tl-actions .linkbtn:first-child { margin-left: 0; }
+.op-info-col { width: 34px; text-align: center; }
+.op-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1.5px solid var(--muted); color: var(--muted);
+  font-size: 0.68rem; font-weight: 800; font-style: italic; font-family: Georgia, serif;
+  cursor: help; user-select: none;
+}
+.op-info:hover, .op-info:focus-visible { border-color: var(--accent-strong); color: var(--accent-strong); }
+/* The closing row that signs off everything still waiting. */
+.op-tl-allrow td { border-top: 2px solid var(--accent); padding-top: 0.55rem; }
+.op-tl-allrow .linkbtn { font-weight: 700; }
+
 .op-photo-link {
   appearance: none; border: none; background: none; cursor: pointer;
   font-size: 1.05rem; text-decoration: none; padding: 0; line-height: 1;

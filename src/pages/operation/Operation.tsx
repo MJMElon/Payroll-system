@@ -868,13 +868,6 @@ function GroupModal({
   const toVerify = group.entries.filter((e) => actionFor(e) === 'verified')
   const toApprove = group.entries.filter((e) => actionFor(e) === 'approved')
 
-  // Every distinct name that has stamped an entry in this record.
-  const names = (field: 'verified_by' | 'approved_by') => {
-    const list = [...new Set(group.entries.map((e) => shortWho(e[field])).filter(Boolean))] as string[]
-    return list.length ? list.join(', ') : null
-  }
-  const verifiedBy = names('verified_by')
-  const approvedBy = names('approved_by')
 
   const timeOf = (e: ProductionEntry) =>
     new Date(e.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -885,7 +878,7 @@ function GroupModal({
 
   return (
     <div className="modal-overlay" {...overlay}>
-      <div className="modal modal-view">
+      <div className="modal modal-xwide">
         <div className="row-form spread">
           <div className="op-rec-title">
             <h2>Submitted Work Record</h2>
@@ -917,7 +910,8 @@ function GroupModal({
                   <th className="right">Rate (RM)</th>
                   <th>Photo</th>
                   <th>Status</th>
-                  <th className="right" />
+                  <th className="op-info-col" aria-label="Sign-off info" />
+                  <th className="right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -925,7 +919,7 @@ function GroupModal({
                   sl.entries.length === 0 ? (
                     <tr className="op-tl-empty" key={sl.start}>
                       <td className="op-tl-hour">{hh(DAY_START_HOUR + sl.start)} – {hh(DAY_START_HOUR + sl.end)}</td>
-                      <td colSpan={6} className="op-tl-none">—</td>
+                      <td colSpan={7} className="op-tl-none">—</td>
                     </tr>
                   ) : (
                     sl.entries.map((e, i) => {
@@ -960,7 +954,17 @@ function GroupModal({
                           >
                             {badge(e.approval_status ?? 'approved')}
                           </td>
-                          <td className="right nowrap">
+                          <td className="op-info-col">
+                            <span
+                              className="op-info"
+                              tabIndex={0}
+                              title={`Verified by: ${shortWho(e.verified_by) ?? '—'}\nApproved by: ${shortWho(e.approved_by) ?? '—'}`}
+                              aria-label={`Verified by ${shortWho(e.verified_by) ?? 'nobody yet'}, approved by ${shortWho(e.approved_by) ?? 'nobody yet'}`}
+                            >
+                              i
+                            </span>
+                          </td>
+                          <td className="right nowrap op-tl-actions">
                             {step === 'verified' && (
                               <button className="linkbtn" disabled={busy === e.id} onClick={() => onAct(e, 'verified')}>
                                 ✓ Verify
@@ -981,6 +985,23 @@ function GroupModal({
                       )
                     })
                   ),
+                )}
+                {(toVerify.length > 0 || toApprove.length > 0) && (
+                  <tr className="op-tl-allrow">
+                    <td colSpan={7} />
+                    <td className="right nowrap op-tl-actions">
+                      {toVerify.length > 0 && (
+                        <button className="linkbtn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
+                          ✓ Verify All
+                        </button>
+                      )}
+                      {toApprove.length > 0 && (
+                        <button className="linkbtn" disabled={busy === 'bulk'} onClick={() => onActMany(toApprove, 'approved')}>
+                          ✓ Approve All
+                        </button>
+                      )}
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -1037,36 +1058,6 @@ function GroupModal({
           )}
         </div>
 
-        {/* Who has signed this record off — stamped entry by entry, read
-            here as one line each. */}
-        <div className="tag-section op-rec-sec">
-          <div className="tag-section-title">Sign-off</div>
-          <div className="op-calc-line">
-            <span>Verified by</span>
-            <span>{verifiedBy ?? '—'}</span>
-          </div>
-          <div className="op-calc-line">
-            <span>Approved by</span>
-            <span>{approvedBy ?? '—'}</span>
-          </div>
-        </div>
-
-        {/* The whole record signed off in one press — same access rules as
-            the per-entry buttons, covering every entry that is ready. */}
-        {(toVerify.length > 0 || toApprove.length > 0) && (
-          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-            {toVerify.length > 0 && (
-              <button className="btn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
-                ✓ Verify record
-              </button>
-            )}
-            {toApprove.length > 0 && (
-              <button className="btn" disabled={busy === 'bulk'} onClick={() => onActMany(toApprove, 'approved')}>
-                ✓ Approve record
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
       {photoView && (
