@@ -1338,16 +1338,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-side-inner {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   transition: border-color 0.12s, background 0.12s;
-  padding: 0.8rem 0.9rem 0.9rem; display: flex; flex-direction: column; gap: 0.55rem;
+  padding: 0.85rem 0.95rem; display: flex; flex-direction: column; gap: 0.55rem;
   max-height: calc(100vh - 5.5rem); overflow-y: auto;
 }
-.wm-side-title {
-  appearance: none; background: none; border: none; cursor: pointer;
-  padding: 0 0 0.5rem; border-bottom: 1px solid var(--border);
+/* The three columns share one title style, so they read as one page. */
+.wm-side-title, .wm-section-title {
+  appearance: none; background: none; border: none;
+  margin: 0; padding: 0 0 0.55rem; border-bottom: 1px solid var(--border);
   font-family: 'Montserrat', system-ui, sans-serif; color: var(--text);
   display: flex; align-items: center; gap: 0.4rem;
-  font-size: 1rem; font-weight: 600; letter-spacing: -0.01em;
+  font-size: 0.95rem; font-weight: 700; letter-spacing: -0.01em;
 }
+.wm-side-title { cursor: pointer; }
 .wm-side-caret { color: var(--muted); font-size: 0.7rem; flex: none; }
 .wm-side-label { flex: 1; text-align: left; }
 .wm-side-title .count-badge.static { margin-left: 0.15rem; }
@@ -1359,14 +1361,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Middle column — the formation. */
 .wm-formation {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; padding: 0.8rem 0.9rem 1rem;
-  display: flex; flex-direction: column; gap: 0.15rem;
+  border-radius: 12px; padding: 0.85rem 0.95rem;
+  display: flex; flex-direction: column; gap: 0.55rem;
 }
-.wm-formation-head {
-  display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
-  padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); margin-bottom: 0.4rem;
-}
-.wm-section-title { margin: 0; font-size: 1rem; letter-spacing: -0.01em; }
+.wm-formation-head { display: flex; }
+.wm-formation-head .wm-section-title { flex: 1; }
 
 /* One row per tier. */
 .wm-tier-row { padding: 0.55rem 0 0.15rem; }
@@ -1432,13 +1431,21 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-block:hover .wm-add, .wm-block.selected .wm-add { visibility: visible; }
 .wm-add:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
 
+/* Who holds a tier, listed in its pop-out. */
+.tier-people { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.tier-person {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.15rem 0.6rem; font-size: 0.8rem; font-weight: 600;
+}
+
 /* Station boxes: the floor from the station-head tier down. Every station
    is the SAME tier, so they stand side by side — stacked, they read as a
    hierarchy that is not there. */
 .wm-stations {
   display: flex; gap: 0.7rem; align-items: flex-start;
-  overflow-x: auto; padding: 0.5rem 0.1rem 0.3rem;
+  overflow-x: auto; padding: 0.1rem 0.1rem 0.3rem;
 }
+.wm-all-stations { max-width: none; margin-bottom: 0.6rem; }
 .wm-station-box {
   flex: 0 0 auto; min-width: 360px; max-width: 720px;
   border: 1px solid var(--border); border-radius: 12px;
@@ -1533,13 +1540,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Right column — the person you opened. */
 .wm-panel {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 0.7rem;
+  padding: 0.85rem 0.95rem; display: flex; flex-direction: column; gap: 0.55rem;
   position: sticky; top: 4.25rem; max-height: calc(100vh - 5.5rem); overflow-y: auto;
 }
-.wm-panel-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);
-}
+.wm-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.wm-panel-head .wm-section-title { flex: 1; border-bottom: none; padding-bottom: 0; }
+.wm-panel-head { padding-bottom: 0.55rem; border-bottom: 1px solid var(--border); }
 /* Profile details: a "Label : value" sheet that turns into a form. */
 .wm-panel-tools { display: flex; align-items: center; gap: 0.2rem; }
 .wm-panel-tools .wm-icon { visibility: visible; font-size: 0.9rem; padding: 0.2rem 0.35rem; }

@@ -692,6 +692,60 @@ function StationModal({
 /* do.                                                                */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Who holds a tier. Team Manage draws the mill from the Manager tier   */
+/* down, so the top tier's people are listed here instead — under the   */
+/* module sheet of the tag itself.                                      */
+/* ------------------------------------------------------------------ */
+function TierPeople({ gradeId }: { gradeId: string }) {
+  const [people, setPeople] = useState<{ id: string; full_name: string | null; email: string | null }[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let live = true
+    supabase
+      .from('access_profiles')
+      .select('id, full_name, email')
+      .eq('grade_id', gradeId)
+      .order('full_name')
+      .then(({ data }) => {
+        if (!live) return
+        setPeople(data ?? [])
+        setLoading(false)
+      })
+    return () => {
+      live = false
+    }
+  }, [gradeId])
+
+  // A name if the account has one, otherwise the part before the @ — an
+  // email address is not a name.
+  const label = (p: { full_name: string | null; email: string | null }) => {
+    const n = p.full_name?.trim()
+    if (n && n.toLowerCase() !== (p.email ?? '').trim().toLowerCase()) return n
+    return (p.email ?? '').split('@')[0] || '—'
+  }
+
+  return (
+    <div className="tag-section">
+      <div className="tag-section-title">People on this tier ({people.length})</div>
+      {loading ? (
+        <span className="small muted">Loading…</span>
+      ) : people.length === 0 ? (
+        <span className="small muted">Nobody holds this tier yet.</span>
+      ) : (
+        <div className="tier-people">
+          {people.map((p) => (
+            <span className="tier-person" key={p.id} title={p.email ?? ''}>
+              {label(p)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TagModal({
   grade,
   mode,
@@ -838,6 +892,8 @@ function TagModal({
             />
           </div>
 
+          <TierPeople gradeId={grade.id} />
+
           {canEdit && (
             <div className="row-form" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="btn" onClick={() => onMode('edit')}>
@@ -893,6 +949,8 @@ function TagModal({
             onToggleCapability={toggleCapability}
           />
         </div>
+
+        {grade && <TierPeople gradeId={grade.id} />}
 
         {/* Anything that governs no single module keeps its own block. */}
         {looseGroups.map((group) => (
