@@ -453,7 +453,6 @@ function TagsTab() {
           station={stationModal.station}
           mode={stationModal.mode}
           canEdit={canManageStations}
-          usedBy={jobsAt(stationModal.station.id)}
           onMode={(mode) => setStationModal((s) => (s ? { ...s, mode } : s))}
           onClose={() => setStationModal(null)}
           onSaved={() => {
@@ -561,7 +560,6 @@ function StationModal({
   station,
   mode,
   canEdit,
-  usedBy,
   onMode,
   onClose,
   onSaved,
@@ -569,8 +567,6 @@ function StationModal({
   station: Station
   mode: Mode
   canEdit: boolean
-  /** Piece Rate work types pointing here — what stops a delete. */
-  usedBy: StationJob[]
   onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
@@ -619,28 +615,6 @@ function StationModal({
             <div className="tag-section">
               <div className="tag-section-title">Station name</div>
               <span>{station.name}</span>
-            </div>
-
-            {/* What is holding this station down, named — a station tag
-                cannot be deleted while Piece Rate work types point at it,
-                so this is the list to clear first. */}
-            <div className="tag-section">
-              <div className="tag-section-title">Used by</div>
-              {usedBy.length === 0 ? (
-                <span className="small muted">Nothing — this station can be deleted.</span>
-              ) : (
-                <>
-                  {usedBy.map((j) => (
-                    <span key={j.id} className="small">
-                      · {j.name}
-                      {!j.active && <span className="muted"> (inactive)</span>}
-                    </span>
-                  ))}
-                  <p className="tag-section-hint">
-                    Clear these in <Link to="/piece-rate">Piece Rate</Link> to free the station.
-                  </p>
-                </>
-              )}
             </div>
 
             {canEdit && (
