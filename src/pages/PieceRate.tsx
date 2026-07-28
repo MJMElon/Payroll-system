@@ -28,7 +28,8 @@ import {
   type Station,
 } from '../lib/supabase'
 
-const UNIT_SUGGESTIONS = ['/cage tipped', '/job done', '/tonne', '/bunch', '/trip', '/hour']
+// What a piece rate is paid by, offered as a dropdown in the create window.
+const UNIT_OPTIONS = ['/job done', '/cage tipped', '/tonne', '/bunch', '/trip', '/hour']
 
 // Bucket key for jobs with no tag, so the pivoted tables still give them a column.
 const NO_TAG = '__none__'
@@ -264,6 +265,7 @@ export default function PieceRate() {
           job={modal === 'create' ? null : modal}
           currentRate={modal === 'create' ? null : latestRate.get(modal.id) ?? null}
           onClose={() => setModal('closed')}
+          onReload={load}
           onSaved={(submitted) => {
             setModal('closed')
             setNotice(submitted ? 'Piece rate submitted — waiting for approval.' : null)
@@ -1072,7 +1074,59 @@ function HistoryList({
 
 /* ------------------------------------------------------------------ */
 /* Floating create/edit window                                        */
+/*                                                                    */
+/* Laid out like the masterlist itself: one line per piece rate, so a  */
+/* whole batch can be keyed in and submitted in one go instead of      */
+/* reopening the window for every single rate.                        */
 /* ------------------------------------------------------------------ */
+
+// Picked in the Unit column. It is not a unit but a pay shape: choosing
+// it opens the two hourly-tier columns, and the rate is stored per hour.
+const TIERED = '__tiered__'
+
+interface RateRow {
+  key: number
+  stationId: string
+  gradeId: string
+  description: string
+  rate: string
+  unit: string
+  tier1: string
+  tier2: string
+  effectiveFrom: string
+}
+
+let rowSeq = 0
+function blankRow(): RateRow {
+  rowSeq += 1
+  return {
+    key: rowSeq,
+    stationId: '',
+    gradeId: '',
+    description: '',
+    rate: '',
+    unit: '',
+    tier1: '',
+    tier2: '',
+    effectiveFrom: todayISO(),
+  }
+}
+
+function rowFromJob(job: Job, rate: Rate | null): RateRow {
+  const tiered = rate?.tier2_rate != null
+  rowSeq += 1
+  return {
+    key: rowSeq,
+    stationId: job.station_id,
+    gradeId: job.grade_id ?? '',
+    description: job.name,
+    rate: !tiered && rate ? String(Number(rate.rate)) : '',
+    unit: tiered ? TIERED : job.unit,
+    tier1: tiered && rate ? String(Number(rate.rate)) : '',
+    tier2: tiered && rate?.tier2_rate != null ? String(Number(rate.tier2_rate)) : '',
+    effectiveFrom: rate?.effective_from ?? todayISO(),
+  }
+}
 
 function ContractModal({
   stations,
@@ -1081,6 +1135,7 @@ function ContractModal({
   currentRate,
   onClose,
   onSaved,
+  onReload,
 }: {
   stations: Station[]
   grades: Grade[]
@@ -1088,116 +1143,175 @@ function ContractModal({
   currentRate: Rate | null
   onClose: () => void
   onSaved: (submittedForApproval: boolean) => void
+  onReload: () => void
 }) {
-  const [stationId, setStationId] = useState(job?.station_id ?? '')
-  const [gradeId, setGradeId] = useState(job?.grade_id ?? '')
-  const [description, setDescription] = useState(job?.name ?? '')
-  const [unit, setUnit] = useState(job?.unit ?? '')
-  const [rate, setRate] = useState(currentRate ? String(Number(currentRate.rate)) : '')
-  const [tiered, setTiered] = useState(currentRate?.tier2_rate != null)
-  const [tier2, setTier2] = useState(
-    currentRate?.tier2_rate != null ? String(Number(currentRate.tier2_rate)) : '',
-  )
-  const [effectiveFrom, setEffectiveFrom] = useState(currentRate?.effective_from ?? todayISO())
+  const [rows, setRows] = useState<RateRow[]>(() => [job ? rowFromJob(job, currentRate) : blankRow()])
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  // The two hourly columns belong to the table, not to one line, so they
+  // appear as soon as any line is paid by the hour.
+  const anyTiered = rows.some((r) => r.unit === TIERED)
+
+  // An older contract may carry a unit nobody would pick today; keep it in
+  // the list so editing that rate doesn't silently change its unit.
+  const unitOptions = useMemo(() => {
+    const list = [...UNIT_OPTIONS]
+    if (job?.unit && !list.includes(job.unit)) list.unshift(job.unit)
+    return list
+  }, [job])
+
+  function patch(key: number, change: Partial<RateRow>) {
+    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...change } : r)))
+  }
+
+  function addRow() {
+    setRows((rs) => [...rs, blankRow()])
+  }
+
+  function removeRow(key: number) {
+    setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.key !== key) : rs))
+  }
+
+  /** What stops this line from being saved, or null when it is ready. */
+  function problem(row: RateRow): string | null {
+    if (!row.stationId) return 'pick a station.'
+    if (!row.description.trim()) return 'enter the work description.'
+    if (!row.unit) return 'pick a unit.'
+    const money = (v: string) => {
+      const n = Number(v)
+      return v.trim() !== '' && !Number.isNaN(n) && n >= 0
+    }
+    if (row.unit === TIERED) {
+      if (!money(row.tier1)) return 'enter a valid Tier 1 rate.'
+      if (!money(row.tier2)) return 'enter a valid Tier 2 rate.'
+    } else if (!money(row.rate)) {
+      return 'enter a valid non-negative piece rate.'
+    }
+    if (!row.effectiveFrom) return 'pick an effective date.'
+    return null
+  }
+
+  /** Writes one line. Returns true when it now waits for approval. */
+  async function saveOne(row: RateRow, existing: Job | null): Promise<boolean> {
+    const tiered = row.unit === TIERED
+    const rateValue = Number(tiered ? row.tier1 : row.rate)
+    const tier2Value = tiered ? Number(row.tier2) : null
+    const fields = {
+      station_id: row.stationId,
+      grade_id: row.gradeId || null,
+      name: row.description.trim(),
+      unit: tiered ? '/hour' : row.unit,
+    }
+    let jobId = existing?.id
+    let submitted = false
+
+    if (existing) {
+      // Only send the identity fields (station/tag/description/unit) when
+      // one actually changed — Postgres re-checks the station+tag+name
+      // uniqueness constraint against every other row whenever an UPDATE
+      // touches those columns, even to the same value, so resaving just
+      // the rate on an unrelated field would otherwise fail if some other
+      // job happens to share that combination.
+      const identityChanged =
+        fields.station_id !== existing.station_id ||
+        fields.grade_id !== existing.grade_id ||
+        fields.name !== existing.name ||
+        fields.unit !== existing.unit
+      if (identityChanged) {
+        const { error } = await supabase.from('jobs').update(fields).eq('id', existing.id)
+        if (error) {
+          throw new Error(
+            error.message.includes('jobs_station_grade_name_idx')
+              ? 'Another piece rate already exists for this exact Station + Tag + Work description — change one of those, or edit the existing entry instead (check "Show inactive" if it might be hidden).'
+              : error.message,
+          )
+        }
+      }
+    } else {
+      // Every new contract waits for verify + approve, admins included.
+      submitted = true
+      const { data, error } = await supabase
+        .from('jobs')
+        .insert({ ...fields, approval_status: 'pending' })
+        .select()
+        .single()
+      if (error) {
+        throw new Error(
+          error.message.includes('jobs_station_grade_name_idx')
+            ? 'A piece rate already exists for this exact Station + Tag + Work description — edit that one instead (check "Show inactive" if it might be hidden).'
+            : error.message,
+        )
+      }
+      jobId = data.id
+    }
+
+    const unchanged =
+      existing && currentRate &&
+      Number(currentRate.rate) === rateValue &&
+      (currentRate.tier2_rate ?? null) === tier2Value &&
+      currentRate.effective_from === row.effectiveFrom
+    if (jobId && !unchanged) {
+      const { error } = await supabase
+        .from('piece_rates')
+        .upsert(
+          { job_id: jobId, rate: rateValue, tier2_rate: tier2Value, effective_from: row.effectiveFrom },
+          { onConflict: 'job_id,effective_from' },
+        )
+      if (error) throw new Error(error.message)
+      // A price change on an APPROVED contract must go through verify +
+      // approve again — otherwise editing the rate would bypass the flow.
+      if (existing && existing.approval_status === 'approved') {
+        submitted = true
+        const { error: reErr } = await supabase
+          .from('jobs')
+          .update({
+            approval_status: 'pending',
+            verified_by: null,
+            verified_at: null,
+            approved_by: null,
+            approved_at: null,
+          } as never)
+          .eq('id', existing.id)
+        if (reErr) throw new Error(reErr.message)
+      }
+    }
+    return submitted
+  }
 
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    const rateValue = Number(rate)
-    if (rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
-      return setError('Enter a valid non-negative rate.')
-    }
-    const tier2Value = tiered ? Number(tier2) : null
-    if (tiered && (tier2.trim() === '' || Number.isNaN(tier2Value) || (tier2Value as number) < 0)) {
-      return setError('Enter a valid non-negative Tier 2 rate.')
-    }
-    if (!effectiveFrom) {
-      return setError('Pick an effective date.')
+    const label = (i: number) => (rows.length > 1 ? `Row ${i + 1}: ` : '')
+    for (let i = 0; i < rows.length; i++) {
+      const p = problem(rows[i])
+      if (p) return setError(label(i) + p.charAt(0).toUpperCase() + p.slice(1))
     }
     setSaving(true)
     try {
-      let jobId = job?.id
       let submitted = false
-      const fields = {
-        station_id: stationId,
-        grade_id: gradeId || null,
-        name: description.trim(),
-        unit: unit.trim() || 'unit',
-      }
-      if (job) {
-        // Only send the identity fields (station/tag/description/unit) when
-        // one actually changed — Postgres re-checks the station+tag+name
-        // uniqueness constraint against every other row whenever an UPDATE
-        // touches those columns, even to the same value, so resaving just
-        // the rate on an unrelated field would otherwise fail if some other
-        // job happens to share that combination.
-        const identityChanged =
-          fields.station_id !== job.station_id ||
-          fields.grade_id !== job.grade_id ||
-          fields.name !== job.name ||
-          fields.unit !== job.unit
-        if (identityChanged) {
-          const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
-          if (error) {
-            throw new Error(
-              error.message.includes('jobs_station_grade_name_idx')
-                ? 'Another piece rate already exists for this exact Station + Tag + Work description — change one of those, or edit the existing entry instead (check "Show inactive" if it might be hidden).'
-                : error.message,
-            )
+      const saved: number[] = []
+      for (let i = 0; i < rows.length; i++) {
+        try {
+          submitted = (await saveOne(rows[i], job)) || submitted
+          saved.push(rows[i].key)
+        } catch (err) {
+          // Lines already written stay written. They are taken off the
+          // window so a retry cannot submit them a second time, and the
+          // list behind is refreshed so they show up there instead.
+          const msg = err instanceof Error ? err.message : String(err)
+          if (saved.length) {
+            setRows((rs) => rs.filter((r) => !saved.includes(r.key)))
+            onReload()
           }
-        }
-      } else {
-        // Every new contract waits for verify + approve, admins included.
-        submitted = true
-        const { data, error } = await supabase
-          .from('jobs')
-          .insert({ ...fields, approval_status: 'pending' })
-          .select()
-          .single()
-        if (error) {
-          throw new Error(
-            error.message.includes('jobs_station_grade_name_idx')
-              ? 'A piece rate already exists for this exact Station + Tag + Work description — edit that one instead (check "Show inactive" if it might be hidden).'
-              : error.message,
+          setError(
+            label(i) + msg +
+              (saved.length ? ` (the ${saved.length} row(s) before it were saved.)` : ''),
           )
-        }
-        jobId = data.id
-      }
-      const unchanged =
-        job && currentRate &&
-        Number(currentRate.rate) === rateValue &&
-        (currentRate.tier2_rate ?? null) === tier2Value &&
-        currentRate.effective_from === effectiveFrom
-      if (jobId && !unchanged) {
-        const { error } = await supabase
-          .from('piece_rates')
-          .upsert(
-            { job_id: jobId, rate: rateValue, tier2_rate: tier2Value, effective_from: effectiveFrom },
-            { onConflict: 'job_id,effective_from' },
-          )
-        if (error) throw new Error(error.message)
-        // A price change on an APPROVED contract must go through verify +
-        // approve again — otherwise editing the rate would bypass the flow.
-        if (job && job.approval_status === 'approved') {
-          submitted = true
-          const { error: reErr } = await supabase
-            .from('jobs')
-            .update({
-              approval_status: 'pending',
-              verified_by: null,
-              verified_at: null,
-              approved_by: null,
-              approved_at: null,
-            } as never)
-            .eq('id', job.id)
-          if (reErr) throw new Error(reErr.message)
+          return
         }
       }
       onSaved(submitted)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }
@@ -1205,127 +1319,154 @@ function ContractModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+      <form className="modal modal-table" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="row-form spread">
           <h2>{job ? 'Edit piece rate' : 'Create new piece rate'}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         {error && <div className="error">{error}</div>}
+
         {!job && (
-          <p className="muted small">
-            New piece rates are submitted for approval before they appear in the list.
-          </p>
+          <div className="row-form spread">
+            <button type="button" className="btn ghost" onClick={addRow}>+ Add row</button>
+            <span className="muted small">
+              New piece rates are submitted for approval before they appear in the list.
+            </span>
+          </div>
         )}
 
-        <label className="field">
-          <span>Station</span>
-          <select value={stationId} onChange={(e) => setStationId(e.target.value)} required>
-            <option value="">Pick a station…</option>
-            {stations.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        </label>
-
-        <label className="field">
-          <span>Tag (who this rate belongs to)</span>
-          <select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
-            <option value="">No tag</option>
-            {grades.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-          <span className="small">Tags are managed in Settings → Tags.</span>
-        </label>
-
-        <label className="field">
-          <span>Work description</span>
-          <input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="e.g. Tipping sterilizer cage"
-            required
-          />
-        </label>
-
-        <label className="field">
-          <span>Unit</span>
-          <input
-            list="unit-suggestions"
-            value={unit}
-            onChange={(e) => setUnit(e.target.value)}
-            placeholder="e.g. /cage tipped, /job done"
-            required
-          />
-          <datalist id="unit-suggestions">
-            {UNIT_SUGGESTIONS.map((u) => (
-              <option key={u} value={u} />
-            ))}
-          </datalist>
-        </label>
-
-        <div className="tiered-toggle">
-          <button type="button" className={!tiered ? 'active' : ''} onClick={() => setTiered(false)}>
-            Flat rate
-          </button>
-          <button type="button" className={tiered ? 'active' : ''} onClick={() => setTiered(true)}>
-            Tiered by hour
-          </button>
+        <div className="table-scroll">
+          <table className="table rate-rows">
+            <thead>
+              <tr>
+                <th className="c-station">Station</th>
+                <th className="c-tag">Tag</th>
+                <th className="c-desc">Work description</th>
+                <th className="c-num">Piece rate (RM)</th>
+                <th className="c-unit">Unit</th>
+                {anyTiered && (
+                  <>
+                    <th className="c-num">Tier 1 — 1st to 4th /hr</th>
+                    <th className="c-num">Tier 2 — 5th onward /hr</th>
+                  </>
+                )}
+                <th className="c-date">Effective date</th>
+                {rows.length > 1 && <th className="c-kill" />}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const tiered = r.unit === TIERED
+                return (
+                  <tr key={r.key}>
+                    <td className="c-station">
+                      <select
+                        value={r.stationId}
+                        onChange={(e) => patch(r.key, { stationId: e.target.value })}
+                      >
+                        <option value="" />
+                        {stations.map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="c-tag">
+                      <select
+                        value={r.gradeId}
+                        onChange={(e) => patch(r.key, { gradeId: e.target.value })}
+                      >
+                        <option value="" />
+                        {grades.map((g) => (
+                          <option key={g.id} value={g.id}>{g.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="c-desc">
+                      <input
+                        value={r.description}
+                        onChange={(e) => patch(r.key, { description: e.target.value })}
+                      />
+                    </td>
+                    <td className="c-num">
+                      <input
+                        inputMode="decimal"
+                        className="money"
+                        value={tiered ? '' : r.rate}
+                        disabled={tiered}
+                        onChange={(e) => patch(r.key, { rate: e.target.value })}
+                      />
+                    </td>
+                    <td className="c-unit">
+                      <select
+                        value={r.unit}
+                        onChange={(e) => patch(r.key, { unit: e.target.value })}
+                      >
+                        <option value="" />
+                        {unitOptions.map((u) => (
+                          <option key={u} value={u}>{u}</option>
+                        ))}
+                        <option value={TIERED}>Tiered by hour</option>
+                      </select>
+                    </td>
+                    {anyTiered && (
+                      <>
+                        <td className="c-num">
+                          <input
+                            inputMode="decimal"
+                            className="money"
+                            value={r.tier1}
+                            disabled={!tiered}
+                            onChange={(e) => patch(r.key, { tier1: e.target.value })}
+                          />
+                        </td>
+                        <td className="c-num">
+                          <input
+                            inputMode="decimal"
+                            className="money"
+                            value={r.tier2}
+                            disabled={!tiered}
+                            onChange={(e) => patch(r.key, { tier2: e.target.value })}
+                          />
+                        </td>
+                      </>
+                    )}
+                    <td className="c-date">
+                      <input
+                        type="date"
+                        value={r.effectiveFrom}
+                        onChange={(e) => patch(r.key, { effectiveFrom: e.target.value })}
+                      />
+                    </td>
+                    {rows.length > 1 && (
+                      <td className="c-kill">
+                        <button
+                          type="button"
+                          className="modal-close"
+                          onClick={() => removeRow(r.key)}
+                          title="Remove this row"
+                          aria-label="Remove this row"
+                        >
+                          ×
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
 
-        {tiered ? (
-          <div className="row-form">
-            <label className="field inline grow">
-              <span>Tier 1 — 1st to 4th /hr</span>
-              <input
-                inputMode="decimal"
-                value={rate}
-                onChange={(e) => setRate(e.target.value)}
-                placeholder="0.00"
-                required
-              />
-            </label>
-            <label className="field inline grow">
-              <span>Tier 2 — 5th onward /hr</span>
-              <input
-                inputMode="decimal"
-                value={tier2}
-                onChange={(e) => setTier2(e.target.value)}
-                placeholder="0.00"
-                required
-              />
-            </label>
-          </div>
-        ) : (
-          <label className="field">
-            <span>Rate</span>
-            <input
-              inputMode="decimal"
-              value={rate}
-              onChange={(e) => setRate(e.target.value)}
-              placeholder="0.00"
-              required
-            />
-          </label>
-        )}
-        {tiered && (
+        {anyTiered && (
           <p className="small muted" style={{ margin: 0 }}>
-            Every hour resets: the first 4 units done pay Tier 1, the 5th unit
-            onward that same hour pays Tier 2 — then it starts over next hour.
+            Tiered by hour resets every hour: the first 4 units done pay Tier 1,
+            the 5th unit onward that same hour pays Tier 2.
           </p>
         )}
-
-        <label className="field">
-          <span>Effective date</span>
-          <input
-            type="date"
-            value={effectiveFrom}
-            onChange={(e) => setEffectiveFrom(e.target.value)}
-            required
-          />
-          <span className="small">Payroll uses whichever rate is effective on the day worked.</span>
-        </label>
+        <p className="small muted" style={{ margin: 0 }}>
+          Payroll uses whichever rate is effective on the day worked.
+        </p>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
