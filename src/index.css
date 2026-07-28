@@ -1440,7 +1440,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   overflow-x: auto; padding: 0.5rem 0.1rem 0.3rem;
 }
 .wm-station-box {
-  flex: 0 0 auto; min-width: 340px; max-width: 560px;
+  flex: 0 0 auto; min-width: 360px; max-width: 720px;
   border: 1px solid var(--border); border-radius: 12px;
   background: #fafbfc; padding: 0.6rem 0.7rem 0.7rem;
 }
@@ -1467,21 +1467,26 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-srow-body.col { flex-direction: column; align-items: stretch; gap: 0.3rem; }
 .wm-srow-body.over { border-color: var(--accent-strong); background: var(--accent-soft); }
 
-/* A team's line within a tier row. */
-.wm-tline {
-  display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;
-  border: 1px dashed transparent; border-radius: 9px; padding: 0.15rem 0.2rem;
+/* Teams are the COLUMNS, tiers the ROWS: a name never repeats what its
+   column and row already say. */
+.wm-grid { display: grid; gap: 0.3rem 0.45rem; align-items: start; margin-top: 0.15rem; }
+.wm-grid-head {
+  display: flex; align-items: center; gap: 0.25rem;
+  padding: 0.15rem 0.3rem 0.3rem; border-bottom: 1px solid var(--border);
 }
-.wm-tline.over { border-color: var(--accent-strong); background: var(--accent-soft); }
+.wm-grid-head:hover .wm-icon { visibility: visible; }
+.wm-cell {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; align-content: flex-start;
+  min-height: 2rem; padding: 0.15rem;
+  border: 1px dashed transparent; border-radius: 8px;
+}
+.wm-cell.over { border-color: var(--accent-strong); background: var(--accent-soft); }
 .wm-tline-name {
-  flex: none; min-width: 4.4rem;
-  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em;
+  font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--accent-strong);
 }
 .wm-tline-name.none { color: var(--muted); font-weight: 600; }
-.wm-tline-tools { display: flex; gap: 0.1rem; }
-.wm-tline:hover .wm-icon { visibility: visible; }
-.wm-tline-blocks { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; flex: 1; min-width: 0; }
+.wm-tline-tools { display: flex; gap: 0.1rem; margin-left: auto; }
 
 /* The compact block used for the deepest tier. */
 .wm-block.mini {

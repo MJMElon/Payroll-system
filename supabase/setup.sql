@@ -1335,6 +1335,117 @@ revoke all on function public.set_my_avatar(text) from public;
 grant execute on function public.set_my_avatar(text) to authenticated;
 
 -- ---------------------------------------------------------------------------
+-- Audit trail: the tag tables were the visible gap. Settings calls itself
+-- "Tier & Station Tags Setting" and logged only half of that — grades had a
+-- trigger, stations had none, so adding, renaming or deleting a station tag
+-- left no trace at all. Workers and photo records were unwatched too.
+--
+-- payroll_lines is deliberately NOT audited: a payroll run writes one line
+-- per worker per job, so a single run would bury every other event in the
+-- log. The run itself is audited, and the lines are its detail.
+-- ---------------------------------------------------------------------------
+
+drop trigger if exists trg_audit_stations on public.stations;
+create trigger trg_audit_stations
+  after insert or update or delete on public.stations
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_workers on public.workers;
+create trigger trg_audit_workers
+  after insert or update or delete on public.workers
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_photo_records on public.photo_records;
+create trigger trg_audit_photo_records
+  after insert or update or delete on public.photo_records
+  for each row execute function public.log_audit();
+
+-- ---------------------------------------------------------------------------
+-- No two tags may read the same, and no two people may share an email or a
+-- phone number. Compared with case and surrounding space ignored; phone
+-- numbers by their digits alone, so "012-345 6789" and "0123456789" are one
+-- number.
+--
+-- Each index is created only when the table is already clean. Existing
+-- duplicates raise a NOTICE naming them instead of failing this whole
+-- script — clear them, then re-run and the index is added.
+-- ---------------------------------------------------------------------------
+
+do $$
+declare dups text;
+begin
+  select string_agg(distinct name, ', ') into dups
+    from public.stations
+    where lower(btrim(name)) in (
+      select lower(btrim(name)) from public.stations
+      group by lower(btrim(name)) having count(*) > 1
+    );
+  if dups is null then
+    create unique index if not exists stations_name_unique
+      on public.stations (lower(btrim(name)));
+  else
+    raise notice 'stations: duplicate names, uniqueness not enforced yet -> %', dups;
+  end if;
+end $$;
+
+do $$
+declare dups text;
+begin
+  select string_agg(distinct name, ', ') into dups
+    from public.grades
+    where lower(btrim(name)) in (
+      select lower(btrim(name)) from public.grades
+      group by lower(btrim(name)) having count(*) > 1
+    );
+  if dups is null then
+    create unique index if not exists grades_name_unique
+      on public.grades (lower(btrim(name)));
+  else
+    raise notice 'grades: duplicate names, uniqueness not enforced yet -> %', dups;
+  end if;
+end $$;
+
+do $$
+declare dups text;
+begin
+  select string_agg(distinct email, ', ') into dups
+    from public.access_profiles
+    where email is not null and lower(btrim(email)) in (
+      select lower(btrim(email)) from public.access_profiles
+      where email is not null
+      group by lower(btrim(email)) having count(*) > 1
+    );
+  if dups is null then
+    create unique index if not exists access_profiles_email_unique
+      on public.access_profiles (lower(btrim(email)))
+      where email is not null and btrim(email) <> '';
+  else
+    raise notice 'access_profiles: duplicate emails, uniqueness not enforced yet -> %', dups;
+  end if;
+end $$;
+
+do $$
+declare dups text;
+begin
+  select string_agg(distinct phone, ', ') into dups
+    from public.access_profiles
+    where phone is not null
+      and regexp_replace(phone, '\D', '', 'g') <> ''
+      and regexp_replace(phone, '\D', '', 'g') in (
+        select regexp_replace(phone, '\D', '', 'g') from public.access_profiles
+        where phone is not null and regexp_replace(phone, '\D', '', 'g') <> ''
+        group by regexp_replace(phone, '\D', '', 'g') having count(*) > 1
+      );
+  if dups is null then
+    create unique index if not exists access_profiles_phone_unique
+      on public.access_profiles ((regexp_replace(phone, '\D', '', 'g')))
+      where phone is not null and regexp_replace(phone, '\D', '', 'g') <> '';
+  else
+    raise notice 'access_profiles: duplicate phone numbers, uniqueness not enforced yet -> %', dups;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- Working a team is a GRANT, not a rung. Until now the mobile Team tab
 -- offered Pending Allocation and the tier board to anyone sitting above the
 -- bottom tier, which handed an Operator the same controls as a Station Head.
