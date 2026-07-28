@@ -1189,10 +1189,16 @@ create policy "authenticated read teams" on public.teams
 
 -- Create / rename / remove: the tier that owns the row and every tier above
 -- it, plus the granted worker-management functions.
+-- PostgREST talks to the database as these roles: without the grants a
+-- request never reaches a policy at all.
+grant select, insert, update, delete on public.teams to authenticated;
+grant select on public.teams to anon;
+
 drop policy if exists "leaders manage teams" on public.teams;
 create policy "leaders manage teams" on public.teams
   for all using (
-    public.my_tag_tier() = 1
+    public.my_role() = 'admin'
+    or public.my_tag_tier() = 1
     or public.my_capabilities() && array['user-access', 'worker-assign-any']
     or (
       public.my_tag_tier() is not null
@@ -1201,7 +1207,8 @@ create policy "leaders manage teams" on public.teams
     )
   )
   with check (
-    public.my_tag_tier() = 1
+    public.my_role() = 'admin'
+    or public.my_tag_tier() = 1
     or public.my_capabilities() && array['user-access', 'worker-assign-any']
     or (
       public.my_tag_tier() is not null

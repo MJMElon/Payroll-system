@@ -235,6 +235,27 @@ export default function WorkerManagement() {
   /** May I put someone on this tier without giving them a leader yet? */
   const canPlaceOnTier = (g: Grade) => belowMe(g.sort_order)
 
+  /**
+   * The first tier that belongs to ONE station. Everything from here down
+   * carries station tags and a basic salary; the tiers above it run the
+   * whole mill, so they sit on every station and are not paid per station.
+   * Read from the tag names, and failing that from the data.
+   */
+  const stationTier = useMemo(() => {
+    const named = grades
+      .filter((g) => /station/i.test(g.name))
+      .sort((a, b) => a.sort_order - b.sort_order)[0]
+    if (named) return named.sort_order
+    const tiers = grades
+      .filter((g) => profiles.some((p) => p.grade_id === g.id && stationsOf(p).length > 0))
+      .map((g) => g.sort_order)
+    return tiers.length > 0 ? Math.min(...tiers) : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grades, profiles])
+  /** Does this tier work at a station, or across all of them? */
+  const worksAtAStation = (tier: number | null) =>
+    tier !== null && stationTier !== null && tier >= stationTier
+
   const selected = selectedId ? profiles.find((p) => p.id === selectedId) ?? null : null
 
   /* ---------------- the chain ---------------- */
@@ -322,7 +343,18 @@ export default function WorkerManagement() {
       })
       .select()
       .single()
-    if (error) return setError(error.message)
+    if (error) {
+      // A refusal here is nearly always the teams table missing its
+      // policies (a half-applied setup.sql), so say which of the two it is
+      // instead of passing the raw database message through.
+      return setError(
+        /row-level security/i.test(error.message)
+          ? `The database refused a team at ${grade.name}. That needs a tier tag of ` +
+            `${grade.name} or above — yours is ${myGrade?.name ?? 'not set'}. If it already is, ` +
+            'the teams table has no write policy: run supabase/fix-team-policies.sql.'
+          : error.message,
+      )
+    }
     if (data) {
       setRenamingId(data.id)
       setRenameDraft(data.name)
@@ -400,14 +432,18 @@ export default function WorkerManagement() {
     }
     setError(null)
 
-    const leaderStations = stationsOf(leader)
     const patch: Record<string, unknown> = {
       supervisor_id: leader.id,
       team_id: team?.id ?? null,
       tags_confirmed: true,
     }
     if (nextGrade) patch.grade_id = nextGrade.id
-    if (leaderStations.length > 0) {
+    const leaderStations = stationsOf(leader)
+    if (!worksAtAStation(landing)) {
+      // Station Head and above run every station, so the tag comes off.
+      patch.station_ids = []
+      patch.station_id = null
+    } else if (leaderStations.length > 0) {
       patch.station_ids = leaderStations
       patch.station_id = leaderStations[0]
     }
@@ -492,6 +528,11 @@ export default function WorkerManagement() {
     setError(null)
     const patch: Record<string, unknown> = { grade_id: grade.id, tags_confirmed: true }
     if (person.role !== 'admin') patch.role = roleForTier(grade.sort_order, grade.name)
+    if (!worksAtAStation(grade.sort_order)) {
+      // A tier above the station tier belongs to every station.
+      patch.station_ids = []
+      patch.station_id = null
+    }
     // A leader who is no longer above them cannot stay their leader.
     const sup = person.supervisor_id ? profiles.find((x) => x.id === person.supervisor_id) : null
     const supTier = sup ? tierOf(sup) : null
@@ -802,7 +843,7 @@ export default function WorkerManagement() {
               jobs={jobs}
               rates={rates}
               canEditProfile={canEditProfile}
-              canEditSalary={canEditSalary}
+              canEditSalary={canEditSalary && worksAtAStation(tierOf(selected))}
               onSave={(patch) => saveProfile(selected, patch)}
               onClose={() => setSelectedId(null)}
             />
