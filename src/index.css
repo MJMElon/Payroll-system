@@ -688,6 +688,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font-size: 0.92rem; font-weight: 700; letter-spacing: -0.01em;
   display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* A card label's trailing action sits hard against the right edge. */
+.mob-card-label .mob-icon-btn.corner {
+  margin-left: auto; width: 26px; height: 26px;
+  font-size: 1.05rem; font-weight: 800; line-height: 1;
+}
+
 /* Round icon-only action — the whole button is the affordance, so it
    takes the width of the glyph and no more. */
 .mob-icon-btn {
@@ -841,10 +847,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent);
 }
 .mob-teamlead .tag-dot { width: 10px; height: 10px; border-radius: 4px; flex: none; }
-/* Step between teams, and start a new one. */
-.mob-teamnav { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.15rem; }
-.mob-teamnav .mob-mini { padding: 0.3rem 0.7rem; font-size: 0.85rem; line-height: 1; }
-.mob-teamnav .mob-mini.add { flex: 1; font-size: 0.72rem; }
+/* Step between teams. */
+.mob-teamnav { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; margin-top: 0.15rem; }
+.mob-teamnav .mob-mini { padding: 0.3rem 0.8rem; font-size: 0.9rem; line-height: 1; }
+/* Naming a new team, before it is written. */
+.mob-newteam { display: flex; flex-direction: column; gap: 0.4rem; }
+/* An empty rung asks to be filled instead of just sitting there. */
+.mob-lane-add {
+  appearance: none; border: none; cursor: pointer; width: 100%;
+  background: var(--accent-soft); color: var(--accent-strong);
+  border-radius: 9px; padding: 0.35rem; font-size: 0.72rem; font-weight: 700;
+}
+.mob-lane-add:hover { background: var(--accent); color: #fff; }
 .mob-teamcol-name {
   font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--accent-strong);
