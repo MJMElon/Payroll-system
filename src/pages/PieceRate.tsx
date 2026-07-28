@@ -15,10 +15,10 @@
 // the tag's order in Settings).
 // Tables used: stations, grades, jobs, piece_rates (see supabase/setup.sql).
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { effectiveCapabilities, tagClass } from '../lib/tags'
+import { effectiveCapabilities, stationTierOf, tagClass } from '../lib/tags'
 import {
   supabase,
   todayISO,
@@ -1075,9 +1075,11 @@ function HistoryList({
 /* ------------------------------------------------------------------ */
 /* Floating create/edit window                                        */
 /*                                                                    */
-/* Laid out like the masterlist itself: one line per piece rate, so a  */
+/* Laid out like the masterlist itself, one line per piece rate, so a  */
 /* whole batch can be keyed in and submitted in one go instead of      */
-/* reopening the window for every single rate.                        */
+/* reopening the window for every single rate. A line may name several */
+/* stations and several tier tags at once — the same job at the same   */
+/* price — and it is written out as one rate per station × tier.       */
 /* ------------------------------------------------------------------ */
 
 // Picked in the Unit column. It is not a unit but a pay shape: choosing
@@ -1086,8 +1088,8 @@ const TIERED = '__tiered__'
 
 interface RateRow {
   key: number
-  stationId: string
-  gradeId: string
+  stationIds: string[]
+  gradeIds: string[]
   description: string
   rate: string
   unit: string
@@ -1101,8 +1103,8 @@ function blankRow(): RateRow {
   rowSeq += 1
   return {
     key: rowSeq,
-    stationId: '',
-    gradeId: '',
+    stationIds: [],
+    gradeIds: [],
     description: '',
     rate: '',
     unit: '',
@@ -1117,8 +1119,8 @@ function rowFromJob(job: Job, rate: Rate | null): RateRow {
   rowSeq += 1
   return {
     key: rowSeq,
-    stationId: job.station_id,
-    gradeId: job.grade_id ?? '',
+    stationIds: job.station_id ? [job.station_id] : [],
+    gradeIds: job.grade_id ? [job.grade_id] : [],
     description: job.name,
     rate: !tiered && rate ? String(Number(rate.rate)) : '',
     unit: tiered ? TIERED : job.unit,
@@ -1126,6 +1128,99 @@ function rowFromJob(job: Job, rate: Rate | null): RateRow {
     tier2: tiered && rate?.tier2_rate != null ? String(Number(rate.tier2_rate)) : '',
     effectiveFrom: rate?.effective_from ?? todayISO(),
   }
+}
+
+/**
+ * A tick-list that looks like a dropdown. Several stations, or several
+ * tier tags, on one line — the names are written out in full in the list,
+ * however long they are, which a plain <select> could not do inside a
+ * table cell. The panel is fixed-positioned so the table's own sideways
+ * scrolling cannot clip it.
+ */
+function TickPicker({
+  options,
+  value,
+  onChange,
+  single,
+}: {
+  options: { id: string; name: string }[]
+  value: string[]
+  onChange: (ids: string[]) => void
+  single?: boolean
+}) {
+  const [at, setAt] = useState<{ left: number; top: number; width: number } | null>(null)
+  const face = useRef<HTMLButtonElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!at) return
+    const shut = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (!face.current?.contains(t) && !menu.current?.contains(t)) setAt(null)
+    }
+    const move = () => setAt(null)
+    document.addEventListener('mousedown', shut)
+    window.addEventListener('resize', move)
+    // A scroll moves the cell out from under a fixed panel, so close it.
+    window.addEventListener('scroll', move, true)
+    return () => {
+      document.removeEventListener('mousedown', shut)
+      window.removeEventListener('resize', move)
+      window.removeEventListener('scroll', move, true)
+    }
+  }, [at])
+
+  function open() {
+    if (at) return setAt(null)
+    const r = face.current?.getBoundingClientRect()
+    if (!r) return
+    // Drop the panel below the cell, or above it when the window's foot
+    // is too close for the list to be read.
+    const below = window.innerHeight - r.bottom
+    const height = Math.min(240, options.length * 34 + 12)
+    setAt({
+      left: r.left,
+      top: below < height + 12 ? Math.max(8, r.top - height - 4) : r.bottom + 4,
+      width: r.width,
+    })
+  }
+
+  function toggle(id: string) {
+    if (single) {
+      onChange(value.includes(id) ? [] : [id])
+      return setAt(null)
+    }
+    onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id])
+  }
+
+  const label = options.filter((o) => value.includes(o.id)).map((o) => o.name).join(', ')
+
+  return (
+    <>
+      <button type="button" className="pickbox" ref={face} onClick={open} title={label}>
+        <span className="pickbox-text">{label}</span>
+        <span className="pickbox-caret" aria-hidden="true">▾</span>
+      </button>
+      {at && (
+        <div
+          className="pickbox-menu"
+          ref={menu}
+          style={{ left: at.left, top: at.top, minWidth: at.width }}
+        >
+          {options.map((o) => (
+            <label key={o.id} className="pickbox-item">
+              <input
+                type="checkbox"
+                checked={value.includes(o.id)}
+                onChange={() => toggle(o.id)}
+              />
+              <span>{o.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </>
+  )
 }
 
 function ContractModal({
@@ -1153,6 +1248,21 @@ function ContractModal({
   // appear as soon as any line is paid by the hour.
   const anyTiered = rows.some((r) => r.unit === TIERED)
 
+  // Piece rates are paid to the people who work a station, so the tier
+  // list starts at Station Head and runs down. The tiers above run the
+  // whole mill and are never on a piece rate.
+  const tierOptions = useMemo(() => {
+    const floor = stationTierOf(grades)
+    const list = grades.filter((g) => floor === null || g.sort_order >= floor)
+    // An older rate may sit on a tier above that line; keep it listed so
+    // editing it doesn't silently move it somewhere else.
+    if (job?.grade_id && !list.some((g) => g.id === job.grade_id)) {
+      const own = grades.find((g) => g.id === job.grade_id)
+      if (own) return [own, ...list]
+    }
+    return list
+  }, [grades, job])
+
   // An older contract may carry a unit nobody would pick today; keep it in
   // the list so editing that rate doesn't silently change its unit.
   const unitOptions = useMemo(() => {
@@ -1173,9 +1283,17 @@ function ContractModal({
     setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.key !== key) : rs))
   }
 
+  /** Every rate one line stands for: the same job at each station × tier. */
+  function spread(row: RateRow) {
+    const tiers = row.gradeIds.length ? row.gradeIds : ['']
+    const out: { stationId: string; gradeId: string }[] = []
+    for (const s of row.stationIds) for (const g of tiers) out.push({ stationId: s, gradeId: g })
+    return out
+  }
+
   /** What stops this line from being saved, or null when it is ready. */
   function problem(row: RateRow): string | null {
-    if (!row.stationId) return 'pick a station.'
+    if (row.stationIds.length === 0) return 'pick a station.'
     if (!row.description.trim()) return 'enter the work description.'
     if (!row.unit) return 'pick a unit.'
     const money = (v: string) => {
@@ -1192,14 +1310,18 @@ function ContractModal({
     return null
   }
 
-  /** Writes one line. Returns true when it now waits for approval. */
-  async function saveOne(row: RateRow, existing: Job | null): Promise<boolean> {
+  /** Writes one rate. Returns true when it now waits for approval. */
+  async function saveOne(
+    row: RateRow,
+    where: { stationId: string; gradeId: string },
+    existing: Job | null,
+  ): Promise<boolean> {
     const tiered = row.unit === TIERED
     const rateValue = Number(tiered ? row.tier1 : row.rate)
     const tier2Value = tiered ? Number(row.tier2) : null
     const fields = {
-      station_id: row.stationId,
-      grade_id: row.gradeId || null,
+      station_id: where.stationId,
+      grade_id: where.gradeId || null,
       name: row.description.trim(),
       unit: tiered ? '/hour' : row.unit,
     }
@@ -1239,7 +1361,7 @@ function ContractModal({
       if (error) {
         throw new Error(
           error.message.includes('jobs_station_grade_name_idx')
-            ? 'A piece rate already exists for this exact Station + Tag + Work description — edit that one instead (check "Show inactive" if it might be hidden).'
+            ? 'a piece rate already exists for this exact Station + Tag + Work description — edit that one instead (check "Show inactive" if it might be hidden).'
             : error.message,
         )
       }
@@ -1282,34 +1404,46 @@ function ContractModal({
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    const name = (id: string, list: { id: string; name: string }[]) =>
+      list.find((x) => x.id === id)?.name ?? '—'
     const label = (i: number) => (rows.length > 1 ? `Row ${i + 1}: ` : '')
+
     for (let i = 0; i < rows.length; i++) {
       const p = problem(rows[i])
       if (p) return setError(label(i) + p.charAt(0).toUpperCase() + p.slice(1))
     }
+
     setSaving(true)
     try {
       let submitted = false
-      const saved: number[] = []
+      const done: number[] = []
+      let written = 0
       for (let i = 0; i < rows.length; i++) {
-        try {
-          submitted = (await saveOne(rows[i], job)) || submitted
-          saved.push(rows[i].key)
-        } catch (err) {
-          // Lines already written stay written. They are taken off the
-          // window so a retry cannot submit them a second time, and the
-          // list behind is refreshed so they show up there instead.
-          const msg = err instanceof Error ? err.message : String(err)
-          if (saved.length) {
-            setRows((rs) => rs.filter((r) => !saved.includes(r.key)))
-            onReload()
+        const row = rows[i]
+        for (const where of spread(row)) {
+          try {
+            submitted = (await saveOne(row, where, job)) || submitted
+            written += 1
+          } catch (err) {
+            // Rates already written stay written. Their lines are taken
+            // off the window so a retry cannot submit them a second time,
+            // and the list behind is refreshed so they show up there.
+            const msg = err instanceof Error ? err.message : String(err)
+            const at = `${name(where.stationId, stations)}${
+              where.gradeId ? ` · ${name(where.gradeId, tierOptions)}` : ''
+            }`
+            if (done.length) {
+              setRows((rs) => rs.filter((r) => !done.includes(r.key)))
+              onReload()
+            }
+            setError(
+              `${label(i)}${at} — ${msg}` +
+                (written ? ` (${written} rate(s) before it were saved.)` : ''),
+            )
+            return
           }
-          setError(
-            label(i) + msg +
-              (saved.length ? ` (the ${saved.length} row(s) before it were saved.)` : ''),
-          )
-          return
         }
+        done.push(row.key)
       }
       onSaved(submitted)
     } finally {
@@ -1328,11 +1462,8 @@ function ContractModal({
         {error && <div className="error">{error}</div>}
 
         {!job && (
-          <div className="row-form spread">
+          <div className="row-form">
             <button type="button" className="btn ghost" onClick={addRow}>+ Add row</button>
-            <span className="muted small">
-              New piece rates are submitted for approval before they appear in the list.
-            </span>
           </div>
         )}
 
@@ -1340,8 +1471,8 @@ function ContractModal({
           <table className="table rate-rows">
             <thead>
               <tr>
-                <th className="c-station">Station</th>
-                <th className="c-tag">Tag</th>
+                <th className="c-station">Station tag</th>
+                <th className="c-tag">Tier tag</th>
                 <th className="c-desc">Work description</th>
                 <th className="c-num">Piece rate (RM)</th>
                 <th className="c-unit">Unit</th>
@@ -1361,26 +1492,20 @@ function ContractModal({
                 return (
                   <tr key={r.key}>
                     <td className="c-station">
-                      <select
-                        value={r.stationId}
-                        onChange={(e) => patch(r.key, { stationId: e.target.value })}
-                      >
-                        <option value="" />
-                        {stations.map((s) => (
-                          <option key={s.id} value={s.id}>{s.name}</option>
-                        ))}
-                      </select>
+                      <TickPicker
+                        options={stations}
+                        value={r.stationIds}
+                        single={Boolean(job)}
+                        onChange={(ids) => patch(r.key, { stationIds: ids })}
+                      />
                     </td>
                     <td className="c-tag">
-                      <select
-                        value={r.gradeId}
-                        onChange={(e) => patch(r.key, { gradeId: e.target.value })}
-                      >
-                        <option value="" />
-                        {grades.map((g) => (
-                          <option key={g.id} value={g.id}>{g.name}</option>
-                        ))}
-                      </select>
+                      <TickPicker
+                        options={tierOptions}
+                        value={r.gradeIds}
+                        single={Boolean(job)}
+                        onChange={(ids) => patch(r.key, { gradeIds: ids })}
+                      />
                     </td>
                     <td className="c-desc">
                       <input
@@ -1389,13 +1514,16 @@ function ContractModal({
                       />
                     </td>
                     <td className="c-num">
-                      <input
-                        inputMode="decimal"
-                        className="money"
-                        value={tiered ? '' : r.rate}
-                        disabled={tiered}
-                        onChange={(e) => patch(r.key, { rate: e.target.value })}
-                      />
+                      {tiered ? (
+                        <span className="cell-none">—</span>
+                      ) : (
+                        <input
+                          inputMode="decimal"
+                          className="money"
+                          value={r.rate}
+                          onChange={(e) => patch(r.key, { rate: e.target.value })}
+                        />
+                      )}
                     </td>
                     <td className="c-unit">
                       <select
@@ -1412,22 +1540,28 @@ function ContractModal({
                     {anyTiered && (
                       <>
                         <td className="c-num">
-                          <input
-                            inputMode="decimal"
-                            className="money"
-                            value={r.tier1}
-                            disabled={!tiered}
-                            onChange={(e) => patch(r.key, { tier1: e.target.value })}
-                          />
+                          {tiered ? (
+                            <input
+                              inputMode="decimal"
+                              className="money"
+                              value={r.tier1}
+                              onChange={(e) => patch(r.key, { tier1: e.target.value })}
+                            />
+                          ) : (
+                            <span className="cell-none">—</span>
+                          )}
                         </td>
                         <td className="c-num">
-                          <input
-                            inputMode="decimal"
-                            className="money"
-                            value={r.tier2}
-                            disabled={!tiered}
-                            onChange={(e) => patch(r.key, { tier2: e.target.value })}
-                          />
+                          {tiered ? (
+                            <input
+                              inputMode="decimal"
+                              className="money"
+                              value={r.tier2}
+                              onChange={(e) => patch(r.key, { tier2: e.target.value })}
+                            />
+                          ) : (
+                            <span className="cell-none">—</span>
+                          )}
                         </td>
                       </>
                     )}
@@ -1457,16 +1591,6 @@ function ContractModal({
             </tbody>
           </table>
         </div>
-
-        {anyTiered && (
-          <p className="small muted" style={{ margin: 0 }}>
-            Tiered by hour resets every hour: the first 4 units done pay Tier 1,
-            the 5th unit onward that same hour pays Tier 2.
-          </p>
-        )}
-        <p className="small muted" style={{ margin: 0 }}>
-          Payroll uses whichever rate is effective on the day worked.
-        </p>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
