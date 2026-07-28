@@ -833,7 +833,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   border: 1px solid #e4e8ed; border-radius: 12px; padding: 0.5rem;
   background: #fbfcfd;
 }
-.mob-teamcol.loose { border-style: dashed; background: #fff; }
+.mob-teamcol.loose, .mob-teamcol.draft { border-style: dashed; background: #fff; }
+/* The team's leader heads its column — shown, never a drop target. */
+.mob-teamlead {
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.4rem 0.5rem; border-radius: 10px;
+  background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent);
+}
+.mob-teamlead .tag-dot { width: 10px; height: 10px; border-radius: 4px; flex: none; }
+/* Step between teams, and start a new one. */
+.mob-teamnav { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.15rem; }
+.mob-teamnav .mob-mini { padding: 0.3rem 0.7rem; font-size: 0.85rem; line-height: 1; }
+.mob-teamnav .mob-mini.add { flex: 1; font-size: 0.72rem; }
 .mob-teamcol-name {
   font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--accent-strong);

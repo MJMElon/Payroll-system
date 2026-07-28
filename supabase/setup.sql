@@ -1463,3 +1463,24 @@ update public.grades set capabilities = capabilities || '{team-assign}'
 update public.grades set capabilities =
   '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,worker-edit,worker-salary,station-create}'
   where sort_order = 1;
+
+-- ---------------------------------------------------------------------------
+-- Making a team is its own grant. On the mobile Team tab a leader's people
+-- are shown as one column per team, and a team is created ONLY by the "Add
+-- new team" button — never as a side effect of dragging someone onto the
+-- team-leader rung, which is what used to happen.
+--
+-- Backfilled onto every tier with at least two rungs beneath it, since a
+-- tier needs someone to lead a team and someone to be in it. That includes
+-- the assistant-station-head rung; untick it in Settings -> Tags management
+-- if only station heads and above should create teams.
+-- ---------------------------------------------------------------------------
+update public.grades g set capabilities = g.capabilities || '{team-create}'
+  where (
+      select count(*) from public.grades x where x.sort_order > g.sort_order
+    ) >= 2
+    and not 'team-create' = any(g.capabilities);
+
+update public.grades set capabilities =
+  '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,team-create,worker-edit,worker-salary,station-create}'
+  where sort_order = 1;
