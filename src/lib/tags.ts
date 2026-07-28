@@ -72,6 +72,7 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   // at or above your own. Profile and salary are separate grants, so a
   // lower tier can keep details tidy without ever seeing pay.
   { key: 'team-assign', label: 'Claim Sign Ups & Set Tier', group: 'Team manage setting' },
+  { key: 'team-create', label: 'Add New Team', group: 'Team manage setting' },
   { key: 'worker-edit', label: 'Edit Profile Details', group: 'Team manage setting' },
   { key: 'worker-salary', label: 'Edit Basic Salary', group: 'Team manage setting' },
   { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
