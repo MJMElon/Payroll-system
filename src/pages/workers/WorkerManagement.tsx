@@ -30,8 +30,8 @@
 // above it, whatever their account role says — an Operator-tagged admin
 // still cannot place anyone. Below that line, any leader may build their
 // OWN branch with no capability at all; reaching into someone else's needs
-// "Change other users' settings". Editing details needs "Edit worker
-// profile" and pay needs "Edit worker salary", each granted on its own per
+// "Change other users' settings". Editing details needs "Edit profile
+// details" and pay needs "Edit basic salary", each granted on its own per
 // tier in Settings → Tier & Station Tags setting, so a lower tier can keep
 // details tidy without ever seeing what anyone earns.
 // ---------------------------------------------------------------------------
@@ -462,7 +462,7 @@ export default function WorkerManagement() {
     if (!data || data.length === 0) {
       setError(
         `The database would not let you edit ${displayName(person)} — that needs the ` +
-          '"Edit worker profile" or "Edit worker salary" function.',
+          '"Edit profile details" or "Edit basic salary" function.',
       )
       return false
     }
@@ -1057,7 +1057,7 @@ function WorkerPanel({
 
       {!canEdit && (
         <p className="muted small" style={{ margin: 0 }}>
-          Editing a worker needs the "Edit worker profile" or "Edit worker salary" function, granted
+          Editing a worker needs the "Edit profile details" or "Edit basic salary" function, granted
           per tier in Settings → Tier &amp; Station Tags setting.
         </p>
       )}
