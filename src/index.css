@@ -700,6 +700,55 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   text-transform: uppercase; color: var(--accent-strong);
 }
 
+/* Profile — the selfie. The whole circle is the button, with a camera
+   badge so it reads as replaceable rather than decorative. */
+.mob-avatar-btn {
+  appearance: none; border: none; padding: 0; cursor: pointer;
+  position: relative; width: 76px; height: 76px; border-radius: 50%;
+  background: linear-gradient(160deg, #566270, #333c47);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 16px rgba(35, 45, 58, 0.28);
+}
+.mob-avatar-btn:disabled { opacity: 0.6; cursor: default; }
+.mob-avatar-img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+.mob-avatar-initials {
+  color: #fff; font-family: 'Montserrat', sans-serif;
+  font-size: 1.5rem; font-weight: 800; letter-spacing: 0.02em;
+}
+.mob-avatar-cam {
+  position: absolute; right: -2px; bottom: -2px;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-strong); color: #fff; border: 2.5px solid #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* A card header that opens and closes what is under it. */
+.mob-disclosure {
+  appearance: none; background: none; border: none; padding: 0; margin: 0;
+  cursor: pointer; color: inherit; font: inherit; width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  text-align: left;
+}
+.mob-caret {
+  color: var(--muted); font-size: 1rem; line-height: 1; flex: none;
+  transition: transform 0.15s; display: inline-block;
+}
+.mob-caret.open { transform: rotate(90deg); }
+.mob-detail-rule { height: 1px; background: #eef0f4; margin: 0.25rem 0; }
+.mob-payslip { border-top: 1px solid #eef0f4; padding-top: 0.5rem; }
+.mob-payslip:first-of-type { border-top: none; padding-top: 0; }
+
+/* Piece-rate contract — the tier a group of jobs belongs to. */
+.mob-contract-tier {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin-top: 0.5rem; padding-bottom: 0.25rem;
+  border-bottom: 1px solid #eef0f4;
+  font-size: 0.68rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.07em; color: var(--accent-strong);
+}
+.mob-contract-tier .tag-dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.mob-contract-tier .mob-chip { margin-left: auto; text-transform: none; letter-spacing: 0; }
+
 /* Team tab — one drop lane per tier. A lane the leader may not hand out
    (their own tier and anything above it) is locked and reads as inert. */
 .mob-lane {

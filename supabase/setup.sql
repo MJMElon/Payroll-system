@@ -1307,3 +1307,29 @@ update public.access_profiles
   set full_name = null
   where full_name is not null and email is not null
     and lower(btrim(full_name)) = lower(btrim(email));
+
+-- ---------------------------------------------------------------------------
+-- Profile photo. The path points into the existing public `records` bucket
+-- (avatars/<user id>-<stamp>.jpg), so no new bucket or storage policy is
+-- needed — that bucket is already "authenticated may upload, anyone may
+-- read".
+--
+-- Writing it needs its own door: access_profiles has no "update your own
+-- row" policy, and adding one would let anyone rewrite their own tier or
+-- salary, since a row policy cannot be narrowed to a single column. This
+-- function is that narrow door — it touches avatar_path and nothing else,
+-- always for the caller's own row.
+-- ---------------------------------------------------------------------------
+alter table public.access_profiles add column if not exists avatar_path text;
+
+create or replace function public.set_my_avatar(path text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.access_profiles set avatar_path = path where id = auth.uid();
+$$;
+
+revoke all on function public.set_my_avatar(text) from public;
+grant execute on function public.set_my_avatar(text) to authenticated;
