@@ -24,6 +24,31 @@ type Tab = 'tags' | 'audit'
 /** Which face of a row's pop-out is showing. */
 type Mode = 'view' | 'edit'
 
+/**
+ * Postgres refuses to delete a row something still points at, and reports
+ * it as a raw constraint violation — "violates foreign key constraint
+ * jobs_station_id_fkey on table jobs" tells the user nothing about what
+ * to do. Name what is holding the row instead, and where to go and clear
+ * it. The trailing `on table "x"` is the table doing the holding.
+ */
+const HELD_BY: Record<string, string> = {
+  jobs: 'work types in the Piece Rate module',
+  piece_rates: 'piece rates in the Piece Rate module',
+  production_entries: 'work records in the Operation module',
+  access_profiles: 'people it is tagged to',
+  teams: 'teams in Team Manage',
+  payroll_lines: 'payroll lines',
+  payroll_adjustments: 'payroll adjustments',
+  photo_records: 'photo records',
+}
+
+function deleteError(err: { code?: string; message: string }, what: string): string {
+  if (err.code !== '23503') return err.message
+  const table = /on table "([^"]+)"\s*$/.exec(err.message)?.[1]
+  const holder = (table && HELD_BY[table]) ?? (table ? `records in ${table}` : 'other records')
+  return `${what} is still used by ${holder}, so it cannot be deleted. Remove or move those first, then delete it here.`
+}
+
 /** What tier 1 is for, shown under its name on both faces. */
 const MANAGEMENT_NOTE =
   'Able to create, delete and do setting of tags for ALL tiers & stations.'
@@ -169,10 +194,11 @@ function TagsTab() {
   }
 
   async function removeTag(g: Grade) {
-    if (!window.confirm(`Delete tag "${g.name}"? This fails if it is in use.`)) return
+    if (!window.confirm(`Delete tier tag "${g.name}"?`)) return
     const { error } = await supabase.from('grades').delete().eq('id', g.id)
-    if (error) setError(error.message)
-    else load()
+    if (error) return setError(deleteError(error, `Tier tag "${g.name}"`))
+    setError(null)
+    load()
   }
 
   async function addStation(e: FormEvent) {
@@ -207,10 +233,11 @@ function TagsTab() {
   }
 
   async function removeStation(st: Station) {
-    if (!window.confirm(`Delete station "${st.name}"? This fails if it is in use.`)) return
+    if (!window.confirm(`Delete station tag "${st.name}"?`)) return
     const { error } = await supabase.from('stations').delete().eq('id', st.id)
-    if (error) setError(error.message)
-    else load()
+    if (error) return setError(deleteError(error, `Station "${st.name}"`))
+    setError(null)
+    load()
   }
 
   if (loading) return <p className="muted">Loading…</p>

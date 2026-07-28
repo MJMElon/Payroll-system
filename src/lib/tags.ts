@@ -44,20 +44,21 @@ export function effectiveModules(modules: string[] | null | undefined): string[]
 // they always display in this sequence no matter what order they were
 // ticked. Grouped so the tag editor reads like a permission sheet.
 export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[] = [
-  // Work entries. Verify and approve always reach DOWN the tiers and never
-  // up — that is the system's rule everywhere, so the labels stay short
-  // rather than repeating it on each line.
-  { key: 'data-entry', label: 'Add new work entry', group: 'Work entry setting' },
-  { key: 'edit-entry', label: 'Edit work entry', group: 'Work entry setting' },
-  { key: 'delete-entry', label: 'Delete work entry', group: 'Work entry setting' },
-  { key: 'verify', label: 'Verify work entry', group: 'Work entry setting' },
-  { key: 'approve', label: 'Approve work entry', group: 'Work entry setting' },
+  // Work entries. The label is the verb alone — the module it sits under
+  // already says what is being added or approved. Verify and approve
+  // always reach DOWN the tiers and never up, which is the system's rule
+  // everywhere rather than something to repeat on each line.
+  { key: 'data-entry', label: 'Add New', group: 'Work entry setting' },
+  { key: 'edit-entry', label: 'Edit', group: 'Work entry setting' },
+  { key: 'delete-entry', label: 'Delete', group: 'Work entry setting' },
+  { key: 'verify', label: 'Verify', group: 'Work entry setting' },
+  { key: 'approve', label: 'Approve', group: 'Work entry setting' },
   // Piece rates
-  { key: 'rate-create', label: 'Add new piece rate', group: 'Piece rate setting' },
-  { key: 'rate-edit', label: 'Edit piece rate', group: 'Piece rate setting' },
-  { key: 'rate-delete', label: 'Delete piece rate', group: 'Piece rate setting' },
-  { key: 'rate-verify', label: 'Verify piece rate', group: 'Piece rate setting' },
-  { key: 'rate-approve', label: 'Approve piece rate', group: 'Piece rate setting' },
+  { key: 'rate-create', label: 'Add New', group: 'Piece rate setting' },
+  { key: 'rate-edit', label: 'Edit', group: 'Piece rate setting' },
+  { key: 'rate-delete', label: 'Delete', group: 'Piece rate setting' },
+  { key: 'rate-verify', label: 'Verify', group: 'Piece rate setting' },
+  { key: 'rate-approve', label: 'Approve', group: 'Piece rate setting' },
   // Tag management — each function grantable on its own
   { key: 'tag-add', label: 'Add new tag', group: 'Tag management setting' },
   { key: 'tag-move', label: 'Move tag tiers', group: 'Tag management setting' },
@@ -67,8 +68,8 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   // Team manage — dragging someone into a team needs no capability, any
   // leader may do it. Profile and salary are separate grants, so a lower
   // tier can keep details tidy without ever seeing pay.
-  { key: 'worker-edit', label: 'Edit profile details', group: 'Team manage setting' },
-  { key: 'worker-salary', label: 'Edit basic salary', group: 'Team manage setting' },
+  { key: 'worker-edit', label: 'Edit Profile Details', group: 'Team manage setting' },
+  { key: 'worker-salary', label: 'Edit Basic Salary', group: 'Team manage setting' },
   { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
 ]
 
