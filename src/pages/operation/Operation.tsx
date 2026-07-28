@@ -304,11 +304,15 @@ export default function Operation() {
   const isLocked = (e: ProductionEntry) =>
     lockedPeriods.some((p) => p.period_start <= e.work_date && e.work_date <= p.period_end)
 
+  const isManagement =
+    profile?.role === 'admin' || profile?.role === 'manager' || myGrade?.sort_order === 1
+
   /** The one step this user may take on this entry right now, if any.
-   *  Nobody signs off their own work, and a closed period takes no more. */
+   *  Below management, nobody signs off their own work; a closed payroll
+   *  period takes no more from anyone. */
   const actionFor = (e: ProductionEntry): 'verified' | 'approved' | null => {
     if (!approvalLevel || isLocked(e)) return null
-    if (e.user_id === profile?.id) return null
+    if (!isManagement && e.user_id === profile?.id) return null
     const s = stat(e)
     if (s === 'pending') return 'verified'
     if (s === 'verified' && approvalLevel === 'approve') return 'approved'
@@ -753,7 +757,6 @@ export default function Operation() {
                           >
                             <span className="op-caret" aria-hidden="true">{shut ? '▸' : '▾'}</span>
                             <span className="op-group-name">{station.name}</span>
-                            {myStationIds.includes(station.id) && <span className="you-chip">you</span>}
                           </button>
 
                         </div>
@@ -839,6 +842,8 @@ function GroupModal({
   onActMany: (list: ProductionEntry[], next: 'verified' | 'approved') => void
 }) {
   const overlay = useOverlayClose(onClose)
+  // A clicked photo floats over the record instead of leaving for a tab.
+  const [photoView, setPhotoView] = useState<string | null>(null)
 
   // The day's 24 hours starting at 07:00, each holding the submissions
   // that arrived in it; runs of empty hours fold into one quiet line.
@@ -936,16 +941,15 @@ function GroupModal({
                           <td className="right nowrap">{amountFor(e.job_id, e.quantity).toFixed(2)}</td>
                           <td>
                             {photo ? (
-                              <a
+                              <button
+                                type="button"
                                 className="op-photo-link"
-                                href={photo}
-                                target="_blank"
-                                rel="noreferrer"
-                                title="Open the photo"
-                                aria-label="Open the photo"
+                                title="View the photo"
+                                aria-label="View the photo"
+                                onClick={() => setPhotoView(photo)}
                               >
                                 📷
-                              </a>
+                              </button>
                             ) : (
                               <span className="muted">—</span>
                             )}
@@ -983,32 +987,54 @@ function GroupModal({
           </div>
         </div>
 
-        {/* The calculation — the piece rate line by line, then the total. */}
+        {/* Contract info — what the contract pays, count by count. */}
         <div className="tag-section op-rec-sec">
-          <div className="tag-section-title">The calculation</div>
+          <div className="tag-section-title">Contract info</div>
           {!rate ? (
             <p className="muted small" style={{ margin: 0 }}>No effective piece rate found for this job.</p>
-          ) : rate.tier2_rate == null ? (
-            <div className="op-calc-line">
-              <span>{groupQty} {job?.unit ?? ''} × RM {Number(rate.rate).toFixed(2)}</span>
-              <span>{(groupQty * Number(rate.rate)).toFixed(2)}</span>
-            </div>
           ) : (
-            <>
-              <div className="op-calc-line">
-                <span>1st–4th of the hour · {t1Units} × RM {Number(rate.rate).toFixed(2)}</span>
-                <span>{(t1Units * Number(rate.rate)).toFixed(2)}</span>
-              </div>
-              <div className="op-calc-line">
-                <span>5th onward · {t2Units} × RM {Number(rate.tier2_rate).toFixed(2)}</span>
-                <span>{(t2Units * Number(rate.tier2_rate)).toFixed(2)}</span>
-              </div>
-            </>
+            <div className="board-scroll">
+              <table className="table op-contract-table">
+                <thead>
+                  <tr>
+                    <th>Piece rate criteria</th>
+                    <th className="right">Qty count</th>
+                    <th className="right">Piece rate (RM)</th>
+                    <th className="right">Total (RM)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rate.tier2_rate == null ? (
+                    <tr>
+                      <td>Flat rate · {job?.unit ?? 'unit'}</td>
+                      <td className="right">{groupQty}</td>
+                      <td className="right">{Number(rate.rate).toFixed(2)}</td>
+                      <td className="right">{(groupQty * Number(rate.rate)).toFixed(2)}</td>
+                    </tr>
+                  ) : (
+                    <>
+                      <tr>
+                        <td>1st–4th unit of the hour</td>
+                        <td className="right">{t1Units}</td>
+                        <td className="right">{Number(rate.rate).toFixed(2)}</td>
+                        <td className="right">{(t1Units * Number(rate.rate)).toFixed(2)}</td>
+                      </tr>
+                      <tr>
+                        <td>5th unit onward</td>
+                        <td className="right">{t2Units}</td>
+                        <td className="right">{Number(rate.tier2_rate).toFixed(2)}</td>
+                        <td className="right">{(t2Units * Number(rate.tier2_rate)).toFixed(2)}</td>
+                      </tr>
+                    </>
+                  )}
+                  <tr className="total-row">
+                    <td colSpan={3}>Total amount</td>
+                    <td className="right">{groupAmount.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           )}
-          <div className="op-calc-line total">
-            <span>Total amount</span>
-            <span>RM {groupAmount.toFixed(2)}</span>
-          </div>
         </div>
 
         {/* Who has signed this record off — stamped entry by entry, read
@@ -1042,6 +1068,24 @@ function GroupModal({
           </div>
         )}
       </div>
+
+      {photoView && (
+        <div className="op-lightbox" onClick={() => setPhotoView(null)}>
+          <button
+            type="button"
+            className="modal-close"
+            onClick={() => setPhotoView(null)}
+            aria-label="Close the photo"
+          >
+            ×
+          </button>
+          {photoView.toLowerCase().includes('.pdf') ? (
+            <iframe src={photoView} title="Attached document" onClick={(e) => e.stopPropagation()} />
+          ) : (
+            <img src={photoView} alt="Photo evidence" onClick={(e) => e.stopPropagation()} />
+          )}
+        </div>
+      )}
     </div>
   )
 }

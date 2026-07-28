@@ -2282,9 +2282,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .op-tabs .tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.55); }
 .op-tabs .tab.active {
   color: #fff;
-  background: linear-gradient(135deg, #79828d, #a9b1ba 55%, #8d959f);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
-  text-shadow: 0 1px 2px rgba(10, 15, 22, 0.45);
+  background: linear-gradient(180deg, #707b8a 0%, #4c5866 52%, #3a434f 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    inset 0 8px 14px -8px rgba(255, 255, 255, 0.35),
+    inset 0 -8px 14px -8px rgba(15, 21, 29, 0.55);
+  text-shadow: 0 1px 2px rgba(10, 15, 22, 0.4);
 }
 
 /* The station whose records are on screen, said in the section title so
@@ -2351,8 +2354,38 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .op-tl-none { color: var(--border); }
 .op-tl-no { font-weight: 800; color: var(--muted); }
 .op-tl-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.op-photo-link { font-size: 1.05rem; text-decoration: none; }
+.op-photo-link {
+  appearance: none; border: none; background: none; cursor: pointer;
+  font-size: 1.05rem; text-decoration: none; padding: 0; line-height: 1;
+}
 .op-photo-link:hover { filter: brightness(1.15); }
+
+/* The photo itself, floated over the record — no browser tab. */
+.op-lightbox {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(8, 14, 20, 0.72);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 2rem;
+}
+.op-lightbox img {
+  max-width: min(92vw, 1100px); max-height: 86vh;
+  border-radius: 14px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+  background: #fff;
+}
+.op-lightbox iframe {
+  width: min(92vw, 1000px); height: 86vh; border: none;
+  border-radius: 14px; background: #fff;
+}
+.op-lightbox .modal-close {
+  position: absolute; top: 1rem; right: 1rem;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+/* Contract info — criteria, count, price and worth as a headed table. */
+.op-contract-table th, .op-contract-table td { padding: 0.4rem 0.5rem; white-space: nowrap; }
+.op-contract-table .total-row td { font-weight: 800; border-top: 2px solid var(--accent); font-size: 0.95rem; }
 
 /* Selection: only rows this user may actually action carry a box. */
 .op-check-col { width: 30px; padding-right: 0 !important; }
