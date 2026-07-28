@@ -11,12 +11,14 @@
 // management), Approved, and Rejected. Adding work lives under the first tab,
 // since that is where a new entry lands.
 //
-// Approving is done here too: rows you may act on can be ticked and cleared
-// in one action, or handled one at a time on the row. The rules are the same
-// ones the mobile Approvals tab enforces — nobody signs off their own entry,
-// a 'verify' grant can verify, an 'approve' grant can do both, and entries
-// inside a finalized payroll period are frozen (the database enforces that
-// last one as well).
+// The table shows one ROW per worker + job + day — five photos submitted
+// across a shift are one line with their quantities summed. Opening the row
+// (the eye) lays those submissions out on the mill day's own clock, 07:00 →
+// 07:00, and THAT is where verify / approve / reject live: each submission
+// is signed off where it can be seen, next to its photo. The rules are the
+// mobile Approvals tab's — nobody signs off their own entry, a 'verify'
+// grant can verify, an 'approve' grant can do both, and entries inside a
+// finalized payroll period are frozen (the database enforces that too).
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
@@ -37,6 +39,8 @@ import {
 } from '../../lib/supabase'
 
 const TIER1_UNIT_CAP = 4 // tiered hourly rates: tier-1 price covers the first 4 units
+
+const DAY_START_HOUR = 7 // the mill day runs 07:00 → 07:00, same as the dashboard board
 
 // A station rail longer than this gets a search box above it.
 const RAIL_SEARCH_FROM = 8
@@ -61,10 +65,12 @@ function fmtDate(iso: string) {
   return `${d}/${MONTHS[Number(m) - 1] ?? '?'}/${y}`
 }
 
+const hh = (h: number) => `${String(h % 24).padStart(2, '0')}:00`
+
 /** Sign-offs are stored as e-mail; the table shows the name in front of the
  *  @ and keeps the whole address on hover, so the column stays narrow. */
 function shortWho(who: string | null | undefined) {
-  if (!who) return '—'
+  if (!who) return null
   return who.includes('@') ? who.slice(0, who.indexOf('@')) : who
 }
 
@@ -105,12 +111,31 @@ const TrashIcon = () => (
     <path d="M10 11v6M14 11v6" />
   </svg>
 )
+const PencilIcon = () => (
+  <svg {...iconProps}>
+    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+  </svg>
+)
+
+/** One table row: everything one worker submitted for one job on one day. */
+interface WorkGroup {
+  key: string
+  date: string
+  stationId: string
+  jobId: string
+  workerKey: string
+  entries: ProductionEntry[]
+}
+
+function groupKeyOf(e: ProductionEntry) {
+  return `${e.work_date}::${e.station_id}::${e.job_id}::${e.user_id ?? e.created_by ?? '?'}`
+}
 
 export default function Operation() {
   const { profile } = useAuth()
-  // Same margins as Settings: past the narrow page cap, but with wide
-  // gutters and a ceiling so the cards stop stretching on a big screen.
-  const wideStyle = useWideShell(96, 1280)
+  // Same reach as Team Manage: the shell widens to the window with the
+  // default gutter, so the rail sits out at the same left edge.
+  const wideStyle = useWideShell()
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
@@ -138,10 +163,10 @@ export default function Operation() {
   const [to, setTo] = useState(todayISO())
   const [search, setSearch] = useState('')
 
-  const [needsMe, setNeedsMe] = useState(false)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-  const [detail, setDetail] = useState<{ entry: ProductionEntry; mode: 'view' | 'edit' } | null>(null)
+  // The open row, by its group key — derived fresh each render so a verify
+  // inside the pop-out shows its new status without closing anything.
+  const [detailKey, setDetailKey] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -219,7 +244,6 @@ export default function Operation() {
     }
     const list = data ?? []
     setEntries(list)
-    setSelected(new Set())
 
     // Attached photo/PDF evidence for exactly the entries on screen.
     const ids = list.map((e) => e.id)
@@ -265,14 +289,6 @@ export default function Operation() {
     if (!r) return 0
     if (r.tier2_rate == null) return r.rate * qty
     return Math.min(qty, TIER1_UNIT_CAP) * r.rate + Math.max(0, qty - TIER1_UNIT_CAP) * r.tier2_rate
-  }
-  /** The piece rate itself, as the masterlist writes it. */
-  const rateLabel = (jobId: string) => {
-    const r = bestRate.get(jobId)
-    if (!r) return '—'
-    return r.tier2_rate == null
-      ? Number(r.rate).toFixed(2)
-      : `${Number(r.rate).toFixed(2)} → ${Number(r.tier2_rate).toFixed(2)}`
   }
 
   const jobOf = (id: string) => jobs.find((j) => j.id === id) ?? null
@@ -331,15 +347,12 @@ export default function Operation() {
   }
 
   const needle = search.trim().toLowerCase()
-  const matchesFilters = (e: ProductionEntry) => {
-    if (needsMe && !actionFor(e)) return false
-    if (needle) {
-      const hay = `${personName(e)} ${jobName(e.job_id)} ${stationName(e.station_id)}`.toLowerCase()
-      if (!hay.includes(needle)) return false
-    }
-    return true
+  const matchesSearch = (e: ProductionEntry) => {
+    if (!needle) return true
+    const hay = `${personName(e)} ${jobName(e.job_id)} ${stationName(e.station_id)}`.toLowerCase()
+    return hay.includes(needle)
   }
-  const inScope = entries.filter(matchesFilters)
+  const inScope = entries.filter(matchesSearch)
   const visible = inScope.filter(inTab)
 
   const tabCounts = {
@@ -348,47 +361,77 @@ export default function Operation() {
     rejected: inScope.filter((e) => stat(e) === 'rejected').length,
   }
 
+  /** Fold entries into one row per worker + job + day, submissions kept in
+   *  the order they were sent. */
+  function buildGroups(list: ProductionEntry[]): WorkGroup[] {
+    const m = new Map<string, WorkGroup>()
+    for (const e of list) {
+      const key = groupKeyOf(e)
+      let g = m.get(key)
+      if (!g) {
+        g = {
+          key,
+          date: e.work_date,
+          stationId: e.station_id,
+          jobId: e.job_id,
+          workerKey: e.user_id ?? e.created_by ?? '?',
+          entries: [],
+        }
+        m.set(key, g)
+      }
+      g.entries.push(e)
+    }
+    for (const g of m.values()) g.entries.sort((a, b) => a.created_at.localeCompare(b.created_at))
+    return [...m.values()]
+  }
+
+  const groupAmount = (g: WorkGroup) => g.entries.reduce((n, e) => n + amountFor(e.job_id, e.quantity), 0)
+  const groupQty = (g: WorkGroup) => g.entries.reduce((n, e) => n + e.quantity, 0)
+
+  /** The row's overall place in the flow: the least-advanced entry rules. */
+  const groupStatus = (g: WorkGroup): ProductionEntry['approval_status'] => {
+    const ss = g.entries.map(stat)
+    if (ss.includes('pending')) return 'pending'
+    if (ss.includes('verified')) return 'verified'
+    if (ss.includes('rejected')) return 'rejected'
+    return 'approved'
+  }
+
+  const whoList = (g: WorkGroup, field: 'verified_by' | 'approved_by') => {
+    const names = [...new Set(g.entries.map((e) => shortWho(e[field])).filter(Boolean))] as string[]
+    return names.length ? names.join(', ') : '—'
+  }
+
   // One block per station, in station order. Viewing everything, a station
   // with nothing to show is left out; viewing ONE station the block header
   // is dropped altogether — the rail already names the station.
   const oneStation = scope !== 'all'
-  const groups = stations
+  const stationBlocks = stations
     .filter((s) => (oneStation ? s.id === scope : true))
-    .map((s) => ({ station: s, rows: visible.filter((e) => e.station_id === s.id) }))
-    .filter((g) => oneStation || g.rows.length > 0)
+    .map((s) => ({ station: s, rows: buildGroups(visible.filter((e) => e.station_id === s.id)) }))
+    .filter((b) => oneStation || b.rows.length > 0)
 
   const totals = {
-    entries: visible.length,
-    mine: visible.filter((e) => actionFor(e)).length,
+    rows: stationBlocks.reduce((n, b) => n + b.rows.length, 0),
     amount: visible.reduce((n, e) => n + amountFor(e.job_id, e.quantity), 0),
   }
 
-  const selectedRows = visible.filter((e) => selected.has(e.id))
-  const toVerify = selectedRows.filter((e) => actionFor(e) === 'verified')
-  const toApprove = selectedRows.filter((e) => actionFor(e) === 'approved')
-
-  function toggleRow(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  /** Tick (or untick) every row in one station block that this user may
-   *  actually action — the rest are not selectable in the first place. */
-  function toggleGroup(rows: ProductionEntry[]) {
-    const actionable = rows.filter((e) => actionFor(e)).map((e) => e.id)
-    const allOn = actionable.length > 0 && actionable.every((id) => selected.has(id))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      for (const id of actionable) {
-        if (allOn) next.delete(id)
-        else next.add(id)
-      }
-      return next
-    })
+  /** The Piece Rate cell: one number — unless the rate is tiered AND the
+   *  5th unit was reached, in which case both prices show with the units
+   *  each one paid for. */
+  const RateBreak = ({ g }: { g: WorkGroup }) => {
+    const r = bestRate.get(g.jobId)
+    if (!r) return <span className="muted">—</span>
+    if (r.tier2_rate == null) return <>{Number(r.rate).toFixed(2)}</>
+    const t1 = g.entries.reduce((n, e) => n + Math.min(e.quantity, TIER1_UNIT_CAP), 0)
+    const t2 = g.entries.reduce((n, e) => n + Math.max(0, e.quantity - TIER1_UNIT_CAP), 0)
+    if (t2 === 0) return <>{Number(r.rate).toFixed(2)}</>
+    return (
+      <span className="op-rate-break">
+        <span>{t1} × {Number(r.rate).toFixed(2)}</span>
+        <span>{t2} × {Number(r.tier2_rate).toFixed(2)}</span>
+      </span>
+    )
   }
 
   function stampFor(next: 'verified' | 'approved' | 'rejected', reason?: string | null) {
@@ -418,30 +461,43 @@ export default function Operation() {
     await Promise.all([loadEntries(), loadOpenCounts()])
   }
 
-  /** The same step taken on every ticked row that is ready for it. */
-  async function bulk(next: 'verified' | 'approved' | 'rejected') {
-    const rows =
-      next === 'verified' ? toVerify : next === 'approved' ? toApprove : selectedRows.filter((e) => actionFor(e))
-    if (rows.length === 0) return
-    let reason: string | null = null
-    if (next === 'rejected') {
-      reason = window.prompt(`Reason for rejecting ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} (shown to the workers):`) ?? null
-      if (reason === null) return
-    }
+  /** The same step for every entry in the pop-out that is ready for it. */
+  async function actMany(list: ProductionEntry[], next: 'verified' | 'approved') {
+    if (list.length === 0) return
     setBusy('bulk')
     setError(null)
-    setNotice(null)
     const { error } = await supabase
       .from('production_entries')
-      .update(stampFor(next, reason))
-      .in('id', rows.map((r) => r.id))
+      .update(stampFor(next))
+      .in('id', list.map((e) => e.id))
     setBusy(null)
     if (error) return setError(error.message)
-    setNotice(
-      `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} ${
-        next === 'verified' ? 'verified' : next === 'approved' ? 'approved' : 'rejected'
-      }.`,
-    )
+    setNotice(`${list.length} entr${list.length === 1 ? 'y' : 'ies'} ${next === 'verified' ? 'verified' : 'approved'}.`)
+    await Promise.all([loadEntries(), loadOpenCounts()])
+  }
+
+  async function editQty(e: ProductionEntry) {
+    const raw = window.prompt('New quantity:', String(e.quantity))
+    if (raw === null) return
+    const qty = Number(raw)
+    if (!Number.isFinite(qty) || qty <= 0) return setError('Quantity must be a positive number.')
+    setBusy(e.id)
+    setError(null)
+    const fields: Record<string, unknown> = { quantity: qty }
+    if (stat(e) === 'rejected') {
+      // Editing a rejected entry resubmits it for approval.
+      Object.assign(fields, {
+        approval_status: 'pending',
+        rejected_reason: null,
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      })
+    }
+    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    setBusy(null)
+    if (error) return setError(error.message)
     await Promise.all([loadEntries(), loadOpenCounts()])
   }
 
@@ -452,7 +508,28 @@ export default function Operation() {
     const { error } = await supabase.from('production_entries').delete().eq('id', e.id)
     setBusy(null)
     if (error) return setError(error.message)
-    setDetail(null)
+    await Promise.all([loadEntries(), loadOpenCounts()])
+  }
+
+  async function deleteGroup(g: WorkGroup) {
+    const n = g.entries.length
+    if (
+      !window.confirm(
+        n === 1
+          ? `Delete this entry (${g.entries[0].quantity} × ${jobName(g.jobId)})?`
+          : `Delete ALL ${n} entries by ${personName(g.entries[0])} for "${jobName(g.jobId)}" on ${fmtDate(g.date)}?`,
+      )
+    )
+      return
+    setBusy(g.key)
+    setError(null)
+    const { error } = await supabase
+      .from('production_entries')
+      .delete()
+      .in('id', g.entries.map((e) => e.id))
+    setBusy(null)
+    if (error) return setError(error.message)
+    if (detailKey === g.key) setDetailKey(null)
     await Promise.all([loadEntries(), loadOpenCounts()])
   }
 
@@ -472,6 +549,13 @@ export default function Operation() {
   const mineList = railList.filter((s) => myStationIds.includes(s.id))
   const otherList = railList.filter((s) => !myStationIds.includes(s.id))
   const totalOpen = [...openByStation.values()].reduce((a, b) => a + b, 0)
+
+  // The pop-out's group is rebuilt from the CURRENT entries (not the tab
+  // slice), so signing one submission off updates in place instead of
+  // yanking the window shut.
+  const detailGroup = detailKey
+    ? buildGroups(entries.filter((e) => groupKeyOf(e) === detailKey))[0] ?? null
+    : null
 
   const stationButton = (s: Station) => {
     const mine = myStationIds.includes(s.id)
@@ -493,14 +577,11 @@ export default function Operation() {
     )
   }
 
-  const colCount = (tab === 'open' ? 1 : 0) + 11
-
-  const entryRows = (rows: ProductionEntry[]) => (
+  const groupRows = (rows: WorkGroup[]) => (
     <div className="board-scroll">
       <table className="table op-table">
         <thead>
           <tr>
-            {tab === 'open' && <th className="op-check-col" />}
             <th>Date</th>
             <th>Tier Tag</th>
             <th>Name</th>
@@ -517,77 +598,55 @@ export default function Operation() {
         <tbody>
           {rows.length === 0 && (
             <tr>
-              <td colSpan={colCount} className="muted">Nothing here for these filters.</td>
+              <td colSpan={11} className="muted">Nothing here for these filters.</td>
             </tr>
           )}
-          {rows.map((e) => {
-            const s = stat(e)
-            const step = actionFor(e)
-            const tier = tierOf(e)
+          {rows.map((g) => {
+            const first = g.entries[0]
+            const tier = tierOf(first)
+            const s = groupStatus(g)
+            const canDrop = g.entries.every(canModify)
             return (
-              <tr key={e.id} className={selected.has(e.id) ? 'op-row-on' : ''}>
-                {tab === 'open' && (
-                  <td className="op-check-col">
-                    {step && (
-                      <input
-                        type="checkbox"
-                        className="op-check"
-                        checked={selected.has(e.id)}
-                        onChange={() => toggleRow(e.id)}
-                        aria-label={`Select ${personName(e)} ${jobName(e.job_id)}`}
-                      />
-                    )}
-                  </td>
-                )}
-                <td className="nowrap muted small">{fmtDate(e.work_date)}</td>
+              <tr key={g.key}>
+                <td className="nowrap muted small">
+                  {fmtDate(g.date)}
+                  {g.entries.length > 1 && (
+                    <div className="small muted">{g.entries.length} entries</div>
+                  )}
+                </td>
                 <td>{tier ? <span className={tagClass(tier.color)}>{tier.name}</span> : <span className="muted">—</span>}</td>
-                <td>{personName(e)}</td>
-                <td className="muted small op-job" title={jobName(e.job_id)}>{jobName(e.job_id)}</td>
-                <td className="right">{e.quantity}</td>
-                <td className="right nowrap">{rateLabel(e.job_id)}</td>
-                <td className="right nowrap"><strong>{amountFor(e.job_id, e.quantity).toFixed(2)}</strong></td>
+                <td>{personName(first)}</td>
+                <td className="muted small op-job" title={jobName(g.jobId)}>{jobName(g.jobId)}</td>
+                <td className="right">{groupQty(g)}</td>
+                <td className="right nowrap"><RateBreak g={g} /></td>
+                <td className="right nowrap"><strong>{groupAmount(g).toFixed(2)}</strong></td>
                 <td className="nowrap">
-                  {badge(s)}
-                  {isLocked(e) && (
+                  {badge(s ?? 'approved')}
+                  {g.entries.some(isLocked) && (
                     <span className="mob-chip" title="Date falls in a finalized payroll period" style={{ marginLeft: '0.3rem' }}>
                       🔒
                     </span>
                   )}
                 </td>
-                <td className="muted small nowrap" title={e.verified_by ?? undefined}>{shortWho(e.verified_by)}</td>
-                <td className="muted small nowrap" title={e.approved_by ?? undefined}>{shortWho(e.approved_by)}</td>
+                <td className="muted small nowrap">{whoList(g, 'verified_by')}</td>
+                <td className="muted small nowrap">{whoList(g, 'approved_by')}</td>
                 <td className="right op-actions">
-                  {step === 'verified' && (
-                    <button className="linkbtn" disabled={busy === e.id} onClick={() => act(e, 'verified')}>
-                      ✓ Verify
-                    </button>
-                  )}
-                  {step === 'approved' && (
-                    <button className="linkbtn" disabled={busy === e.id} onClick={() => act(e, 'approved')}>
-                      ✓ Approve
-                    </button>
-                  )}
-                  {step && (
-                    <button className="linkbtn danger" disabled={busy === e.id} onClick={() => act(e, 'rejected')}>
-                      ✗ Reject
-                    </button>
-                  )}
                   <span className="row-actions">
                     <button
                       className="icon-btn sm"
                       title="View this work record"
-                      aria-label={`View ${personName(e)} ${jobName(e.job_id)}`}
-                      onClick={() => setDetail({ entry: e, mode: 'view' })}
+                      aria-label={`View ${personName(first)} ${jobName(g.jobId)}`}
+                      onClick={() => setDetailKey(g.key)}
                     >
                       <EyeIcon />
                     </button>
-                    {canModify(e) && (
+                    {canDrop && (
                       <button
                         className="icon-btn sm danger"
-                        title="Delete this work record"
-                        aria-label={`Delete ${personName(e)} ${jobName(e.job_id)}`}
-                        disabled={busy === e.id}
-                        onClick={() => deleteEntry(e)}
+                        title={g.entries.length > 1 ? `Delete all ${g.entries.length} entries` : 'Delete this work record'}
+                        aria-label={`Delete ${personName(first)} ${jobName(g.jobId)}`}
+                        disabled={busy === g.key}
+                        onClick={() => deleteGroup(g)}
                       >
                         <TrashIcon />
                       </button>
@@ -604,11 +663,11 @@ export default function Operation() {
 
   return (
     <div className="stack" style={wideStyle}>
-      {/* Way out on the left, title centred over the page. */}
-      <div className="page-head">
+      {/* Same door out and the same banner as Team Manage. */}
+      <header className="module-bar">
         <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
-        <h1>Operation Module</h1>
-      </div>
+      </header>
+      <h1 className="module-banner">Operation Module</h1>
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
@@ -629,7 +688,7 @@ export default function Operation() {
             >
               »
             </button>
-            <span className="op-rail-vert">Stations</span>
+            <span className="op-rail-word">Stations</span>
             {totalOpen > 0 && (
               <span className="count-badge static" title={`${totalOpen} waiting across every station`}>
                 {totalOpen}
@@ -707,15 +766,10 @@ export default function Operation() {
                 />
               </label>
               <button className="btn" type="submit">Search</button>
-              {approvalLevel && (
-                <label className="small muted checkbox op-needsme">
-                  <input type="checkbox" checked={needsMe} onChange={(e) => setNeedsMe(e.target.checked)} />{' '}
-                  Needs my action
-                </label>
-              )}
             </form>
 
-            <div className="tabs glass">
+            {/* The three tabs share the bar's full width evenly. */}
+            <div className="tabs glass op-tabs">
               <button
                 type="button"
                 className={`tab ${tab === 'open' ? 'active' : ''}`}
@@ -741,68 +795,31 @@ export default function Operation() {
 
             {/* Adding work lives under the first tab — a new entry lands
                 there, waiting to be verified. */}
-            {tab === 'open' && (
+            {tab === 'open' ? (
               <div className="row-form spread op-tabbar">
                 <span className="muted small">
-                  {totals.entries} record{totals.entries === 1 ? '' : 's'} · {RM(totals.amount)}
-                  {approvalLevel && totals.mine > 0 && <> · <strong>{totals.mine} waiting on you</strong></>}
+                  {totals.rows} row{totals.rows === 1 ? '' : 's'} · {RM(totals.amount)}
                 </span>
                 <Link to="/operation/add" className="btn">+ Add Job Record</Link>
               </div>
-            )}
-            {tab !== 'open' && (
+            ) : (
               <p className="muted small" style={{ margin: 0 }}>
-                {totals.entries} record{totals.entries === 1 ? '' : 's'} · {RM(totals.amount)}
+                {totals.rows} row{totals.rows === 1 ? '' : 's'} · {RM(totals.amount)}
               </p>
-            )}
-
-            {/* Ticked rows get cleared together instead of one click each. */}
-            {selectedRows.length > 0 && (
-              <div className="op-bulkbar">
-                <span className="op-bulk-count">{selectedRows.length} selected</span>
-                {toVerify.length > 0 && (
-                  <button className="btn" disabled={busy === 'bulk'} onClick={() => bulk('verified')}>
-                    ✓ Verify {toVerify.length}
-                  </button>
-                )}
-                {toApprove.length > 0 && (
-                  <button className="btn" disabled={busy === 'bulk'} onClick={() => bulk('approved')}>
-                    ✓ Approve {toApprove.length}
-                  </button>
-                )}
-                <button className="btn ghost danger" disabled={busy === 'bulk'} onClick={() => bulk('rejected')}>
-                  ✗ Reject
-                </button>
-                <button type="button" className="linkbtn" onClick={() => setSelected(new Set())}>
-                  Clear
-                </button>
-              </div>
             )}
 
             {/* One station picked: the rail already names it, so the block
                 header goes and the records stand on their own. */}
             {oneStation
-              ? entryRows(groups[0]?.rows ?? [])
-              : groups.length === 0
+              ? groupRows(stationBlocks[0]?.rows ?? [])
+              : stationBlocks.length === 0
                 ? <p className="muted">Nothing here for these filters.</p>
-                : groups.map(({ station, rows }) => {
+                : stationBlocks.map(({ station, rows }) => {
                     const shut = collapsed.has(station.id)
-                    const actionable = rows.filter((e) => actionFor(e))
-                    const allTicked = actionable.length > 0 && actionable.every((e) => selected.has(e.id))
-                    const groupAmount = rows.reduce((n, e) => n + amountFor(e.job_id, e.quantity), 0)
+                    const amount = rows.reduce((n, g) => n + groupAmount(g), 0)
                     return (
                       <section className="op-group" key={station.id}>
                         <div className="op-group-head">
-                          {tab === 'open' && actionable.length > 0 && (
-                            <input
-                              type="checkbox"
-                              className="op-check"
-                              checked={allTicked}
-                              onChange={() => toggleGroup(rows)}
-                              title={`Select the ${actionable.length} entr${actionable.length === 1 ? 'y' : 'ies'} you can action here`}
-                              aria-label={`Select actionable entries at ${station.name}`}
-                            />
-                          )}
                           <button
                             type="button"
                             className="op-group-toggle"
@@ -821,11 +838,11 @@ export default function Operation() {
                             {myStationIds.includes(station.id) && <span className="you-chip">you</span>}
                           </button>
                           <span className="op-group-meta">
-                            {rows.length} record{rows.length === 1 ? '' : 's'}
-                            <strong>{RM(groupAmount)}</strong>
+                            {rows.length} row{rows.length === 1 ? '' : 's'}
+                            <strong>{RM(amount)}</strong>
                           </span>
                         </div>
-                        {!shut && entryRows(rows)}
+                        {!shut && groupRows(rows)}
                       </section>
                     )
                   })}
@@ -840,26 +857,27 @@ export default function Operation() {
         </div>
       </div>
 
-      {detail && (
-        <EntryModal
-          entry={detail.entry}
-          mode={detail.mode}
-          onMode={(mode) => setDetail({ entry: detail.entry, mode })}
-          onClose={() => setDetail(null)}
-          stationName={stationName(detail.entry.station_id)}
-          job={jobOf(detail.entry.job_id)}
-          tier={tierOf(detail.entry)}
-          workerName={personName(detail.entry)}
-          rateLabel={rateLabel(detail.entry.job_id)}
-          amount={amountFor(detail.entry.job_id, detail.entry.quantity)}
-          evidence={evidenceUrl(detail.entry.id)}
-          canEdit={canModify(detail.entry)}
+      {detailGroup && (
+        <GroupModal
+          group={detailGroup}
+          onClose={() => setDetailKey(null)}
+          stationName={stationName(detailGroup.stationId)}
+          job={jobOf(detailGroup.jobId)}
+          tier={tierOf(detailGroup.entries[0])}
+          workerName={personName(detailGroup.entries[0])}
+          rate={bestRate.get(detailGroup.jobId) ?? null}
+          amountFor={amountFor}
+          groupQty={groupQty(detailGroup)}
+          groupAmount={groupAmount(detailGroup)}
+          evidenceUrl={evidenceUrl}
+          actionFor={actionFor}
+          canModify={canModify}
+          busy={busy}
           badge={badge}
-          onDelete={() => deleteEntry(detail.entry)}
-          onSaved={async () => {
-            setDetail(null)
-            await Promise.all([loadEntries(), loadOpenCounts()])
-          }}
+          onAct={act}
+          onActMany={actMany}
+          onEditQty={editQty}
+          onDelete={deleteEntry}
         />
       )}
     </div>
@@ -867,81 +885,80 @@ export default function Operation() {
 }
 
 /* ------------------------------------------------------------------ */
-/* One work record, opened from the row's eye. The view face is        */
-/* read-only; Edit turns the changeable parts into fields. Delete is   */
-/* offered here as well as on the row.                                 */
+/* One work-record row, opened. Section 1 is who did what; section 2   */
+/* is the mill day's clock (07:00 → 07:00) with every submission laid  */
+/* on the hour it came in — photo first, and verify / approve / reject */
+/* signed off right there beside it.                                   */
 /* ------------------------------------------------------------------ */
 
-function EntryModal({
-  entry,
-  mode,
-  onMode,
+function GroupModal({
+  group,
   onClose,
   stationName,
   job,
   tier,
   workerName,
-  rateLabel,
-  amount,
-  evidence,
-  canEdit,
+  rate,
+  amountFor,
+  groupQty,
+  groupAmount,
+  evidenceUrl,
+  actionFor,
+  canModify,
+  busy,
   badge,
+  onAct,
+  onActMany,
+  onEditQty,
   onDelete,
-  onSaved,
 }: {
-  entry: ProductionEntry
-  mode: 'view' | 'edit'
-  onMode: (mode: 'view' | 'edit') => void
+  group: WorkGroup
   onClose: () => void
   stationName: string
   job: Job | null
   tier: Grade | null
   workerName: string
-  rateLabel: string
-  amount: number
-  evidence: string | null
-  canEdit: boolean
+  rate: PieceRate | null
+  amountFor: (jobId: string, qty: number) => number
+  groupQty: number
+  groupAmount: number
+  evidenceUrl: (entryId: string) => string | null
+  actionFor: (e: ProductionEntry) => 'verified' | 'approved' | null
+  canModify: (e: ProductionEntry) => boolean
+  busy: string | null
   badge: (s: string) => JSX.Element
-  onDelete: () => void
-  onSaved: () => void
+  onAct: (e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') => void
+  onActMany: (list: ProductionEntry[], next: 'verified' | 'approved') => void
+  onEditQty: (e: ProductionEntry) => void
+  onDelete: (e: ProductionEntry) => void
 }) {
   const overlay = useOverlayClose(onClose)
-  const [workDate, setWorkDate] = useState(entry.work_date)
-  const [quantity, setQuantity] = useState(String(entry.quantity))
-  const [notes, setNotes] = useState(entry.notes ?? '')
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const status = entry.approval_status ?? 'approved'
 
-  async function save(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    const qty = Number(quantity)
-    if (!Number.isFinite(qty) || qty <= 0) return setError('Quantity must be a positive number.')
-    if (!workDate) return setError('Pick a work date.')
-    if (workDate > todayISO()) return setError('Work date cannot be in the future.')
-    setSaving(true)
-    const fields: Record<string, unknown> = {
-      work_date: workDate,
-      quantity: qty,
-      notes: notes.trim() || null,
-    }
-    // A rejected entry that gets fixed goes back into the queue.
-    if (status === 'rejected') {
-      Object.assign(fields, {
-        approval_status: 'pending',
-        rejected_reason: null,
-        verified_by: null,
-        verified_at: null,
-        approved_by: null,
-        approved_at: null,
-      })
-    }
-    const { error: err } = await supabase.from('production_entries').update(fields).eq('id', entry.id)
-    setSaving(false)
-    if (err) return setError(err.message)
-    onSaved()
+  // The day's 24 hours starting at 07:00, each holding the submissions
+  // that arrived in it; runs of empty hours fold into one quiet line.
+  const slots: { start: number; end: number; entries: ProductionEntry[] }[] = []
+  const byHour = new Map<number, ProductionEntry[]>()
+  for (const e of group.entries) {
+    const h = new Date(e.created_at).getHours()
+    const slot = (h - DAY_START_HOUR + 24) % 24
+    if (!byHour.has(slot)) byHour.set(slot, [])
+    byHour.get(slot)!.push(e)
   }
+  for (let i = 0; i < 24; i++) {
+    const list = byHour.get(i) ?? []
+    const prev = slots[slots.length - 1]
+    if (list.length === 0 && prev && prev.entries.length === 0) {
+      prev.end = i + 1
+    } else {
+      slots.push({ start: i, end: i + 1, entries: list })
+    }
+  }
+
+  const toVerify = group.entries.filter((e) => actionFor(e) === 'verified')
+  const toApprove = group.entries.filter((e) => actionFor(e) === 'approved')
+
+  const timeOf = (e: ProductionEntry) =>
+    new Date(e.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
 
   const Line = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div className="op-line">
@@ -950,119 +967,128 @@ function EntryModal({
     </div>
   )
 
-  const trail = (
-    <div className="tag-section">
-      <div className="tag-section-title">Approval trail</div>
-      <Line label="Status">{badge(status)}</Line>
-      <Line label="Verified by">{entry.verified_by ?? '—'}</Line>
-      <Line label="Approved by">{entry.approved_by ?? '—'}</Line>
-      {status === 'rejected' && entry.rejected_reason && (
-        <Line label="Reason">{entry.rejected_reason}</Line>
-      )}
-    </div>
-  )
-
-  if (mode === 'view') {
-    return (
-      <div className="modal-overlay" {...overlay}>
-        <div className="modal modal-view">
-          <div className="row-form spread">
-            <h2>Work Record</h2>
-            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-          </div>
-
-          <div className="tag-section">
-            <div className="tag-section-title">The work</div>
-            <Line label="Date">{fmtDate(entry.work_date)}</Line>
-            <Line label="Station">{stationName}</Line>
-            <Line label="Tier tag">
-              {tier ? <span className={tagClass(tier.color)}>{tier.name}</span> : '—'}
-            </Line>
-            <Line label="Name">{workerName}</Line>
-            <Line label="Job">{job?.name ?? 'Work'}</Line>
-            <Line label="Shift">{entry.shift ? `Shift ${entry.shift.toUpperCase()}` : '—'}</Line>
-          </div>
-
-          <div className="tag-section">
-            <div className="tag-section-title">The count</div>
-            <Line label="Qty">{entry.quantity} {job?.unit ?? ''}</Line>
-            <Line label="Piece rate (RM)">{rateLabel}</Line>
-            <Line label="Total amount (RM)"><strong>{amount.toFixed(2)}</strong></Line>
-            {entry.notes && <Line label="Notes">{entry.notes}</Line>}
-            <Line label="Attachment">
-              {evidence ? (
-                <a className="linkbtn" href={evidence} target="_blank" rel="noreferrer">📷 Open</a>
-              ) : (
-                '—'
-              )}
-            </Line>
-          </div>
-
-          {trail}
-
-          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-            {canEdit && (
-              <>
-                <button type="button" className="btn ghost danger" onClick={onDelete}>Delete</button>
-                <button type="button" className="btn" onClick={() => onMode('edit')}>Edit</button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="modal-overlay" {...overlay}>
-      <form className="modal modal-view" onSubmit={save}>
+      <div className="modal modal-view">
         <div className="row-form spread">
-          <h2>Edit work record</h2>
+          <h2>Work Record</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
-        {error && <div className="error">{error}</div>}
-
-        {/* Who did the work, at which station, on which job is what the
-            record IS — changing those would be a different record, and the
-            rate is pulled from that pairing. They stay as they are. */}
         <div className="tag-section">
-          <div className="tag-section-title">Fixed</div>
-          <Line label="Station">{stationName}</Line>
+          <div className="tag-section-title">The work</div>
+          <Line label="Date">{fmtDate(group.date)}</Line>
+          <Line label="Station tag">{stationName}</Line>
+          <Line label="Tier tag">
+            {tier ? <span className={tagClass(tier.color)}>{tier.name}</span> : '—'}
+          </Line>
           <Line label="Name">{workerName}</Line>
           <Line label="Job">{job?.name ?? 'Work'}</Line>
-          <Line label="Piece rate (RM)">{rateLabel}</Line>
+          <Line label="Qty">{groupQty} {job?.unit ?? ''}</Line>
+          <Line label="Piece rate (RM)">
+            {!rate
+              ? '—'
+              : rate.tier2_rate == null
+                ? Number(rate.rate).toFixed(2)
+                : `1st–4th ${Number(rate.rate).toFixed(2)} · 5th+ ${Number(rate.tier2_rate).toFixed(2)}`}
+          </Line>
+          <Line label="Total amount (RM)"><strong>{groupAmount.toFixed(2)}</strong></Line>
         </div>
 
-        <label className="field">
-          <span>Date</span>
-          <input type="date" value={workDate} max={todayISO()} onChange={(e) => setWorkDate(e.target.value)} required />
-        </label>
+        <div className="tag-section">
+          <div className="row-form spread" style={{ gap: '0.4rem' }}>
+            <div className="tag-section-title">The day — {hh(DAY_START_HOUR)} → {hh(DAY_START_HOUR)}</div>
+            <div className="row-form" style={{ gap: '0.4rem' }}>
+              {toVerify.length > 1 && (
+                <button className="btn row-btn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
+                  ✓ Verify all {toVerify.length}
+                </button>
+              )}
+              {toApprove.length > 1 && (
+                <button className="btn row-btn" disabled={busy === 'bulk'} onClick={() => onActMany(toApprove, 'approved')}>
+                  ✓ Approve all {toApprove.length}
+                </button>
+              )}
+            </div>
+          </div>
 
-        <label className="field">
-          <span>Qty {job?.unit ? `(${job.unit})` : ''}</span>
-          <input inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
-        </label>
-
-        <label className="field">
-          <span>Notes</span>
-          <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </label>
-
-        {status === 'rejected' && (
-          <p className="small muted" style={{ margin: 0 }}>
-            Saving a rejected record sends it back for verification.
-          </p>
-        )}
-
-        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost danger" onClick={onDelete}>Delete</button>
-          <button type="button" className="btn ghost" onClick={() => onMode('view')}>Cancel</button>
-          <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : 'Save changes'}
-          </button>
+          <div className="op-timeline">
+            {slots.map((s) => (
+              <div className={`op-tl-row ${s.entries.length === 0 ? 'empty' : ''}`} key={s.start}>
+                <span className="op-tl-hour">
+                  {hh(DAY_START_HOUR + s.start)} – {hh(DAY_START_HOUR + s.end)}
+                </span>
+                {s.entries.length === 0 ? (
+                  <span className="op-tl-none">—</span>
+                ) : (
+                  <ol className="op-tl-list">
+                    {s.entries.map((e, i) => {
+                      const step = actionFor(e)
+                      const photo = evidenceUrl(e.id)
+                      return (
+                        <li className="op-tl-entry" key={e.id}>
+                          <span className="op-tl-no">{i + 1}.</span>
+                          <span className="op-tl-time">{timeOf(e)}</span>
+                          <span className="op-tl-qty">{e.quantity} {job?.unit ?? ''}</span>
+                          <span className="op-tl-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                          {photo ? (
+                            <a className="linkbtn" href={photo} target="_blank" rel="noreferrer">📷 Photo</a>
+                          ) : (
+                            <span className="muted small">no photo</span>
+                          )}
+                          {badge(e.approval_status ?? 'approved')}
+                          <span className="op-tl-actions">
+                            {step === 'verified' && (
+                              <button className="linkbtn" disabled={busy === e.id} onClick={() => onAct(e, 'verified')}>
+                                ✓ Verify
+                              </button>
+                            )}
+                            {step === 'approved' && (
+                              <button className="linkbtn" disabled={busy === e.id} onClick={() => onAct(e, 'approved')}>
+                                ✓ Approve
+                              </button>
+                            )}
+                            {step && (
+                              <button className="linkbtn danger" disabled={busy === e.id} onClick={() => onAct(e, 'rejected')}>
+                                ✗ Reject
+                              </button>
+                            )}
+                            {canModify(e) && (
+                              <>
+                                <button
+                                  className="icon-btn sm"
+                                  title="Edit quantity"
+                                  aria-label="Edit quantity"
+                                  disabled={busy === e.id}
+                                  onClick={() => onEditQty(e)}
+                                >
+                                  <PencilIcon />
+                                </button>
+                                <button
+                                  className="icon-btn sm danger"
+                                  title="Delete this entry"
+                                  aria-label="Delete this entry"
+                                  disabled={busy === e.id}
+                                  onClick={() => onDelete(e)}
+                                >
+                                  <TrashIcon />
+                                </button>
+                              </>
+                            )}
+                          </span>
+                          {e.approval_status === 'rejected' && e.rejected_reason && (
+                            <div className="small muted op-tl-reason">{e.rejected_reason}</div>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ol>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
-      </form>
+      </div>
     </div>
   )
 }
