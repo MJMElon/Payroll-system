@@ -1338,16 +1338,22 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
   padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);
 }
-.wm-detail-id { display: flex; flex-direction: column; gap: 0.2rem; }
-.wm-profile-name {
-  display: flex; align-items: center; gap: 0.3rem;
-  font-size: 1.05rem; font-weight: 800; letter-spacing: -0.01em;
+/* Profile details: a "Label : value" sheet that turns into a form. */
+.wm-panel-tools { display: flex; align-items: center; gap: 0.2rem; }
+.wm-panel-tools .wm-icon { visibility: visible; font-size: 0.9rem; padding: 0.2rem 0.35rem; }
+.wm-fields { display: flex; flex-direction: column; gap: 0.3rem; }
+.wm-field { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.82rem; }
+.wm-field-label {
+  flex: none; width: 5.6rem; color: var(--muted); font-size: 0.75rem;
 }
-.wm-profile-name .wm-icon { visibility: visible; }
-.wm-name-edit { display: flex; gap: 0.35rem; align-items: center; }
-.wm-name-edit input { flex: 1; min-width: 0; padding: 0.35rem 0.5rem; font-size: 0.9rem; }
-.wm-name-hint { color: #b45309; font-size: 0.72rem; }
-.btn.sm { padding: 0.35rem 0.6rem; font-size: 0.8rem; border-radius: 8px; }
+.wm-field-label::after { content: ' :'; }
+.wm-field-value { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.wm-field.editing { align-items: center; }
+.wm-field-input { flex: 1; min-width: 0; padding: 0.3rem 0.45rem; font-size: 0.82rem; }
+.wm-field-note { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.7rem; }
+.wm-edit-actions { display: flex; justify-content: flex-end; gap: 0.4rem; margin-top: 0.4rem; }
+.wm-name-hint { color: #b45309; font-size: 0.72rem; margin: 0.15rem 0 0; }
+.btn.sm { padding: 0.35rem 0.7rem; font-size: 0.8rem; border-radius: 8px; }
 .wm-panel .wm-block-name, .wm-panel .wm-block-meta { white-space: normal; }
 .wm-stat {
   display: flex; flex-direction: column; gap: 0.1rem;

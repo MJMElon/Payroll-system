@@ -14,9 +14,11 @@
 //           it is always clear where a card can go: dropping on the row
 //           itself settles the tier and leaves the leader alone. Every name
 //           stays on its row — clicking a block only opens it.
-//   RIGHT   Profile details for whoever was clicked, where an account can
-//           also be given a name (the chart shows the email until it has
-//           one, which is why naming lives one click away).
+//   RIGHT   Profile details for whoever was clicked: a "Label : value"
+//           sheet that the ✎ in its corner turns into one form — name,
+//           staff details and pay, with Save and Cancel. Tier, station and
+//           team are read-only there; they follow where the person sits on
+//           the chart, so they change by dragging, not by typing.
 //
 // Teams are the clusters inside a row: "+ Team" on a leader's block makes
 // one at that leader's tier and station, named inline. Drop someone on a
@@ -42,14 +44,12 @@ import {
   type Grade,
   type Job,
   type PieceRate,
-  type ProductionEntry,
   type Profile,
   type Role,
   type Station,
   type Team,
 } from '../../lib/supabase'
 
-const TIER1_UNIT_CAP = 4
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
 // Route access follows the tier tag: placing someone in the chain also
@@ -103,14 +103,12 @@ export default function WorkerManagement() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<PieceRate[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [editWorker, setEditWorker] = useState<Profile | null>(null)
   const [signupsOpen, setSignupsOpen] = useState(true)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropKey, setDropKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   async function load() {
@@ -302,7 +300,6 @@ export default function WorkerManagement() {
       .select()
       .single()
     if (error) return setError(error.message)
-    setNotice(`${name} added under ${displayName(leader)}.`)
     if (data) {
       setRenamingId(data.id)
       setRenameDraft(data.name)
@@ -329,7 +326,6 @@ export default function WorkerManagement() {
     const { error } = await supabase.from('teams').delete().eq('id', team.id)
     if (error) return setError(error.message)
     setError(null)
-    setNotice(`${team.name} removed.`)
     load()
   }
 
@@ -403,65 +399,43 @@ export default function WorkerManagement() {
           'tier, or the "Change other users\' settings" function.',
       )
     }
-    setNotice(
-      `${displayName(person)} now reports to ${displayName(leader)}${team ? ` · ${team.name}` : ''}.`,
-    )
     load()
   }
 
-  /** Give an account a name, so the chart stops showing an email. */
-  async function renamePerson(person: Profile, name: string) {
-    const clean = name.trim()
-    if (!clean || clean === (person.full_name ?? '')) return
-    setError(null)
-    const { data, error } = await supabase
-      .from('access_profiles')
-      .update({ full_name: clean })
-      .eq('id', person.id)
-      .select('id')
-    if (error) return setError(error.message)
-    if (!data || data.length === 0) {
-      return setError(
-        `The database would not let you rename ${displayName(person)} — that needs the ` +
-          '"Edit worker profile & salary" function.',
-      )
-    }
-    setNotice(`Name saved: ${clean}.`)
-    load()
-  }
-
-  /** Move someone to another tier tag without moving them in the chain. */
-  async function changeTier(person: Profile, gradeId: string) {
-    const grade = grades.find((g) => g.id === gradeId)
-    if (!grade) return
-    if (!canAssignAnywhere && !inMyBranch(person)) {
-      return setError('You can only re-tier someone who reports up to you.')
-    }
-    if (myTier !== null && !canAssignAnywhere && grade.sort_order <= myTier) {
-      return setError('You can only put someone on a tier below your own.')
-    }
-    const sup = person.supervisor_id ? profiles.find((x) => x.id === person.supervisor_id) : null
-    const supTier = sup ? tierOf(sup) : null
-    if (supTier !== null && grade.sort_order <= supTier) {
-      return setError(`That tier is not below ${displayName(sup)}, who they report to.`)
+  /**
+   * Save the Profile details form. Returns whether it stuck, so the panel
+   * knows to close the form. Row-level security refuses by matching no
+   * row, which PostgREST reports as a success that changed nothing.
+   */
+  async function saveProfile(person: Profile, patch: Record<string, unknown>): Promise<boolean> {
+    if (Object.keys(patch).length === 0) return true
+    if (patch.basic_salary != null) {
+      const n = Number(patch.basic_salary)
+      if (!Number.isFinite(n) || n < 0) {
+        setError('Basic salary must be a positive number.')
+        return false
+      }
+      patch.basic_salary = n
     }
     setError(null)
-    const patch: Record<string, unknown> = { grade_id: grade.id }
-    if (person.role !== 'admin') patch.role = roleForTier(grade.sort_order, grade.name)
     const { data, error } = await supabase
       .from('access_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
-    if (error) return setError(error.message)
-    if (!data || data.length === 0) {
-      return setError(
-        `The database would not let you re-tier ${displayName(person)} — that needs a higher ` +
-          'tier, or the "Change other users\' settings" function.',
-      )
+    if (error) {
+      setError(error.message)
+      return false
     }
-    setNotice(`${displayName(person)} is now ${grade.name}.`)
+    if (!data || data.length === 0) {
+      setError(
+        `The database would not let you edit ${displayName(person)} — that needs the ` +
+          '"Edit worker profile" or "Edit worker salary" function.',
+      )
+      return false
+    }
     load()
+    return true
   }
 
   /**
@@ -505,7 +479,6 @@ export default function WorkerManagement() {
           'a higher tier, or the "Change other users\' settings" function.',
       )
     }
-    setNotice(`${displayName(person)} is now ${grade.name}.`)
     load()
   }
 
@@ -739,7 +712,6 @@ export default function WorkerManagement() {
       <h1 className="wm-page-title">Team Manage</h1>
 
       {error && <div className="error">{error}</div>}
-      {notice && <div className="notice">{notice}</div>}
 
       <div className="wm-cols">
         {/* ---------- left: new sign ups, riding along as you scroll ------- */}
@@ -796,14 +768,6 @@ export default function WorkerManagement() {
 
         {/* ---------- right: the person you opened ------------------------ */}
         <aside className="wm-panel">
-          <div className="wm-panel-head">
-            <h2 className="wm-section-title">Profile details</h2>
-            {selected && (
-              <button className="modal-close" onClick={() => setSelectedId(null)} aria-label="Close">
-                ×
-              </button>
-            )}
-          </div>
           {selected ? (
             <WorkerPanel
               key={selected.id}
@@ -818,47 +782,74 @@ export default function WorkerManagement() {
               }
               jobs={jobs}
               rates={rates}
-              stations={stations}
               canEditProfile={canEditProfile}
               canEditSalary={canEditSalary}
-              tierOptions={
-                canAssignAnywhere || inMyBranch(selected)
-                  ? grades.filter((g) => canAssignAnywhere || myTier === null || g.sort_order > myTier)
-                  : []
-              }
-              onChangeTier={(gradeId) => changeTier(selected, gradeId)}
-              onRename={(name) => renamePerson(selected, name)}
-              onEdit={() => setEditWorker(selected)}
+              onSave={(patch) => saveProfile(selected, patch)}
+              onClose={() => setSelectedId(null)}
             />
           ) : (
-            <p className="muted small" style={{ margin: 0 }}>
-              Click any name to view profile.
-            </p>
+            <>
+              <div className="wm-panel-head">
+                <h2 className="wm-section-title">Profile details</h2>
+              </div>
+              <p className="muted small" style={{ margin: 0 }}>
+                Click any name to view profile.
+              </p>
+            </>
           )}
         </aside>
       </div>
 
-      {editWorker && (
-        <WorkerProfileModal
-          worker={editWorker}
-          canEditProfile={canEditProfile}
-          canEditSalary={canEditSalary}
-          onClose={() => setEditWorker(null)}
-          onSaved={() => {
-            setEditWorker(null)
-            load()
-          }}
-        />
-      )}
     </div>
   )
 }
 
 
 /* ------------------------------------------------------------------ */
-/* Worker panel — everything about ONE person, opened by clicking     */
-/* their row in the chain.                                            */
+/* PROFILE DETAILS — everything about ONE person, opened by clicking   */
+/* their block. One ✎ in the corner turns the whole card into a form;  */
+/* Save writes it, Cancel drops it. Tier, station and team are not     */
+/* edited here — those come from where the person sits on the chart.   */
 /* ------------------------------------------------------------------ */
+
+/** A read-only "Label : value" line. */
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="wm-field">
+      <span className="wm-field-label">{label}</span>
+      <span className="wm-field-value">{value || '—'}</span>
+    </div>
+  )
+}
+
+/** The same line, holding an input. */
+function EditRow({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  type?: string
+  placeholder?: string
+}) {
+  return (
+    <label className="wm-field editing">
+      <span className="wm-field-label">{label}</span>
+      <input
+        className="wm-field-input"
+        type={type}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        {...(type === 'number' ? { min: '0', step: '50' } : {})}
+      />
+    </label>
+  )
+}
 
 function WorkerPanel({
   person,
@@ -868,13 +859,10 @@ function WorkerPanel({
   leader,
   jobs,
   rates,
-  stations,
   canEditProfile,
   canEditSalary,
-  tierOptions,
-  onChangeTier,
-  onRename,
-  onEdit,
+  onSave,
+  onClose,
 }: {
   person: Profile
   grade: Grade | null
@@ -883,43 +871,59 @@ function WorkerPanel({
   leader: string | null
   jobs: Job[]
   rates: PieceRate[]
-  stations: Station[]
   canEditProfile: boolean
   canEditSalary: boolean
-  tierOptions: Grade[]
-  onChangeTier: (gradeId: string) => void
-  onRename: (name: string) => void
-  onEdit: () => void
+  onSave: (patch: Record<string, unknown>) => Promise<boolean>
+  onClose: () => void
 }) {
-  const [entries, setEntries] = useState<ProductionEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  // Naming an account right here is the quickest way to get emails off
-  // the chart, so the name is editable in place.
-  const [namingOpen, setNamingOpen] = useState(false)
-  const [nameDraft, setNameDraft] = useState(person.full_name ?? '')
-
-  const month = todayISO().slice(0, 7)
-  const monthLabel = new Date(`${month}-01T00:00:00`).toLocaleDateString(undefined, {
-    month: 'long',
-    year: 'numeric',
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    full_name: person.full_name ?? '',
+    employee_code: person.employee_code ?? '',
+    ic_number: person.ic_number ?? '',
+    phone: person.phone ?? '',
+    bank_name: person.bank_name ?? '',
+    bank_account: person.bank_account ?? '',
+    joined_on: person.joined_on ?? '',
+    basic_salary: person.basic_salary != null ? String(person.basic_salary) : '',
   })
+  const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
 
-  useEffect(() => {
-    setLoading(true)
-    const start = `${month}-01`
-    const end = todayISO()
-    supabase
-      .from('production_entries')
-      .select('*')
-      .eq('user_id', person.id)
-      .gte('work_date', start)
-      .lte('work_date', end)
-      .order('work_date', { ascending: false })
-      .then(({ data }) => {
-        setEntries((data ?? []) as ProductionEntry[])
-        setLoading(false)
-      })
-  }, [person.id, month])
+  function startEdit() {
+    setForm({
+      full_name: person.full_name ?? '',
+      employee_code: person.employee_code ?? '',
+      ic_number: person.ic_number ?? '',
+      phone: person.phone ?? '',
+      bank_name: person.bank_name ?? '',
+      bank_account: person.bank_account ?? '',
+      joined_on: person.joined_on ?? '',
+      basic_salary: person.basic_salary != null ? String(person.basic_salary) : '',
+    })
+    setEditing(true)
+  }
+
+  async function save() {
+    const patch: Record<string, unknown> = {}
+    if (canEditProfile) {
+      patch.full_name = form.full_name.trim() || null
+      patch.employee_code = form.employee_code.trim() || null
+      patch.ic_number = form.ic_number.trim() || null
+      patch.phone = form.phone.trim() || null
+      patch.bank_name = form.bank_name.trim() || null
+      patch.bank_account = form.bank_account.trim() || null
+      patch.joined_on = form.joined_on || null
+    }
+    if (canEditSalary) {
+      const v = form.basic_salary.trim()
+      patch.basic_salary = v === '' ? null : Number(v)
+    }
+    setSaving(true)
+    const ok = await onSave(patch)
+    setSaving(false)
+    if (ok) setEditing(false)
+  }
 
   // The rate in force today for a job.
   const currentRate = useMemo(() => {
@@ -932,14 +936,6 @@ function WorkerPanel({
     }
     return best
   }, [rates])
-
-  const amountOf = (jobId: string, qty: number) => {
-    const r = currentRate.get(jobId)
-    if (!r) return 0
-    const t1 = Number(r.rate)
-    if (r.tier2_rate == null) return qty * t1
-    return Math.min(qty, TIER1_UNIT_CAP) * t1 + Math.max(0, qty - TIER1_UNIT_CAP) * Number(r.tier2_rate)
-  }
 
   // Contracts this person may be paid for: approved + active work at one of
   // their stations, tagged to their tier (or open to every position).
@@ -955,102 +951,91 @@ function WorkerPanel({
     .filter((j) => j.grade_id === null || j.grade_id === person.grade_id)
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
-  const monthTotal = entries
-    .filter((e) => (e.approval_status ?? 'approved') !== 'rejected')
-    .reduce((s, e) => s + amountOf(e.job_id, Number(e.quantity)), 0)
-
-  const statusChip = (s: string) => {
-    const cls = s === 'approved' ? 'ok' : s === 'rejected' ? 'bad' : s === 'verified' ? 'mid' : 'warn'
-    const label =
-      s === 'approved' ? 'Approved'
-        : s === 'rejected' ? 'Rejected'
-          : s === 'verified' ? 'Pending approve'
-            : 'Pending verify'
-    return <span className={`mob-chip ${cls}`}>{label}</span>
-  }
+  const canEdit = canEditProfile || canEditSalary
 
   return (
     <>
-      <div className="wm-detail-id">
-        {namingOpen ? (
-          <div className="wm-name-edit">
-            <input
-              autoFocus
-              value={nameDraft}
-              placeholder="Full name"
-              onChange={(e) => setNameDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  onRename(nameDraft)
-                  setNamingOpen(false)
-                }
-                if (e.key === 'Escape') setNamingOpen(false)
-              }}
+      <div className="wm-panel-head">
+        <h2 className="wm-section-title">Profile details</h2>
+        <div className="wm-panel-tools">
+          {canEdit && !editing && (
+            <button type="button" className="wm-icon" title="Edit profile" onClick={startEdit}>
+              ✎
+            </button>
+          )}
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+      </div>
+
+      {editing ? (
+        <div className="wm-fields">
+          {canEditProfile ? (
+            <>
+              <EditRow label="Name" value={form.full_name} onChange={set('full_name')} placeholder="Full name" />
+              <Row label="Tier" value={grade?.name} />
+              <Row label="Station" value={stationText} />
+              <Row label="Team" value={team?.name} />
+              <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} placeholder="EMP001" />
+              <EditRow label="IC / passport" value={form.ic_number} onChange={set('ic_number')} />
+              <EditRow label="Phone" value={form.phone} onChange={set('phone')} />
+              <EditRow label="Bank" value={form.bank_name} onChange={set('bank_name')} />
+              <EditRow label="Bank a/c" value={form.bank_account} onChange={set('bank_account')} />
+              <EditRow label="Joined on" type="date" value={form.joined_on} onChange={set('joined_on')} />
+            </>
+          ) : (
+            <>
+              <Row label="Name" value={displayName(person)} />
+              <Row label="Tier" value={grade?.name} />
+              <Row label="Station" value={stationText} />
+            </>
+          )}
+          {canEditSalary && (
+            <EditRow
+              label="Basic salary"
+              type="number"
+              value={form.basic_salary}
+              onChange={set('basic_salary')}
+              placeholder="RM per month"
             />
-            <button
-              type="button"
-              className="btn sm"
-              onClick={() => {
-                onRename(nameDraft)
-                setNamingOpen(false)
-              }}
-            >
-              Save
+          )}
+          <p className="wm-field-note">
+            Tier, station and team follow where this person sits on the chart — drag their block to
+            change them.
+          </p>
+          <div className="wm-edit-actions">
+            <button type="button" className="btn ghost sm" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+            <button type="button" className="btn sm" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
-        ) : (
-          <div className="wm-profile-name">
-            {displayName(person)}
-            {canEditProfile && (
-              <button
-                type="button"
-                className="wm-icon"
-                title={hasName(person) ? 'Rename' : 'Add a name'}
-                onClick={() => {
-                  setNameDraft(person.full_name ?? '')
-                  setNamingOpen(true)
-                }}
-              >
-                ✎
-              </button>
-            )}
-          </div>
-        )}
-        {!hasName(person) && !namingOpen && (
-          <div className="wm-name-hint">No name set — the chart is showing their email.</div>
-        )}
-        <div className="wm-row-meta">{person.email}</div>
-        <div className="row-form" style={{ gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.15rem' }}>
-          {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
-          {team && <span className="badge off">{team.name}</span>}
         </div>
-        <div className="wm-row-meta">{stationText}</div>
-        {leader && <div className="wm-row-meta">Reports to {leader}</div>}
-      </div>
-
-      {tierOptions.length > 0 && (
-        <label className="field">
-          <span>Tier tag</span>
-          <select value={grade?.id ?? ''} onChange={(e) => onChangeTier(e.target.value)}>
-            <option value="" disabled>No tier yet</option>
-            {tierOptions.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-        </label>
+      ) : (
+        <div className="wm-fields">
+          <Row label="Name" value={displayName(person)} />
+          <Row label="Tier" value={grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : null} />
+          <Row label="Station" value={stationText} />
+          <Row label="Team" value={team?.name} />
+          <Row label="Reports to" value={leader} />
+          <Row label="Email" value={person.email} />
+          <Row label="Staff no." value={person.employee_code} />
+          <Row label="Phone" value={person.phone} />
+          <Row label="Joined on" value={person.joined_on} />
+          {canEditSalary && (
+            <Row
+              label="Basic salary"
+              value={person.basic_salary != null ? RM(Number(person.basic_salary)) : null}
+            />
+          )}
+          {!hasName(person) && (
+            <p className="wm-name-hint">No name set — the chart is showing their email.</p>
+          )}
+        </div>
       )}
 
-      <div className="wm-stat">
-        <span className="wm-stat-label">Monthly basic salary</span>
-        <span className="wm-stat-value">
-          {person.basic_salary != null ? RM(Number(person.basic_salary)) : '—'}
-        </span>
-      </div>
-
       <div className="wm-detail-block">
-        <div className="wm-detail-title">Entitled piece-rate contracts ({contracts.length})</div>
+        <div className="wm-detail-title">Piece-rate contracts ({contracts.length})</div>
         {contracts.length === 0 ? (
           <p className="muted small" style={{ margin: 0 }}>
             No approved contracts match this person's tier and station.
@@ -1060,16 +1045,13 @@ function WorkerPanel({
             const r = currentRate.get(j.id)
             return (
               <div className="wm-line" key={j.id}>
-                <span>
-                  {j.name}
-                  <span className="wm-row-meta"> {stationName(j.station_id)} · {j.unit}</span>
-                </span>
+                <span>{j.name}</span>
                 <span className="wm-line-amt">
                   {r
                     ? r.tier2_rate != null
-                      ? `${Number(r.rate).toFixed(2)} → ${Number(r.tier2_rate).toFixed(2)}`
-                      : Number(r.rate).toFixed(2)
-                    : '—'}
+                      ? `${Number(r.rate).toFixed(2)} → ${Number(r.tier2_rate).toFixed(2)} / ${j.unit}`
+                      : `${Number(r.rate).toFixed(2)} / ${j.unit}`
+                    : `— / ${j.unit}`}
                 </span>
               </div>
             )
@@ -1077,190 +1059,12 @@ function WorkerPanel({
         )}
       </div>
 
-      <div className="wm-detail-block">
-        <div className="wm-detail-title">Work done — {monthLabel}</div>
-        {loading ? (
-          <p className="muted small" style={{ margin: 0 }}>Loading…</p>
-        ) : entries.length === 0 ? (
-          <p className="muted small" style={{ margin: 0 }}>No work recorded this month.</p>
-        ) : (
-          <>
-            {entries.map((e) => (
-              <div className="wm-line" key={e.id}>
-                <span>
-                  <span className="wm-line-date">
-                    {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-                      day: '2-digit', month: 'short',
-                    })}
-                  </span>{' '}
-                  {jobName(e.job_id)} × {Number(e.quantity)}
-                  <div>{statusChip(e.approval_status ?? 'approved')}</div>
-                </span>
-                <span className="wm-line-amt">{amountOf(e.job_id, Number(e.quantity)).toFixed(2)}</span>
-              </div>
-            ))}
-            <div className="wm-line total">
-              <span>Month to date (excludes rejected)</span>
-              <span className="wm-line-amt">{RM(monthTotal)}</span>
-            </div>
-          </>
-        )}
-      </div>
-
-      {canEditProfile || canEditSalary ? (
-        <button className="btn" onClick={onEdit}>
-          ✎ Edit worker {canEditProfile ? 'profile' : 'salary'}
-        </button>
-      ) : (
-        <p className="muted small">
-          Editing a worker needs the "Edit worker profile" or "Edit worker salary"
-          function, granted per tier in Settings → Tier &amp; Station Tags setting.
+      {!canEdit && (
+        <p className="muted small" style={{ margin: 0 }}>
+          Editing a worker needs the "Edit worker profile" or "Edit worker salary" function, granted
+          per tier in Settings → Tier &amp; Station Tags setting.
         </p>
       )}
     </>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Worker profile pop-out: personal + payroll details for one worker. */
-/* Tier, station and team come from where the person sits in the      */
-/* chain, not from this form.                                         */
-/* ------------------------------------------------------------------ */
-
-function WorkerProfileModal({
-  worker,
-  canEditProfile,
-  canEditSalary,
-  onClose,
-  onSaved,
-}: {
-  worker: Profile
-  canEditProfile: boolean
-  canEditSalary: boolean
-  onClose: () => void
-  onSaved: () => void
-}) {
-  const [name, setName] = useState(worker.full_name ?? '')
-  const [code, setCode] = useState(worker.employee_code ?? '')
-  const [ic, setIc] = useState(worker.ic_number ?? '')
-  const [phone, setPhone] = useState(worker.phone ?? '')
-  const [bankName, setBankName] = useState(worker.bank_name ?? '')
-  const [bankAccount, setBankAccount] = useState(worker.bank_account ?? '')
-  const [joinedOn, setJoinedOn] = useState(worker.joined_on ?? '')
-  const [salary, setSalary] = useState(worker.basic_salary != null ? String(worker.basic_salary) : '')
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    const salaryValue = salary.trim() === '' ? null : Number(salary)
-    if (salaryValue !== null && (!Number.isFinite(salaryValue) || salaryValue < 0)) {
-      return setError('Basic salary must be a positive number.')
-    }
-    setSaving(true)
-    // Only the fields this tier may edit are written — a profile-only
-    // grant must not carry the salary back with it.
-    const patch: Record<string, unknown> = {}
-    if (canEditProfile) {
-      patch.full_name = name.trim() || null
-      patch.employee_code = code.trim() || null
-      patch.ic_number = ic.trim() || null
-      patch.phone = phone.trim() || null
-      patch.bank_name = bankName.trim() || null
-      patch.bank_account = bankAccount.trim() || null
-      patch.joined_on = joinedOn || null
-    }
-    if (canEditSalary) patch.basic_salary = salaryValue
-    const { error } = await supabase
-      .from('access_profiles')
-      .update(patch)
-      .eq('id', worker.id)
-    setSaving(false)
-    if (error) return setError(error.message)
-    onSaved()
-  }
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
-        <div className="row-form spread">
-          <h2>{canEditProfile ? 'Worker profile' : 'Worker salary'}</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-        {error && <div className="error">{error}</div>}
-
-        {canEditProfile && (
-          <>
-            <div className="row-form">
-              <label className="field grow">
-                <span>Full name</span>
-                <input value={name} onChange={(e) => setName(e.target.value)} required />
-              </label>
-              <label className="field">
-                <span>Employee code</span>
-                <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="EMP001" />
-              </label>
-            </div>
-
-            <div className="row-form">
-              <label className="field grow">
-                <span>IC / passport number</span>
-                <input value={ic} onChange={(e) => setIc(e.target.value)} />
-              </label>
-              <label className="field grow">
-                <span>Phone</span>
-                <input value={phone} onChange={(e) => setPhone(e.target.value)} />
-              </label>
-            </div>
-
-            <div className="row-form">
-              <label className="field grow">
-                <span>Bank</span>
-                <input value={bankName} onChange={(e) => setBankName(e.target.value)} />
-              </label>
-              <label className="field grow">
-                <span>Bank account no.</span>
-                <input value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} />
-              </label>
-            </div>
-          </>
-        )}
-
-        <div className="row-form">
-          {canEditProfile && (
-            <label className="field">
-              <span>Joined on</span>
-              <input type="date" value={joinedOn} onChange={(e) => setJoinedOn(e.target.value)} />
-            </label>
-          )}
-          {canEditSalary && (
-            <label className="field grow">
-              <span>Monthly basic salary (RM)</span>
-              <input
-                type="number"
-                min="0"
-                step="50"
-                value={salary}
-                onChange={(e) => setSalary(e.target.value)}
-                placeholder="—"
-              />
-            </label>
-          )}
-        </div>
-
-        <p className="muted small" style={{ margin: 0 }}>
-          Tier tag, station tag and team are not set here — drag the person
-          onto the leader (or the team) they belong to in the chain.
-        </p>
-
-        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : 'Save profile'}
-          </button>
-        </div>
-      </form>
-    </div>
   )
 }
