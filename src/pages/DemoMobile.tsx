@@ -3337,6 +3337,11 @@ function TeamTab({
   const chartTop = grades
     .filter((g) => g.sort_order > ADMIN_TIER_ORDER)
     .sort((a, b) => a.sort_order - b.sort_order)[0] ?? null
+  // Below you — the rungs your own people sit on, and the only ones that
+  // can take a drop.
+  const lowerTiers = tier
+    ? grades.filter((g) => g.sort_order > tier.sort_order).sort((a, b) => a.sort_order - b.sort_order)
+    : []
 
   const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
   // Who may work a team is a SETTING, not a position on the ladder. Sitting
@@ -3434,12 +3439,29 @@ function TeamTab({
     grade,
     label,
     me,
+    onDropHere,
   }: {
     grade: Grade | null
     label: string
     me?: boolean
+    // A rung at or above your own can still be dropped on — it just
+    // answers with the ceiling instead of moving anyone.
+    onDropHere?: () => void
   }) => (
-    <div className={`mob-org-node ${me ? 'me' : ''}`}>
+    <div
+      className={`mob-org-node ${me ? 'me' : ''} ${overGrade === grade?.id ? 'over' : ''}`}
+      onDragOver={(e) => {
+        if (!onDropHere) return
+        e.preventDefault()
+        setOverGrade(grade?.id ?? null)
+      }}
+      onDragLeave={() => setOverGrade((cur) => (cur === grade?.id ? null : cur))}
+      onDrop={(e) => {
+        if (!onDropHere) return
+        e.preventDefault()
+        onDropHere()
+      }}
+    >
       <span className={`tag-dot dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
       <span className="mob-org-text">
         <span className="mob-person-name">{label}</span>
@@ -3500,107 +3522,111 @@ function TeamTab({
           </div>
         )}
 
-        {/* 2 — the chart: Manager down to you, for your own station. */}
+        {/* 2 — ONE chart. The line above you, then you, then your own
+            people arranged on the tiers below — the rungs above are not
+            repeated as empty lanes, they are already drawn above you. */}
         <div className="mob-card">
-          <div className="mob-card-label">My Team</div>
+          <div className="mob-card-label">
+            My Team{' '}
+            {myTeam.length > 0 && <span className="mob-chip">{myTeam.length}</span>}
+          </div>
           <div className="mob-chart-where">
             <span className="mob-chart-station">{myStationName}</span>
             <span className="mob-station-meta">{myTeamName}</span>
           </div>
+
           {loading ? (
             <div className="mob-sub">Loading…</div>
           ) : (
-            <div className="mob-org">
-              {[...upperTiers].reverse().map((g) => {
-                const person = holderOf(g)
-                return (
-                  <Node
-                    key={g.id}
-                    grade={g}
-                    label={person ? profileName(person) : 'Not assigned yet'}
-                  />
-                )
-              })}
-              <Node grade={tier} label={profileName(profile)} me />
-            </div>
-          )}
-          {!loading && upperTiers.length === 0 && (
-            <div className="mob-sub">
-              {tier
-                ? `The ${tier.name} tier sits at or above ${chartTop?.name ?? 'the top of the chart'} — nothing above it here.`
-                : 'No tier selected.'}
-            </div>
-          )}
-        </div>
-
-        {/* 3 — the tier lanes: drag each member to what they actually do.
-            Without the grant there is nothing to work, so the section is
-            absent rather than present-and-empty. Anyone who does have
-            people under them still sees who they are. */}
-        {canManageTeam ? (
-          <div className="mob-card">
-            <div className="mob-card-label">
-              Team members <span className="mob-chip">{myTeam.length}</span>
-            </div>
-            <div className="mob-sub">
-              Drag a member onto their real tier
-              {nextBelow ? ` — you can set them as high as ${nextBelow.name}` : ''}.
-            </div>
-
-            {loading ? (
-              <div className="mob-sub">Loading…</div>
-            ) : (
-              grades
-                .slice()
-                .sort((a, b) => a.sort_order - b.sort_order)
-                .map((g) => {
-                  const locked = !mayAssign(g)
-                  const members = myTeam.filter((p) => p.grade_id === g.id)
+            <>
+              {/* Above you, and you. These accept a drop only to explain
+                  why they cannot take one. */}
+              <div className="mob-org">
+                {[...upperTiers].reverse().map((g) => {
+                  const person = holderOf(g)
                   return (
-                    <div
+                    <Node
                       key={g.id}
-                      className={`mob-lane ${locked ? 'locked' : ''} ${overGrade === g.id ? 'over' : ''}`}
-                      onDragOver={(e) => {
-                        e.preventDefault()
-                        setOverGrade(g.id)
-                      }}
-                      onDragLeave={() => setOverGrade((cur) => (cur === g.id ? null : cur))}
-                      onDrop={(e) => {
-                        e.preventDefault()
-                        dropOn(g)
-                      }}
-                    >
-                      <div className="mob-lane-head">
-                        <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
-                        <span className="mob-lane-name">{g.name}</span>
-                        {locked && <span className="mob-lane-lock" aria-label="locked">🔒</span>}
-                      </div>
-                      {members.length === 0 ? (
-                        <div className="mob-lane-empty">
-                          {locked ? 'Not yours to set' : 'Drop here'}
-                        </div>
-                      ) : (
-                        members.map((p) => (
-                          <div
-                            className={`mob-member ${dragId === p.id ? 'dragging' : ''}`}
-                            key={p.id}
-                            draggable={!busy}
-                            onDragStart={(e) => {
-                              setDragId(p.id)
-                              e.dataTransfer.effectAllowed = 'move'
-                              e.dataTransfer.setData('text/plain', p.id)
-                            }}
-                            onDragEnd={() => {
-                              setDragId(null)
-                              setOverGrade(null)
-                            }}
-                          >
+                      grade={g}
+                      label={person ? profileName(person) : 'Not assigned yet'}
+                      onDropHere={() => dropOn(g)}
+                    />
+                  )
+                })}
+                {tier && (
+                  <Node
+                    grade={tier}
+                    label={profileName(profile)}
+                    me
+                    onDropHere={() => dropOn(tier)}
+                  />
+                )}
+              </div>
+
+              {upperTiers.length === 0 && (
+                <div className="mob-sub">
+                  {tier
+                    ? `The ${tier.name} tier sits at or above ${chartTop?.name ?? 'the top of the chart'} — nothing above it here.`
+                    : 'No tier selected.'}
+                </div>
+              )}
+
+              {canManageTeam && lowerTiers.length > 0 && (
+                <div className="mob-sub">
+                  Drag a member onto their real tier
+                  {nextBelow ? ` — you can set them as high as ${nextBelow.name}` : ''}.
+                </div>
+              )}
+
+              {/* Below you: a lane per tier, holding your people. */}
+              {lowerTiers.map((g) => {
+                const members = myTeam.filter((p) => p.grade_id === g.id)
+                if (!canManageTeam && members.length === 0) return null
+                return (
+                  <div
+                    key={g.id}
+                    className={`mob-lane ${overGrade === g.id ? 'over' : ''}`}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setOverGrade(g.id)
+                    }}
+                    onDragLeave={() => setOverGrade((cur) => (cur === g.id ? null : cur))}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      dropOn(g)
+                    }}
+                  >
+                    <div className="mob-lane-head">
+                      <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
+                      <span className="mob-lane-name">{g.name}</span>
+                    </div>
+                    {members.length === 0 ? (
+                      <div className="mob-lane-empty">Drop here</div>
+                    ) : (
+                      members.map((p) => (
+                        <div
+                          className={`mob-member ${dragId === p.id ? 'dragging' : ''}`}
+                          key={p.id}
+                          draggable={canManageTeam && !busy}
+                          onDragStart={(e) => {
+                            setDragId(p.id)
+                            e.dataTransfer.effectAllowed = 'move'
+                            e.dataTransfer.setData('text/plain', p.id)
+                          }}
+                          onDragEnd={() => {
+                            setDragId(null)
+                            setOverGrade(null)
+                          }}
+                        >
+                          {canManageTeam && (
                             <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>
-                            <span className="mob-org-text">
-                              <span className="mob-entry-name">{profileName(p)}</span>
-                              <span className="mob-station-meta">{stationLabel(p)}</span>
-                            </span>
-                            {/* Same rule, without a mouse: pick the tier directly. */}
+                          )}
+                          <span className="mob-org-text">
+                            <span className="mob-person-name">{profileName(p)}</span>
+                            <span className="mob-station-meta">{stationLabel(p)}</span>
+                          </span>
+                          {/* Same rule, without a mouse: pick the tier directly. */}
+                          {canManageTeam && (
                             <select
                               className="mob-member-pick"
                               value={g.id}
@@ -3617,39 +3643,22 @@ function TeamTab({
                                   <option key={x.id} value={x.id}>{x.name}</option>
                                 ))}
                             </select>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )
-                })
-            )}
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )
+              })}
 
-            {!loading && myTeam.length === 0 && (
-              <div className="mob-sub">Nobody in your team yet — claim someone from Pending Allocation.</div>
-            )}
-          </div>
-        ) : myTeam.length > 0 ? (
-          <div className="mob-card">
-            <div className="mob-card-label">
-              Team members <span className="mob-chip">{myTeam.length}</span>
-            </div>
-            {myTeam.map((p) => {
-              const g = grades.find((x) => x.id === p.grade_id) ?? null
-              return (
-                <div className="mob-row" key={p.id}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                    <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
-                    <span>
-                      <span className="mob-person-name">{profileName(p)}</span>
-                      <span className="mob-station-meta">{g?.name ?? '—'}</span>
-                    </span>
-                  </span>
+              {canManageTeam && myTeam.length === 0 && (
+                <div className="mob-sub">
+                  Nobody in your team yet — claim someone from Pending Allocation.
                 </div>
-              )
-            })}
-          </div>
-        ) : null}
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* The ceiling pop-out — says exactly how high this leader may go. */}
