@@ -1595,3 +1595,87 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 @media (max-width: 560px) {
   .pr-grid-row { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ------------------------------------------------------------------ */
+/* OPERATION MODULE — the all-stations entry list. Built for a mill    */
+/* that keeps adding stations: a searchable rail badged with what is   */
+/* waiting where, and the entries themselves broken into one block per */
+/* station instead of one undifferentiated wall of rows.               */
+/* ------------------------------------------------------------------ */
+.op-rail { min-width: 210px; max-height: 78vh; overflow-y: auto; }
+.op-rail-search {
+  padding: 0.45rem 0.6rem; font-size: 0.85rem; border-radius: 9px;
+  margin-bottom: 0.4rem; width: 100%;
+}
+.op-rail-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-group-title {
+  margin: 0.65rem 0 0.1rem; padding: 0 0.7rem;
+  font-size: 0.66rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.07em;
+}
+
+/* What the current filter adds up to, read at a glance before the rows. */
+.op-stats { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.op-stat {
+  display: flex; flex-direction: column; gap: 0.05rem;
+  background: var(--bg); border-radius: 10px; padding: 0.45rem 0.7rem; min-width: 96px;
+}
+.op-stat-label {
+  font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); font-weight: 700;
+}
+.op-stat-value { font-size: 1.05rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.op-stat.warn { background: #fdeeda; }
+.op-stat.warn .op-stat-label { color: #b45309; }
+.op-stat.act { background: var(--accent-soft); }
+.op-stat.act .op-stat-label, .op-stat.act .op-stat-value { color: var(--accent-strong); }
+
+.op-needsme { margin-bottom: 0; white-space: nowrap; }
+
+/* One station, one block. */
+.op-group { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.op-group-head {
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.5rem 0.7rem; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.op-group-toggle {
+  appearance: none; border: none; background: none; cursor: pointer;
+  display: flex; align-items: center; gap: 0.45rem; padding: 0;
+  font: inherit; color: var(--text); text-align: left; min-width: 0;
+}
+.op-caret { color: var(--muted); font-size: 0.75rem; width: 0.8rem; flex: none; }
+.op-group-name {
+  font-family: 'Montserrat', system-ui, sans-serif; font-weight: 700; font-size: 0.95rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.op-group-meta {
+  margin-left: auto; display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.78rem; color: var(--muted); white-space: nowrap;
+}
+.op-group-meta strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.op-group .table th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+/* Ten columns need room; below it the block scrolls sideways rather than
+   crushing the worker and job names into columns of single letters. */
+.op-group .table { min-width: 900px; }
+.op-group .table td:nth-child(2) { white-space: nowrap; }
+
+/* Selection: only rows this user may actually action carry a box. */
+.op-check-col { width: 30px; padding-right: 0 !important; }
+.op-check { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.op-row-on > td { background: var(--accent-soft); }
+
+/* The bar that appears once rows are ticked — a whole shift cleared in
+   one action instead of one click per row. */
+.op-bulkbar {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.55rem 0.75rem; border-radius: 12px;
+  background: var(--accent-soft); border: 1px solid rgba(76, 88, 102, 0.22);
+}
+.op-bulk-count { font-weight: 800; font-size: 0.85rem; color: var(--accent-strong); }
+.op-bulkbar .btn { padding: 0.4rem 0.75rem; font-size: 0.85rem; }
+
+@media (max-width: 720px) {
+  .op-rail { max-height: none; }
+  .rail-group-title { display: none; }
+  .op-group-meta { display: none; }
+}
