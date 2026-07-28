@@ -1736,7 +1736,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .row-btn { padding: 0.3rem 0.7rem; font-size: 0.8rem; white-space: nowrap; }
 
 /* Adding someone to a tier: search, then pick from what matches. */
-.tier-add { position: relative; margin-top: 0.5rem; max-width: 360px; }
+.tier-add { position: relative; margin-top: 0.5rem; max-width: 460px; }
 .tier-add .row-input { max-width: none; }
 .tier-hits {
   display: flex; flex-direction: column; gap: 0.15rem;
@@ -1752,3 +1752,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .tier-hit:hover:not(:disabled) { background: var(--accent-soft); }
 .tier-hit:disabled { opacity: 0.5; cursor: default; }
 .tier-hit-name { font-size: 0.88rem; font-weight: 600; }
+
+/* Picked from the search, waiting on Add. */
+.tier-chosen {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  margin-top: 0.4rem; padding: 0.45rem 0.6rem;
+  background: var(--accent-soft); border-radius: 10px;
+}
+.tier-chosen-who { display: flex; flex-direction: column; gap: 0.05rem; margin-right: auto; min-width: 0; }

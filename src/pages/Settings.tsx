@@ -599,6 +599,7 @@ function TagsTab() {
           nextTier={Math.max(0, ...grades.map((g) => g.sort_order)) + 1}
           stationTier={stationTier}
           viewerTier={isSuperUser && myTier === null ? 1 : myTier}
+          allGrades={grades}
           usedColors={grades.map((g) => g.color)}
           takenNames={grades.filter((g) => g.id !== tagModal.grade?.id).map((g) => g.name)}
           onMode={(mode) => setTagModal((s) => (s ? { ...s, mode } : s))}
@@ -689,25 +690,32 @@ function ModuleTable({
 /* ------------------------------------------------------------------ */
 function TierPeople({
   grade,
-  canFill,
+  grades,
+  viewerTier,
 }: {
   grade: Grade
-  /** May the viewer put someone on this tier? */
-  canFill: boolean
+  /** Every tier, so a search result can say where its person stands now. */
+  grades: Grade[]
+  /** The viewer's own tier — what they may hand out is measured from it. */
+  viewerTier: number | null
 }) {
-  type Person = { id: string; full_name: string | null; email: string | null }
+  type Person = { id: string; full_name: string | null; email: string | null; grade_id: string | null }
   const [people, setPeople] = useState<Person[]>([])
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<Person[] | null>(null)
+  const [chosen, setChosen] = useState<Person | null>(null)
   const [searching, setSearching] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  const canFill = canGiveTier(viewerTier, grade.sort_order)
+  const tierOf = (p: Person) => grades.find((g) => g.id === p.grade_id) ?? null
+
   async function loadPeople() {
     const { data } = await supabase
       .from('access_profiles')
-      .select('id, full_name, email')
+      .select('id, full_name, email, grade_id')
       .eq('grade_id', grade.id)
       .order('full_name')
     setPeople((data ?? []) as Person[])
@@ -720,10 +728,10 @@ function TierPeople({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grade.id])
 
-  // Search sign-ups by name or email rather than listing every one of
-  // them: the list is only ever a few matches long, and it costs nothing
-  // until something is typed. Held back briefly so a query goes out per
-  // pause, not per keystroke.
+  // Search every account, not only the ones waiting for a tier: moving
+  // somebody up from a lower tier is the same act as placing a new
+  // sign-up. Held back briefly so a query goes out per pause, not per
+  // keystroke, and nothing is fetched until something is typed.
   useEffect(() => {
     const term = query.trim()
     if (!canFill || term === '') {
@@ -742,16 +750,16 @@ function TierPeople({
       }
       const { data } = await supabase
         .from('access_profiles')
-        .select('id, full_name, email')
-        .is('grade_id', null)
+        .select('id, full_name, email, grade_id')
         .or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%`)
         .order('email')
-        .limit(8)
-      setHits((data ?? []) as Person[])
+        .limit(10)
+      // Somebody already on this tier has nowhere to move to.
+      setHits(((data ?? []) as Person[]).filter((p) => p.grade_id !== grade.id).slice(0, 8))
       setSearching(false)
     }, 250)
     return () => clearTimeout(timer)
-  }, [query, canFill])
+  }, [query, canFill, grade.id])
 
   // A name if the account has one, otherwise the part before the @ — an
   // email address is not a name.
@@ -761,7 +769,21 @@ function TierPeople({
     return (p.email ?? '').split('@')[0] || '—'
   }
 
-  async function addPerson(id: string) {
+  function choose(p: Person) {
+    setChosen(p)
+    setHits(null)
+    setQuery('')
+    setError(null)
+  }
+
+  async function addChosen() {
+    if (!chosen) return
+    // Taking somebody off a tier needs the same reach as putting them on
+    // one: nobody may pull a person down from a tier they do not outrank.
+    const from = tierOf(chosen)
+    if (from && !canGiveTier(viewerTier, from.sort_order)) {
+      return setError(`${label(chosen)} holds ${from.name}, which is not yours to change.`)
+    }
     setBusy(true)
     setError(null)
     const { data, error } = await supabase
@@ -771,15 +793,14 @@ function TierPeople({
         tags_confirmed: true,
         role: roleForTier(grade.sort_order, grade.name),
       })
-      .eq('id', id)
+      .eq('id', chosen.id)
       .select('id')
     setBusy(false)
     if (error) return setError(error.message)
     if (!data || data.length === 0) {
       return setError('The database would not let you put anyone on this tier.')
     }
-    setQuery('')
-    setHits(null)
+    setChosen(null)
     loadPeople()
   }
 
@@ -801,7 +822,7 @@ function TierPeople({
         </div>
       )}
 
-      {/* The top tier has nothing above it, so a sign-up joins it from
+      {/* The top tier has nothing above it, so somebody joins it from
           here — there is no upper tier to drag them in from. */}
       {canFill && !loading && (
         <div className="tier-add">
@@ -809,29 +830,50 @@ function TierPeople({
             className="row-input"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Add a sign-up — search name or email"
-            aria-label="Search sign-ups by name or email"
+            placeholder="Search any name or email"
+            aria-label="Search people by name or email"
           />
+
           {hits !== null && (
             <div className="tier-hits">
               {searching ? (
                 <span className="small muted">Searching…</span>
               ) : hits.length === 0 ? (
-                <span className="small muted">No sign-up without a tier matches that.</span>
+                <span className="small muted">Nobody matches that.</span>
               ) : (
-                hits.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className="tier-hit"
-                    disabled={busy}
-                    onClick={() => addPerson(p.id)}
-                  >
-                    <span className="tier-hit-name">{label(p)}</span>
-                    <span className="muted small">{p.email}</span>
-                  </button>
-                ))
+                hits.map((p) => {
+                  const from = tierOf(p)
+                  return (
+                    <button key={p.id} type="button" className="tier-hit" onClick={() => choose(p)}>
+                      <span className="tier-hit-name">{label(p)}</span>
+                      <span className="muted small">
+                        {p.email}
+                        {from ? ` · ${from.name}` : ' · no tier yet'}
+                      </span>
+                    </button>
+                  )
+                })
               )}
+            </div>
+          )}
+
+          {/* Picked, but not placed until Add is pressed — so the tier a
+              person is being taken off is read before it changes. */}
+          {chosen && (
+            <div className="tier-chosen">
+              <span className="tier-chosen-who">
+                <span className="tier-hit-name">{label(chosen)}</span>
+                <span className="muted small">
+                  {chosen.email}
+                  {tierOf(chosen) ? ` · now ${tierOf(chosen)!.name}` : ' · no tier yet'}
+                </span>
+              </span>
+              <button type="button" className="btn ghost row-btn" onClick={() => setChosen(null)}>
+                Clear
+              </button>
+              <button type="button" className="btn row-btn" onClick={addChosen} disabled={busy}>
+                {busy ? 'Adding…' : 'Add'}
+              </button>
             </div>
           )}
         </div>
@@ -847,6 +889,7 @@ function TagModal({
   nextTier,
   stationTier,
   viewerTier,
+  allGrades,
   usedColors,
   takenNames,
   onMode,
@@ -861,6 +904,8 @@ function TagModal({
   stationTier: number | null
   /** The viewer's own tier — what they may hand out is measured from it. */
   viewerTier: number | null
+  /** Every tier, so a search result can say where its person stands now. */
+  allGrades: Grade[]
   usedColors: string[]
   /** Every OTHER tier's name — no two may read the same. */
   takenNames: string[]
@@ -996,7 +1041,7 @@ function TagModal({
               From the station-head tier down there are far too many names
               for a sheet — Team Manage draws those, station by station. */}
           {runsWholeMill(grade.sort_order, stationTier) && (
-            <TierPeople grade={grade} canFill={canGiveTier(viewerTier, grade.sort_order)} />
+            <TierPeople grade={grade} grades={allGrades} viewerTier={viewerTier} />
           )}
 
           {canEdit && (
@@ -1056,7 +1101,7 @@ function TagModal({
         </div>
 
         {grade && runsWholeMill(grade.sort_order, stationTier) && (
-          <TierPeople grade={grade} canFill={canGiveTier(viewerTier, grade.sort_order)} />
+          <TierPeople grade={grade} grades={allGrades} viewerTier={viewerTier} />
         )}
 
         {/* Anything that governs no single module keeps its own block. */}
