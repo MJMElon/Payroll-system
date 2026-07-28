@@ -549,15 +549,35 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: rgba(8, 24, 17, 0.45);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 6vh 1rem 2rem;
-  overflow-y: auto;
+  /* The backdrop itself never scrolls: a tall window used to push its own
+     top off the screen, taking the × with it. The window is capped to what
+     the viewport can hold and scrolls INSIDE instead, so it is always
+     wholly on screen with the page behind it still. dvh, not vh, so a
+     phone's collapsing address bar does not cut the bottom off. */
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem 1rem;
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 .modal {
   width: 100%; max-width: 460px;
   background: var(--surface); border-radius: 20px; padding: 1.5rem;
   box-shadow: 0 30px 80px rgba(5, 30, 18, 0.35);
   display: flex; flex-direction: column; gap: 0.9rem;
+  max-height: calc(100vh - 3rem);
+  max-height: calc(100dvh - 3rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The title row stays put while the window scrolls under it, so the ×
+   is reachable from anywhere in a long sheet. Negative margins let it
+   span the window's padding; the matching padding puts it back. */
+.modal > .row-form.spread:first-child {
+  /* Sticky offsets apply to the MARGIN box, so the pull-up has to be
+     matched here or the row parks 1.5rem down and content shows above it. */
+  position: sticky; top: -1.5rem; z-index: 2;
+  margin: -1.5rem -1.5rem 0; padding: 1.5rem 1.5rem 0.7rem;
+  background: var(--surface); border-radius: 20px 20px 0 0;
 }
 .modal h2 { margin: 0; font-size: 1.15rem; }
 .modal-close {
