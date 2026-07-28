@@ -27,7 +27,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'operation',
     to: '/operation',
-    title: 'Operation module',
+    title: 'Operation Module',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -40,7 +40,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'worker-management',
     to: '/workers',
-    title: 'Team manage',
+    title: 'Team Manage',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -55,7 +55,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'payroll',
     to: '/payroll',
-    title: 'Payroll module',
+    title: 'Payroll Reports',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -69,7 +69,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'piece-rate',
     to: '/piece-rate',
-    title: 'Piece rate module',
+    title: 'Piece Rate Module',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -82,7 +82,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'demo-mobile',
     to: '/demo-mobile',
-    title: 'Demo mobile view',
+    title: 'Demo Mobile View',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -162,7 +162,7 @@ export default function Dashboard() {
 
   return (
     <div className="stack">
-      <h1>Mill performance</h1>
+      <h1>Mill Performance</h1>
 
       {canSee('station-status') && <StationBoard />}
 
@@ -318,11 +318,6 @@ function StationBoard() {
           </table>
         </div>
       )}
-      <p className="muted small">
-        Each box is one hour; the number is the quantity recorded for that station in
-        that hour. The highlighted column is the current hour. Click a station to open its
-        records.
-      </p>
     </div>
   )
 }
