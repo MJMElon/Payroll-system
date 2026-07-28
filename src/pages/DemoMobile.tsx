@@ -3709,12 +3709,37 @@ function TeamTab({
    * With only one rung below (nothing can lead anything) it stays a plain
    * set of lanes. All read off position — no tier is named in code.
    */
-  // With three or more rungs under you, the first belongs to whoever heads
-  // the station and teams are led from the rung under THAT. With two, you
-  // head the station yourself and the rung below leads the teams.
-  const hasHeadRow = lowerTiers.length > 2
-  const headTier = hasHeadRow ? lowerTiers[0] ?? null : null
-  const teamLeaderTier = hasHeadRow ? lowerTiers[1] ?? null : lowerTiers[0] ?? null
+  /**
+   * A station's shape is a property of the STATION, not of whoever happens
+   * to be looking at it: the rung that heads it, the rung that leads its
+   * teams, and the rungs those teams are made of. Reading it off the
+   * viewer's own position was wrong — it put a Manager rung and an
+   * Executive rung inside a station's board when management looked at one.
+   *
+   * The rung that owns a station is the highest operating one with anyone
+   * actually tagged to a station: heads, their leaders and their people
+   * carry station tags; the tiers above cover the floor rather than stand
+   * on it, so they do not. Falling back to two rungs above the bottom
+   * keeps the shape sensible on an empty database.
+   */
+  const taggedOrders = people
+    .filter((p) => (p.station_ids?.length ?? 0) > 0 || p.station_id)
+    .map((p) => grades.find((g) => g.id === p.grade_id)?.sort_order)
+    .filter((n): n is number => n != null && operatingTiers.some((g) => g.sort_order === n))
+  const stationTierOrder =
+    taggedOrders.length > 0
+      ? Math.min(...taggedOrders)
+      : operatingTiers[Math.max(0, operatingTiers.length - 3)]?.sort_order ??
+        operatingTiers[0]?.sort_order ??
+        0
+  const stationTier = operatingTiers.find((g) => g.sort_order === stationTierOrder) ?? null
+  // Above the rung that owns a station you oversee stations rather than
+  // work in one, so the tab is the list of them and a board only opens
+  // when one is picked.
+  const hasHeadRow = tier != null && tier.sort_order < stationTierOrder
+  const headTier = hasHeadRow ? stationTier : null
+  const belowStationTier = operatingTiers.filter((g) => g.sort_order > stationTierOrder)
+  const teamLeaderTier = hasHeadRow ? belowStationTier[0] ?? null : lowerTiers[0] ?? null
   // Running teams is a grant too — the same tag setting that allows making
   // one. Without it the board is the flat set of lanes.
   const canCreateTeam = effectiveCapabilities(tier).includes('team-create')
@@ -3744,6 +3769,12 @@ function TeamTab({
       ? people.filter((p) => p.grade_id === headTier.id && atStation(p))
       : []
 
+  // Every rung from the team leader down shows in every column, empty or
+  // not, so there is always somewhere to put the next person.
+  const memberTiers = teamLeaderTier
+    ? lowerTiers.filter((g) => g.sort_order >= teamLeaderTier.sort_order)
+    : lowerTiers
+
   // Teams are real rows now, so a team exists the moment it is named —
   // before anybody is in it.
   const myTeams = teams
@@ -3760,20 +3791,16 @@ function TeamTab({
   // At this station, under me, and in no team — a freshly claimed sign up,
   // most often.
   const looseMembers = runsTeams
-    ? people.filter(
-        (p) =>
-          !p.team_id &&
-          atStation(p) &&
-          tier != null &&
-          (grades.find((g) => g.id === p.grade_id)?.sort_order ?? 0) > tier.sort_order,
-      )
+    ? people.filter((p) => {
+        if (p.team_id || !atStation(p)) return false
+        const order = grades.find((g) => g.id === p.grade_id)?.sort_order
+        // Only the rungs a team is actually made of — a station head with
+        // no team is not "loose", they head the station.
+        return order != null && memberTiers.some((g) => g.sort_order === order)
+      })
     : myTeam
   // Every rung from the team leader down shows in every column, empty or
   // not, so there is always somewhere to put the next person.
-  const memberTiers = teamLeaderTier
-    ? lowerTiers.filter((g) => g.sort_order >= teamLeaderTier.sort_order)
-    : lowerTiers
-
   /**
    * Pull a new sign up into my team. They keep the tier they signed up on,
    * which is already the lowest one — the leader then drags them up to what
