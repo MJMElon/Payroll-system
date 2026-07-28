@@ -271,7 +271,10 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
    stations): a box per row, and the names are written out in full — the
    panel widens past the trigger rather than shortening what it says. */
 .ui-select-menu.floating { position: fixed; right: auto; bottom: auto; }
-.ui-select.multi .ui-select-menu { right: auto; width: max-content; max-width: 320px; }
+.ui-select.multi .ui-select-menu {
+  right: auto; width: max-content; max-width: 340px;
+  max-height: 240px; overscroll-behavior: contain;
+}
 .ui-select.multi .ui-select-option-label { overflow: visible; text-overflow: clip; }
 .ui-select-box {
   flex: none; width: 16px; height: 16px; border-radius: 5px;
@@ -2063,25 +2066,28 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* work description, unit, rate, effective date. "+ Row" stacks another */
 /* line, so a whole batch of rates goes in without reopening.           */
 /* ------------------------------------------------------------------ */
-.modal.modal-xwide { max-width: min(1180px, 96vw); }
+.modal.modal-xwide { max-width: min(1320px, 96vw); }
 /* Paid by the hour puts two more columns on every line, so the window
    takes the extra width rather than squeezing the six it already had. */
-.modal.modal-xwide.tiered { max-width: min(1340px, 96vw); }
+.modal.modal-xwide.tiered { max-width: min(1400px, 96vw); }
+/* Room under a short grid for an open tick-list to land in, so the list
+   sits inside the window instead of hanging off the bottom of it. */
+.pr-grid { min-height: 17rem; }
 
-.pr-grid { display: flex; flex-direction: column; gap: 0.5rem; }
+.pr-grid { display: flex; flex-direction: column; gap: 0.6rem; }
 .pr-grid-head, .pr-grid-row {
   display: grid;
   grid-template-columns:
-    minmax(140px, 1fr) minmax(140px, 1fr) minmax(190px, 1.7fr)
-    minmax(132px, 1.05fr) minmax(120px, 0.95fr) minmax(140px, 1.05fr) 34px;
-  gap: 0.5rem; align-items: start;
+    minmax(235px, 1.5fr) minmax(235px, 1.5fr) minmax(200px, 1.4fr)
+    minmax(132px, 0.95fr) minmax(120px, 0.85fr) minmax(142px, 0.95fr) 34px;
+  gap: 0.65rem; align-items: start;
 }
 .pr-grid.tiered .pr-grid-head,
 .pr-grid.tiered .pr-grid-row {
   grid-template-columns:
-    minmax(158px, 1.1fr) minmax(158px, 1.1fr) minmax(175px, 1.4fr)
+    minmax(205px, 1.4fr) minmax(205px, 1.4fr) minmax(178px, 1.3fr)
     minmax(128px, 1fr) minmax(100px, 0.75fr) minmax(100px, 0.75fr)
-    minmax(100px, 0.75fr) minmax(134px, 1fr) 34px;
+    minmax(100px, 0.75fr) minmax(136px, 1fr) 34px;
 }
 /* A line that is not paid by the hour leaves the two hourly cells empty,
    and one that is leaves the flat rate empty — the dash keeps the cell
@@ -2096,7 +2102,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .pr-grid-row {
   background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
-  padding: 0.55rem; position: relative;
+  padding: 0.65rem; position: relative;
 }
 .pr-grid-row.bad { border-color: #f1a9a6; background: #fdf4f4; }
 .pr-grid-row input {
@@ -2104,6 +2110,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font-size: 0.92rem; border-radius: 10px;
 }
 .pr-cell { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+/* A hair smaller than a page dropdown, so a long station name fits its
+   cell whole rather than trailing off into an ellipsis. */
+.pr-grid-row .ui-select-trigger { font-size: 0.88rem; }
 /* Column names ride at the top on a wide window; on a narrow one they
    move into each cell so a stacked row still says what it is. */
 .pr-cell-label { display: none; font-size: 0.7rem; font-weight: 700; color: var(--muted); }

@@ -76,7 +76,7 @@ export function MultiSelect({
     if (open) return setAt(null)
     const r = rootRef.current?.getBoundingClientRect()
     if (!r) return
-    const height = Math.min(264, options.length * 38 + 10)
+    const height = Math.min(240, options.length * 38 + 10)
     const below = window.innerHeight - r.bottom
     setAt({
       left: r.left,
