@@ -284,6 +284,22 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
 .ui-select-option[aria-selected='true'] .ui-select-box {
   background: var(--accent); border-color: var(--accent); color: #fff;
 }
+/* Piece rate details window: a "Label : value" sheet, read-only. */
+.view-row {
+  display: flex; gap: 0.8rem; align-items: baseline;
+  padding: 0.3rem 0; border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+.view-row:last-child { border-bottom: none; }
+.view-label { flex: 0 0 11.5rem; color: var(--muted); }
+.view-value { flex: 1; min-width: 0; }
+
+/* The one tick that stands for the whole list, ruled off from the rows
+   it commands. */
+.ui-select-option.select-all {
+  font-weight: 700; border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0; margin-bottom: 0.15rem;
+}
 .ui-select-empty { padding: 0.5rem 0.55rem; font-size: 0.85rem; color: var(--muted); }
 
 /* Tabs */
