@@ -1577,7 +1577,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .wm-station-box.shut .wm-station-head { padding-bottom: 0; border-bottom: none; }
 .wm-station-box.shut { width: auto; min-width: 0; }
-.wm-station-caret { color: var(--muted); font-size: 0.7rem; }
+.wm-station-caret { color: var(--accent-strong); font-size: 0.8rem; line-height: 1; }
+/* Sits beside the name, not at the far end: a wide station scrolls
+   sideways, and a control you have to scroll to find is no control. */
+.wm-station-toggle {
+  color: var(--muted); font-size: 0.72rem; font-weight: 700;
+  border: 1px solid var(--border); border-radius: 999px; padding: 0.1rem 0.55rem;
+  background: var(--surface);
+}
+.wm-station-head:hover .wm-station-toggle { border-color: var(--accent-strong); color: var(--accent-strong); }
 .wm-station-head:hover .wm-station-name { color: var(--text); }
 .wm-station-name {
   font-size: 0.82rem; font-weight: 800; letter-spacing: 0.05em;
@@ -1593,7 +1601,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   color: var(--muted); font-size: 0.72rem; font-weight: 700;
 }
 .wm-srow-body {
-  flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+  flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center;
   border: 1px dashed transparent; border-radius: 9px; padding: 0.15rem;
 }
 .wm-srow-body.col { flex-direction: column; align-items: stretch; gap: 0.3rem; }
@@ -1625,8 +1633,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-grid-head.add { border-bottom: none; background: none; border-left: none; }
 .wm-grid-head:hover .wm-icon { visibility: visible; }
 .wm-cell {
-  display: flex; flex-wrap: wrap; gap: 0.3rem; align-content: flex-start;
-  min-height: 2rem; padding: 0.25rem 0.45rem;
+  display: flex; flex-wrap: wrap; gap: 0.4rem; align-content: flex-start;
+  min-height: 2.3rem; padding: 0.3rem 0.45rem;
   border: 1px dashed transparent; border-radius: 0 0 8px 8px;
 }
 .wm-cell.over { border-color: var(--accent-strong); background: var(--accent-soft); }
@@ -1640,13 +1648,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Every name on the chart is the same block: one size, so a row of them
    reads as a row and nothing looks more important than its neighbour. */
 .wm-block.mini {
-  width: 142px; padding: 0.3rem 0.5rem;
+  width: 162px; padding: 0.42rem 0.6rem;
 }
+.wm-block.mini .wm-block-name { font-size: 0.8rem; }
 .wm-block.mini .wm-block-name { display: block; overflow: hidden; text-overflow: ellipsis; }
 /* The slot names are dropped into, sized like a block so the row keeps
    its rhythm. It sits after the names, never between them. */
 .wm-add-person {
-  width: 142px; min-height: 1.9rem; order: 99;
+  width: 162px; min-height: 2.15rem; order: 99;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px dashed #cdd4dc; border-radius: 10px; padding: 0.3rem 0.5rem;
   color: #9aa3ae; font-size: 0.72rem; font-weight: 600; white-space: nowrap;

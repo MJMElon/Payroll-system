@@ -487,6 +487,18 @@ export default function WorkerManagement() {
         return false
       }
     }
+    // A staff number is unique too, and saying so beats a database error
+    // about a constraint nobody outside this file has heard of.
+    if (typeof patch.employee_code === 'string' && patch.employee_code.trim() !== '') {
+      const code = patch.employee_code.trim().toLowerCase()
+      const clash = profiles.find(
+        (p) => p.id !== person.id && (p.employee_code ?? '').trim().toLowerCase() === code,
+      )
+      if (clash) {
+        setError(`Staff no. ${patch.employee_code} already belongs to ${displayName(clash)}.`)
+        return false
+      }
+    }
     setError(null)
     const { data, error } = await supabase
       .from('access_profiles')
@@ -495,12 +507,19 @@ export default function WorkerManagement() {
       .select('id')
     if (error) {
       // The database has the last word on uniqueness — two people saving
-      // the same number at once would slip past the check above.
+      // the same value at once would slip past the checks above. Name the
+      // field that actually clashed: this form does not touch the email,
+      // so blaming the email for every duplicate is just wrong.
+      const where = error.message.toLowerCase()
       setError(
         error.code === '23505'
-          ? error.message.includes('phone')
+          ? where.includes('phone')
             ? 'That phone number is already used by someone else.'
-            : 'That email is already used by another account.'
+            : where.includes('employee_code')
+              ? 'That staff no. is already used by someone else.'
+              : where.includes('email')
+                ? 'That email is already used by another account.'
+                : `Those details clash with another account (${error.message}).`
           : error.message,
       )
       return false
@@ -832,6 +851,7 @@ export default function WorkerManagement() {
         >
           <span className="wm-station-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
           <span className="wm-station-name">{station?.name ?? 'No station yet'}</span>
+          <span className="wm-station-toggle">{open ? 'Hide' : 'Show'}</span>
         </button>
         {open && (
           <>
@@ -886,7 +906,7 @@ export default function WorkerManagement() {
             style={{
               // Two blocks wide, so a team column is never a single-file
               // queue of names and every station reads at the same rhythm.
-              gridTemplateColumns: `9rem repeat(${columns.length}, 322px) auto`,
+              gridTemplateColumns: `9rem repeat(${columns.length}, 352px) auto`,
             }}
           >
             {/* Row of team names — the column headings, said once — with
