@@ -1688,3 +1688,6 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   .wm-side-inner { max-height: 240px; }
   .wm-add { visibility: visible; }
 }
+
+/* Save / Cancel sitting inside a table row — small enough not to stretch it. */
+.row-btn { padding: 0.3rem 0.7rem; font-size: 0.8rem; white-space: nowrap; }
