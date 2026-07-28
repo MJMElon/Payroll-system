@@ -18,6 +18,7 @@ import {
   effectiveModules,
   runsWholeMill,
   stationTierOf,
+  tagClass,
 } from '../lib/tags'
 import {
   profileName,
@@ -410,7 +411,6 @@ export default function DemoMobile() {
                     profileId={profile?.id ?? null}
                     myEmail={profile?.email ?? 'unknown'}
                     jobColumnReady={jobColumnReady}
-                    onRecord={() => setTab('record')}
                     onMyWork={() => setTab('mywork')}
                     onError={setError}
                   />
@@ -768,7 +768,6 @@ function PerformanceTab({
   profileId,
   myEmail,
   jobColumnReady,
-  onRecord,
   onMyWork,
   onError,
 }: {
@@ -783,7 +782,6 @@ function PerformanceTab({
   profileId: string | null
   myEmail: string
   jobColumnReady: boolean
-  onRecord: () => void
   onMyWork: () => void
   onError: (m: string | null) => void
 }) {
@@ -977,21 +975,6 @@ function PerformanceTab({
   const totalOutput = stations.reduce((s, st) => s + statFor(st.id).output, 0)
   const totalApproved = stations.reduce((s, st) => s + statFor(st.id).approved, 0)
 
-  // TODAY, per station. There is no daily target to measure against (a
-  // station's target is per hour, and how many hours it ran is not known
-  // here), so the bar compares the stations with each other and the number
-  // beside it is the real output.
-  const todayStatFor = (sid: string) => {
-    const rows = entries.filter((e) => e.station_id === sid && e.work_date === todayISO())
-    return {
-      workers: new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size,
-      output: rows.reduce((s, e) => s + e.quantity, 0),
-    }
-  }
-  const todayByStation = stations.map((s) => ({ station: s, ...todayStatFor(s.id) }))
-  const busiestToday = Math.max(1, ...todayByStation.map((s) => s.output))
-  const outputToday = todayByStation.reduce((s, x) => s + x.output, 0)
-
   // My own scorecard, against a target of everything I submit ending up
   // approved. Read as a meter over two windows: today first, then the week
   // it sits in. Today is mostly "waiting" by nature — work recorded this
@@ -1100,36 +1083,6 @@ function PerformanceTab({
           </>
         )}
 
-        {/* 1 — how the floor is running TODAY. Tap a station for its records. */}
-        <div className="mob-card">
-          <div className="mob-card-label">Station performance · today</div>
-          <div className="mob-sub">
-            {fmtQty(outputToday)} output across {todayByStation.filter((s) => s.output > 0).length} of{' '}
-            {stations.length} station{stations.length === 1 ? '' : 's'}
-          </div>
-          {stations.length === 0 && (
-            <div className="mob-sub">No stations for your tags yet — set station tags in Settings.</div>
-          )}
-          <div className="mob-bars">
-            {todayByStation.map(({ station: s, output }) => (
-              <button className="mob-barrow tappable" key={s.id} onClick={() => setStation(s)}>
-                <span className="lbl station">{s.name}</span>
-                <span className="mob-bartrack">
-                  <div
-                    className={output > 0 && output === busiestToday ? 'best' : ''}
-                    style={{ width: `${(output / busiestToday) * 100}%` }}
-                  />
-                </span>
-                <span className="val qty">{output > 0 ? fmtQty(output) : '·'}</span>
-              </button>
-            ))}
-          </div>
-          {todayByStation.some((s) => s.workers > 0) && (
-            <div className="mob-sub">
-              {todayByStation.reduce((n, s) => n + s.workers, 0)} working today
-            </div>
-          )}
-        </div>
 
         {/* 2 — my own scorecard: everything I submit should end up approved.
             Above the station tiers this reads as review, not as my own
@@ -1156,8 +1109,6 @@ function PerformanceTab({
               </button>
             )}
 
-            <button className="mob-btn" onClick={onRecord}>+ Add new work entry</button>
-
             {!millWide && (
               <div className="mob-card">
                 <div className="mob-title">Daily quantity — this week</div>
@@ -1178,9 +1129,6 @@ function PerformanceTab({
               </div>
             )}
 
-            <button className="mob-btn ghost" onClick={onMyWork}>
-              Every record & its status → My work
-            </button>
           </>
         )}
 
@@ -2241,6 +2189,7 @@ function EntryDetail({
   amountFor,
   tier2RateFor,
   onBack,
+  decide,
 }: {
   entry: ProductionEntry
   myName: string
@@ -2251,6 +2200,8 @@ function EntryDetail({
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
   onBack: () => void
+  /** Shown only when the viewer's tag grants the step this record is at. */
+  decide?: { canVerify: boolean; canApprove: boolean; busy: boolean; act: (next: 'verified' | 'approved' | 'rejected') => void }
 }) {
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
@@ -2380,6 +2331,26 @@ function EntryDetail({
             </div>
           </div>
         </div>
+
+        {/* The decision sits at the bottom, under everything it is made
+            on. Which button shows follows the viewer's tag and the step
+            this record is actually at — never both at once. */}
+        {decide && (decide.canVerify || decide.canApprove) && (
+          <div className="row-form" style={{ gap: '0.5rem' }}>
+            {decide.canVerify && status === 'pending' && (
+              <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
+                onClick={() => decide.act('verified')}>✓ Verify</button>
+            )}
+            {decide.canApprove && status === 'verified' && (
+              <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
+                onClick={() => decide.act('approved')}>✓ Approve</button>
+            )}
+            {['pending', 'verified'].includes(status) && (
+              <button className="mob-btn reject" style={{ flex: 1 }} disabled={decide.busy}
+                onClick={() => decide.act('rejected')}>✗ Reject</button>
+            )}
+          </div>
+        )}
       </div>
     </>
   )
@@ -2587,8 +2558,9 @@ function MyWorkTab({
   // tag grants verify or approve.
   const [queue, setQueue] = useState<ProductionEntry[]>([])
   const [names, setNames] = useState<Map<string, string>>(new Map())
+  // The submitter's own row, for the tier and station tags on a waiting card.
+  const [submitters, setSubmitters] = useState<Map<string, Profile>>(new Map())
   const [photoCount, setPhotoCount] = useState<Map<string, number>>(new Map())
-  const [todayPhotos, setTodayPhotos] = useState(0)
   const [viewPhotos, setViewPhotos] = useState<ProductionEntry | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -2636,9 +2608,11 @@ function MyWorkTab({
       if (ids.length > 0) {
         const { data: p } = await supabase
           .from('access_profiles')
-          .select('id, full_name, email')
+          .select('id, full_name, email, grade_id, station_id, station_ids')
           .in('id', ids)
-        setNames(new Map(((p ?? []) as Profile[]).map((x) => [x.id, profileName(x)])))
+        const rows = (p ?? []) as Profile[]
+        setNames(new Map(rows.map((x) => [x.id, profileName(x)])))
+        setSubmitters(new Map(rows.map((x) => [x.id, x])))
       }
     }
 
@@ -2659,12 +2633,6 @@ function MyWorkTab({
     // Today's running total of photos this person has taken.
     const start = new Date()
     start.setHours(0, 0, 0, 0)
-    const { data: mineToday } = await supabase
-      .from('photo_records')
-      .select('id')
-      .eq('created_by', profileId)
-      .gte('taken_at', start.toISOString())
-    setTodayPhotos((mineToday ?? []).length)
     setLoading(false)
   }
   useEffect(() => {
@@ -2737,13 +2705,12 @@ function MyWorkTab({
   // Someone else's work only ever sits in the pending view — once acted on
   // it leaves the queue entirely.
   const queueShown = filter === 'pending' ? queue : []
-  const total = shown.reduce((s, e) => s + amountFor(e.job_id, e.quantity), 0)
 
   if (detail) {
     return (
       <EntryDetail
         entry={detail}
-        myName={myName}
+        myName={names.get(detail.user_id ?? '') ?? myName}
         tier={tier}
         stations={stations}
         jobs={jobs}
@@ -2751,6 +2718,20 @@ function MyWorkTab({
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
         onBack={() => setDetail(null)}
+        decide={
+          detail.user_id !== profileId && (canVerify || canApprove)
+            ? {
+                canVerify,
+                canApprove,
+                busy: busy === detail.id,
+                act: (next) => {
+                  const e = detail
+                  setDetail(null)
+                  act(e, next)
+                },
+              }
+            : undefined
+        }
       />
     )
   }
@@ -2794,17 +2775,6 @@ function MyWorkTab({
           <p className="muted small">Loading…</p>
         ) : (
           <>
-            <div className="mob-card">
-              <div className="mob-field-label">
-                {filter === 'pending' ? 'Waiting for approval' : filter === 'approved' ? 'Approved' : 'Rejected'}
-                {' '}· {shown.length} record{shown.length === 1 ? '' : 's'}
-              </div>
-              <div className="mob-stat">{RM(total)}</div>
-              {filter === 'pending' && (
-                <div className="mob-sub">{todayPhotos} photo{todayPhotos === 1 ? '' : 's'} taken today</div>
-              )}
-            </div>
-
             {shown.length === 0 && queueShown.length === 0 && (
               <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
             )}
@@ -2846,45 +2816,40 @@ function MyWorkTab({
               </div>
             ))}
 
-            {/* Other people's work that is waiting on me. Which buttons
-                appear is the tag's doing, not the rung's. */}
-            {queueShown.length > 0 && (
-              <div className="mob-card-label" style={{ padding: '0 0.2rem' }}>
-                Waiting on you <span className="mob-chip warn">{queueShown.length}</span>
-              </div>
-            )}
             {queueShown.map((e) => {
-              const verifyNow = canVerify && (e.approval_status ?? 'pending') === 'pending'
-              const approveNow = canApprove && e.approval_status === 'verified'
+              const who = e.user_id ? submitters.get(e.user_id) : undefined
+              const grade = who?.grade_id ? grades.find((g) => g.id === who.grade_id) : undefined
+              const tags = who
+                ? who.station_ids && who.station_ids.length > 0
+                  ? who.station_ids
+                  : who.station_id
+                    ? [who.station_id]
+                    : []
+                : []
               return (
-                <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
-                  <span className="perf-top">
-                    <span>{jobName(e.job_id)}</span>
-                    <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                <button type="button" className="mob-review" key={e.id} onClick={() => setDetail(e)}>
+                  <span className="mob-review-tags">
+                    {tags.length === 0 ? (
+                      <span className="tagbadge tag-grey">All stations</span>
+                    ) : (
+                      tags.map((id) => (
+                        <span className="tagbadge tag-grey" key={id}>{stationName(id)}</span>
+                      ))
+                    )}
+                    {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
                   </span>
-                  <span className="perf-top">
+                  <span className="mob-review-name">{names.get(e.user_id ?? '') ?? 'Unknown'}</span>
+                  <span className="mob-review-line">
                     <span className="mob-station-meta">
                       {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                      {' · '}{names.get(e.user_id ?? '') ?? 'Unknown'} · {e.quantity}
+                      {' · '}{jobName(e.job_id)} · {e.quantity}
                     </span>
                     {statusChip(e.approval_status)}
                   </span>
-                  <span className="perf-top">
-                    <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
+                  <span className="mob-review-go">
+                    {(e.approval_status ?? 'pending') === 'pending' ? 'To verify' : 'To approve'} ›
                   </span>
-                  <span className="row-form">
-                    {verifyNow && (
-                      <button className="mob-btn approve" style={{ flex: 1 }} disabled={busy === e.id}
-                        onClick={() => act(e, 'verified')}>✓ Verify</button>
-                    )}
-                    {approveNow && (
-                      <button className="mob-btn approve" style={{ flex: 1 }} disabled={busy === e.id}
-                        onClick={() => act(e, 'approved')}>✓ Approve</button>
-                    )}
-                    <button className="mob-btn reject" style={{ flex: 1 }} disabled={busy === e.id}
-                      onClick={() => act(e, 'rejected')}>✗ Reject</button>
-                  </span>
-                </div>
+                </button>
               )
             })}
           </>
