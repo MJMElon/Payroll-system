@@ -23,6 +23,8 @@ import AuditLogTab from './settings/AuditLogTab'
 type Tab = 'tags' | 'audit'
 /** Which face of a row's pop-out is showing. */
 type Mode = 'view' | 'edit'
+/** Just enough of a Piece Rate work type to say it is holding a station. */
+type StationJob = { id: string; name: string; station_id: string; active: boolean }
 
 /**
  * Postgres refuses to delete a row something still points at, and reports
@@ -96,11 +98,10 @@ export default function Settings() {
 
   return (
     <div className="stack" style={wideStyle}>
-      {/* Title on the left, the way out on the right — the back link reads
-          as an action rather than something above the heading. */}
+      {/* Way out on the left, title centred over the page. */}
       <div className="page-head">
-        <h1>Settings</h1>
         <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
+        <h1>Settings</h1>
       </div>
 
       <div className="tabs glass">
@@ -126,6 +127,9 @@ function TagsTab() {
   const { profile } = useAuth()
   const [grades, setGrades] = useState<Grade[]>([])
   const [stations, setStations] = useState<Station[]>([])
+  // Work types point at a station, which is what stops a station tag being
+  // deleted. Loading them lets the page SAY what is in the way, by name.
+  const [jobs, setJobs] = useState<StationJob[]>([])
   const [dragId, setDragId] = useState<string | null>(null)
   // One pop-out per row, opening on either face: `view` is read-only and
   // closes with the × alone, `edit` has Cancel (back to view) and Save.
@@ -139,14 +143,16 @@ function TagsTab() {
   const [loading, setLoading] = useState(true)
 
   async function load() {
-    const [g, st] = await Promise.all([
+    const [g, st, j] = await Promise.all([
       supabase.from('grades').select('*').order('sort_order'),
       supabase.from('stations').select('*').order('sort_order'),
+      supabase.from('jobs').select('id, name, station_id, active').order('name'),
     ])
     const err = g.error || st.error
     if (err) setError(err.message)
     setGrades(((g.data ?? []) as Grade[]).sort((a, b) => a.sort_order - b.sort_order))
     setStations(st.data ?? [])
+    setJobs((j.data ?? []) as StationJob[])
     setLoading(false)
   }
 
@@ -232,7 +238,21 @@ function TagsTab() {
     load()
   }
 
+  const jobsAt = (stationId: string) => jobs.filter((j) => j.station_id === stationId)
+
   async function removeStation(st: Station) {
+    // Say what is in the way BEFORE asking to confirm — being refused
+    // after saying yes reads as a broken button.
+    const used = jobsAt(st.id)
+    if (used.length > 0) {
+      const names = used.slice(0, 3).map((j) => `"${j.name}"`).join(', ')
+      const rest = used.length > 3 ? ` and ${used.length - 3} more` : ''
+      return setError(
+        `Station "${st.name}" is still used by ${used.length} work type${used.length === 1 ? '' : 's'} ` +
+          `in the Piece Rate module — ${names}${rest}. Clear ${used.length === 1 ? 'it' : 'them'} there first, ` +
+          'then this station can be deleted.',
+      )
+    }
     if (!window.confirm(`Delete station tag "${st.name}"?`)) return
     const { error } = await supabase.from('stations').delete().eq('id', st.id)
     if (error) return setError(deleteError(error, `Station "${st.name}"`))
@@ -439,6 +459,7 @@ function TagsTab() {
           station={stationModal.station}
           mode={stationModal.mode}
           canEdit={canManageStations}
+          usedBy={jobsAt(stationModal.station.id)}
           onMode={(mode) => setStationModal((s) => (s ? { ...s, mode } : s))}
           onClose={() => setStationModal(null)}
           onSaved={() => {
@@ -546,6 +567,7 @@ function StationModal({
   station,
   mode,
   canEdit,
+  usedBy,
   onMode,
   onClose,
   onSaved,
@@ -553,6 +575,8 @@ function StationModal({
   station: Station
   mode: Mode
   canEdit: boolean
+  /** Piece Rate work types pointing here — what stops a delete. */
+  usedBy: StationJob[]
   onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
@@ -631,6 +655,28 @@ function StationModal({
                 </>
               ) : (
                 <span className="small muted">None</span>
+              )}
+            </div>
+
+            {/* What is holding this station down, named — a station tag
+                cannot be deleted while Piece Rate work types point at it,
+                so this is the list to clear first. */}
+            <div className="tag-section">
+              <div className="tag-section-title">Used by</div>
+              {usedBy.length === 0 ? (
+                <span className="small muted">Nothing — this station can be deleted.</span>
+              ) : (
+                <>
+                  {usedBy.map((j) => (
+                    <span key={j.id} className="small">
+                      · {j.name}
+                      {!j.active && <span className="muted"> (inactive)</span>}
+                    </span>
+                  ))}
+                  <p className="tag-section-hint">
+                    Clear these in <Link to="/piece-rate">Piece Rate</Link> to free the station.
+                  </p>
+                </>
               )}
             </div>
 

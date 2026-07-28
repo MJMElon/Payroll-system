@@ -582,7 +582,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   text-transform: uppercase; color: var(--muted);
 }
 .mob-tier-ribbon .tag-dot { width: 10px; height: 10px; border-radius: 4px; }
-.mob-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mob-content { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 
 /* Bottom tab bar — common to every tier's version */
 .mob-tabbar {
@@ -663,6 +663,44 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-org-node .tag-dot { width: 11px; height: 11px; border-radius: 4px; flex: none; }
 .mob-org-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mob-org-text .mob-entry-name { font-size: 0.85rem; }
+
+/* Team tab — one drop lane per tier. A lane the leader may not hand out
+   (their own tier and anything above it) is locked and reads as inert. */
+.mob-lane {
+  border: 1px dashed #dfe4ea; border-radius: 12px;
+  padding: 0.45rem 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;
+  transition: background 0.12s, border-color 0.12s;
+}
+.mob-lane.over { border-color: var(--accent); background: var(--accent-soft); border-style: solid; }
+.mob-lane.locked { background: #f4f6f8; border-style: solid; border-color: #eceff3; opacity: 0.75; }
+.mob-lane-head { display: flex; align-items: center; gap: 0.4rem; }
+.mob-lane-head .tag-dot { width: 10px; height: 10px; border-radius: 4px; flex: none; }
+.mob-lane-name { font-weight: 800; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.mob-lane-lock { margin-left: auto; font-size: 0.7rem; }
+.mob-lane-empty { color: var(--muted); font-size: 0.7rem; padding: 0.15rem 0.1rem; }
+.mob-member {
+  display: flex; align-items: center; gap: 0.45rem;
+  background: #fff; border-radius: 10px; padding: 0.4rem 0.5rem;
+  box-shadow: 0 1px 2px rgba(10, 40, 28, 0.06); cursor: grab;
+}
+.mob-member.dragging { opacity: 0.45; cursor: grabbing; }
+.mob-member-grip { color: #c3cad2; font-size: 0.75rem; letter-spacing: -2px; flex: none; }
+.mob-member-pick {
+  flex: none; max-width: 42%; border: 1px solid #dfe4ea; border-radius: 8px;
+  background: #fbfcfd; color: var(--text); font-size: 0.68rem; padding: 0.2rem 0.25rem;
+}
+
+/* Pop-out explaining the tier ceiling — sits inside the phone frame. */
+.mob-modal-wrap {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center; padding: 1.2rem;
+  background: rgba(12, 18, 16, 0.45);
+}
+.mob-modal {
+  background: #fff; border-radius: 16px; padding: 1rem;
+  display: flex; flex-direction: column; gap: 0.5rem; width: 100%;
+  box-shadow: 0 18px 40px rgba(10, 30, 20, 0.35);
+}
 
 /* An entry row inside a My work card that is itself tappable. */
 .mob-plainbtn {
@@ -823,13 +861,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .tag-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; align-items: stretch; }
 .tag-cols .tag-section { min-width: 0; }
 .cap-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 0.9rem; }
-/* Page banner: heading left, the way out on the right. */
+/* Page banner: the way out on the left, heading centred over the page.
+   The empty third column is what keeps the heading centred on the page
+   rather than on the space the button leaves behind. */
 .page-head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 1rem; flex-wrap: wrap;
+  display: grid; grid-template-columns: 1fr auto 1fr;
+  align-items: center; gap: 1rem;
 }
-.page-head h1 { margin: 0; }
+.page-head .backlink-btn { grid-column: 1; justify-self: start; }
+.page-head h1 { grid-column: 2; margin: 0; text-align: center; }
 .backlink-btn { padding: 0.45rem 0.9rem; font-size: 0.85rem; white-space: nowrap; }
+@media (max-width: 560px) {
+  .page-head { grid-template-columns: 1fr; gap: 0.5rem; }
+  .page-head h1 { grid-column: 1; text-align: left; }
+}
 
 /* "Tier 1 : [tag] Tier" — the tier, then the tag as its own name field. */
 .tier-line { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
