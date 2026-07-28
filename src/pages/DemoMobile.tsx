@@ -3058,6 +3058,39 @@ function ProfileTab({
   onError: (m: string | null) => void
 }) {
   const [showDetails, setShowDetails] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({ employee_code: '', phone: '' })
+  // What was just saved, so the card shows the new value without waiting
+  // for the whole app's profile to be reloaded.
+  const [saved, setSaved] = useState<{ employee_code: string; phone: string } | null>(null)
+
+  /**
+   * Your own Worker ID and phone, edited by you. It goes through the same
+   * narrow door as the avatar: access_profiles has no "update your own
+   * row" policy, and adding one would let anyone rewrite their own tier or
+   * salary, so a function that touches these two columns and nothing else
+   * does the writing.
+   */
+  async function saveDetails() {
+    if (!profile?.id) return
+    setSaving(true)
+    onError(null)
+    const { error } = await supabase.rpc('set_my_details', {
+      code: form.employee_code.trim() || null,
+      phone_no: form.phone.trim() || null,
+    })
+    setSaving(false)
+    if (error) {
+      return onError(
+        /function .*set_my_details.* does not exist/i.test(error.message)
+          ? 'Editing your details needs a pending database update — run supabase/setup.sql.'
+          : error.message,
+      )
+    }
+    setSaved({ employee_code: form.employee_code.trim(), phone: form.phone.trim() })
+    setEditing(false)
+  }
 
   const myName = profileName(profile)
 
@@ -3071,6 +3104,18 @@ function ProfileTab({
     myStationIds.length === 0
       ? 'All stations'
       : myStationIds.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
+
+  /**
+   * Above station level nobody is paid by the piece: no month of piece
+   * work, no payslip built from it, no rate contract to read. Those
+   * sections belong to the station head's rung and below, found by
+   * counting the rungs beneath the tier rather than naming one — the same
+   * test the Team tab and the entry form use.
+   */
+  const rungsBelow = tier
+    ? grades.filter((g) => g.sort_order > tier.sort_order && g.sort_order > 1).length
+    : 0
+  const isPaidByPiece = tier != null && rungsBelow <= 2
 
   const Row = ({ label, value }: { label: string; value: string }) => (
     <div className="mob-row">
@@ -3106,30 +3151,75 @@ function ProfileTab({
             <span className={`mob-caret ${showDetails ? 'open' : ''}`} aria-hidden="true">›</span>
           </button>
           {showDetails && (
-            <>
-              <Row label="Worker ID" value={profile?.employee_code ?? '—'} />
-              <Row label="Email" value={profile?.email ?? '—'} />
-              <Row label="Phone number" value={profile?.phone ?? '—'} />
-            </>
+            editing ? (
+              <>
+                <div className="mob-field-label">Worker ID</div>
+                <input
+                  className="mob-input"
+                  value={form.employee_code}
+                  onChange={(e) => setForm({ ...form, employee_code: e.target.value })}
+                />
+                {/* Email is the account itself — changing it here would not
+                    change how you sign in, so it is shown, not edited. */}
+                <div className="mob-field-label">Email</div>
+                <div className="mob-param">{profile?.email ?? '—'}</div>
+                <div className="mob-field-label">Phone number</div>
+                <input
+                  className="mob-input"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                />
+                <div className="row-form">
+                  <button className="mob-btn" style={{ flex: 1 }} disabled={saving} onClick={saveDetails}>
+                    {saving ? 'Saving…' : 'Save'}
+                  </button>
+                  <button className="mob-btn ghost" style={{ flex: 1 }} onClick={() => setEditing(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Row label="Worker ID" value={saved?.employee_code || profile?.employee_code || '—'} />
+                <Row label="Email" value={profile?.email ?? '—'} />
+                <Row label="Phone number" value={saved?.phone || profile?.phone || '—'} />
+                <button
+                  className="mob-mini"
+                  style={{ alignSelf: 'flex-start' }}
+                  onClick={() => {
+                    setForm({
+                      employee_code: profile?.employee_code ?? '',
+                      phone: profile?.phone ?? '',
+                    })
+                    setEditing(true)
+                  }}
+                >
+                  ✎ Edit
+                </button>
+              </>
+            )
           )}
         </div>
 
-        {/* 3 — this month at a glance. */}
-        <MyNumbersSection profileId={profile?.id ?? null} amountFor={amountFor} />
-
-        {/* 4 — the last three payslips. */}
-        <PayslipSection profile={profile} />
-
-        {/* 5 — what each tier is paid, yours first. */}
-        <ContractSection
-          tier={tier}
-          grades={grades}
-          jobs={jobs}
-          stations={stations}
-          myStationIds={myStationIds}
-          rateFor={rateFor}
-          tier2RateFor={tier2RateFor}
-        />
+        {/* 3, 4, 5 — this month, the payslips it feeds, and the rates
+            behind both. All three are about being paid by the piece, so
+            they are absent for the tiers that are not. */}
+        {isPaidByPiece && (
+          <>
+            <MyNumbersSection profileId={profile?.id ?? null} amountFor={amountFor} />
+            <PayslipSection profile={profile} />
+            <ContractSection
+              tier={tier}
+              grades={grades}
+              jobs={jobs}
+              stations={stations}
+              myStationIds={myStationIds}
+              rateFor={rateFor}
+              tier2RateFor={tier2RateFor}
+            />
+          </>
+        )}
       </div>
     </>
   )
@@ -3756,9 +3846,12 @@ function TeamTab({
   }
   // Whoever heads the station being looked at — only shown when that is
   // somebody other than the reader.
+  /** Where a person sits once the staged moves are taken into account. */
+  const placedGrade = (p: Profile) => staged.get(p.id)?.gradeId ?? p.grade_id
+
   const stationHeads =
-    headTier && activeStation
-      ? people.filter((p) => p.grade_id === headTier.id && atStation(p))
+    stationTier && activeStation
+      ? people.filter((p) => atStation(p) && placedGrade(p) === stationTier.id)
       : []
 
   // Every rung from the team leader down shows in every column, empty or
@@ -3918,8 +4011,6 @@ function TeamTab({
     load()
   }
 
-  /** Where a person sits once the staged moves are taken into account. */
-  const placedGrade = (p: Profile) => staged.get(p.id)?.gradeId ?? p.grade_id
 
   function dropOn(g: Grade, team?: Team | null) {
     // The dragged person may report to me OR sit in one of my teams, so
@@ -4091,52 +4182,33 @@ function TeamTab({
 
   const board = (
     <>
-      {canManageTeam && (
-        <div className={`mob-movebar ${moveMode ? 'on' : ''}`}>
-          <MoveButton />
+      {moveMode && (
+        <div className="mob-movebar on">
           <span className="mob-sub">
-            {!moveMode
-              ? 'Move people'
-              : staged.size === 0
-                ? 'Drag a name onto another tier'
-                : `${staged.size} move${staged.size === 1 ? '' : 's'} ready`}
+            {staged.size === 0
+              ? 'Drag a name onto another tier'
+              : `${staged.size} move${staged.size === 1 ? '' : 's'} ready`}
           </span>
-          {moveMode && (
-            <>
-              <button className="mob-mini" disabled={staged.size === 0 || busy === 'save-moves'} onClick={saveMoves}>
-                Save
-              </button>
-              <button
-                className="mob-mini"
-                onClick={() => {
-                  setStaged(new Map())
-                  setMoveMode(false)
-                }}
-              >
-                Cancel
-              </button>
-            </>
-          )}
+          <button className="mob-mini" disabled={staged.size === 0 || busy === 'save-moves'} onClick={saveMoves}>
+            Save
+          </button>
+          <button
+            className="mob-mini"
+            onClick={() => {
+              setStaged(new Map())
+              setMoveMode(false)
+            }}
+          >
+            Cancel
+          </button>
         </div>
       )}
 
-      {headTier && (
-        <div className="mob-lane static">
-          <div className="mob-lane-head">
-            <span className={`tag-dot dot-${headTier.color}`} aria-hidden="true" />
-            <span className="mob-lane-name">{headTier.name}</span>
-          </div>
-          {stationHeads.length === 0 ? (
-            <div className="mob-lane-empty">Nobody yet</div>
-          ) : (
-            stationHeads.map((p) => (
-              <div className="mob-member" key={p.id}>
-                <span className="mob-person-name">{profileName(p)}</span>
-              </div>
-            ))
-          )}
-        </div>
-      )}
+      {/* The head is a rung like any other: it can be picked up and moved
+          down into a team, and somebody can be moved up onto it. It was
+          drawn as a plain caption before, which is why it would not
+          budge. */}
+      {headTier && <Lane grade={headTier} team={null} members={stationHeads} />}
 
       {runsTeams ? (
         <>
@@ -4163,7 +4235,7 @@ function TeamTab({
                 <input
                   className="mob-input"
                   autoFocus
-                  placeholder="Team name"
+                  placeholder="New Team's Name"
                   value={draftName}
                   onChange={(e) => setDraftName(e.target.value)}
                   onKeyDown={(e) => {
@@ -4296,13 +4368,16 @@ function TeamTab({
                 const open = pickedStation === st.id
                 return (
                   <div key={st.id}>
-                    <button
-                      className={`mob-lineitem ${open ? 'open' : ''}`}
-                      onClick={() => setPickedStation(open ? null : st.id)}
-                    >
-                      <span className="mob-person-name">{st.name}</span>
-                      <span className={`mob-caret ${open ? 'open' : ''}`}>›</span>
-                    </button>
+                    <div className={`mob-stationrow ${open ? 'open' : ''}`}>
+                      <button
+                        className="mob-lineitem"
+                        onClick={() => setPickedStation(open ? null : st.id)}
+                      >
+                        <span className="mob-person-name">{st.name}</span>
+                        <span className={`mob-caret ${open ? 'open' : ''}`}>›</span>
+                      </button>
+                      {open && canManageTeam && <MoveButton />}
+                    </div>
                     {open && <div className="mob-expand">{board}</div>}
                   </div>
                 )

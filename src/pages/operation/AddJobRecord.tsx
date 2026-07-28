@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import Select from '../../components/Select'
 import { useAuth } from '../../context/AuthContext'
 import {
   profileName,
@@ -275,28 +276,29 @@ export default function AddJobRecord() {
               <span>Work Date *</span>
               <input type="date" value={workDate} max={todayISO()} onChange={(e) => setWorkDate(e.target.value)} required />
             </label>
-            <label className="field inline">
+            <div className="field inline">
               <span>Station *</span>
-              <select
+              <Select
+                block
                 value={stationId}
-                onChange={(e) => { setStationId(e.target.value); setJobId('') }}
-                required
-              >
-                <option value="">Pick…</option>
-                {visibleStations.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field inline grow">
+                onChange={(v) => { setStationId(v); setJobId('') }}
+                options={visibleStations.map((s) => ({ value: s.id, label: s.name }))}
+                placeholder="Pick…"
+                ariaLabel="Station"
+              />
+            </div>
+            <div className="field inline grow">
               <span>Work Description *</span>
-              <select value={jobId} onChange={(e) => setJobId(e.target.value)} required disabled={!stationId}>
-                <option value="">Pick…</option>
-                {stationJobs.map((j) => (
-                  <option key={j.id} value={j.id}>{j.name}</option>
-                ))}
-              </select>
-            </label>
+              <Select
+                block
+                value={jobId}
+                onChange={setJobId}
+                options={stationJobs.map((j) => ({ value: j.id, label: j.name }))}
+                placeholder={stationId ? 'Pick…' : 'Pick a station first…'}
+                disabled={!stationId}
+                ariaLabel="Work description"
+              />
+            </div>
             <label className="field inline">
               <span>Unit</span>
               <input value={job?.unit ?? ''} readOnly />
@@ -307,30 +309,35 @@ export default function AddJobRecord() {
         <div className="card stack form-section">
           <h3>2. Employee &amp; Position</h3>
           <div className="row-form">
-            <label className="field inline">
+            <div className="field inline">
               <span>Employee *</span>
-              <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} required>
-                <option value="">Pick…</option>
-                {stationUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {profileName(u)}{u.employee_code ? ` (${u.employee_code})` : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <Select
+                block
+                value={employeeId}
+                onChange={setEmployeeId}
+                options={stationUsers.map((u) => ({
+                  value: u.id,
+                  label: `${profileName(u)}${u.employee_code ? ` (${u.employee_code})` : ''}`,
+                }))}
+                placeholder="Pick…"
+                ariaLabel="Employee"
+              />
+            </div>
             <label className="field inline">
               <span>Position *</span>
               <input value={position} readOnly />
             </label>
-            <label className="field inline">
+            <div className="field inline">
               <span>Shift *</span>
-              <select value={shift} onChange={(e) => setShift(e.target.value)} required>
-                <option value="">Pick…</option>
-                {SHIFTS.map((s) => (
-                  <option key={s.key} value={s.key}>{s.label}</option>
-                ))}
-              </select>
-            </label>
+              <Select
+                block
+                value={shift}
+                onChange={setShift}
+                options={SHIFTS.map((s) => ({ value: s.key, label: s.label }))}
+                placeholder="Pick…"
+                ariaLabel="Shift"
+              />
+            </div>
             <label className="field inline grow">
               <span>Remarks (Optional)</span>
               <input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Enter remarks…" />

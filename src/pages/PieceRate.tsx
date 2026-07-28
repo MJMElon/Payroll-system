@@ -17,8 +17,10 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import Select, { type SelectOption } from '../components/Select'
 import { useAuth } from '../context/AuthContext'
-import { effectiveCapabilities, stationTierOf, tagClass } from '../lib/tags'
+import { useOverlayClose } from '../lib/useOverlayClose'
+import { effectiveCapabilities, tagClass } from '../lib/tags'
 import {
   supabase,
   todayISO,
@@ -28,11 +30,28 @@ import {
   type Station,
 } from '../lib/supabase'
 
-// What a piece rate is paid by, offered as a dropdown in the create window.
-const UNIT_OPTIONS = ['/job done', '/cage tipped', '/tonne', '/bunch', '/trip', '/hour']
+const UNIT_SUGGESTIONS = ['/cage tipped', '/job done', '/tonne', '/bunch', '/trip', '/hour']
+
+// Picking this in the Unit dropdown swaps that cell for a free-text box, so
+// the suggestions stay a short list without shutting anything out.
+const UNIT_OTHER = '__other__'
 
 // Bucket key for jobs with no tag, so the pivoted tables still give them a column.
 const NO_TAG = '__none__'
+
+/** Dropdown rows for the station and tier-tag pickers, shared by the create
+ *  window, the edit window and the listing filters. */
+function stationOptions(stations: Station[]): SelectOption[] {
+  return stations.map((s) => ({ value: s.id, label: s.name }))
+}
+
+function tagOptions(grades: Grade[]): SelectOption[] {
+  return grades.map((g) => ({
+    value: g.id,
+    label: g.name,
+    node: <span className={tagClass(g.color)}>{g.name}</span>,
+  }))
+}
 
 export default function PieceRate() {
   const { profile } = useAuth()
@@ -188,22 +207,27 @@ export default function PieceRate() {
         </nav>
 
         <div className="sidebar-content stack">
+          {/* The two module actions belong to the module, not to one tab —
+              the masterlist is the front page now, so "create" has to be
+              reachable from it as well as from the approvals tracker. */}
+          {tab !== 'history' && (canCreate || isApprover) && (
+            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+              {isApprover && (
+                <button className="btn ghost badge-holder" onClick={() => setShowApprovals(true)}>
+                  Approvals
+                  {openApprovals.length > 0 && (
+                    <span className="count-badge">{openApprovals.length}</span>
+                  )}
+                </button>
+              )}
+              {canCreate && (
+                <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
+              )}
+            </div>
+          )}
+
           {tab === 'approval' ? (
             <>
-              <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-                {isApprover && (
-                  <button className="btn ghost badge-holder" onClick={() => setShowApprovals(true)}>
-                    Approvals
-                    {openApprovals.length > 0 && (
-                      <span className="count-badge">{openApprovals.length}</span>
-                    )}
-                  </button>
-                )}
-                {canCreate && (
-                  <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
-                )}
-              </div>
-
               {canCreate || isApprover ? (
                 <SubmissionsList
                   stations={stations}
@@ -258,14 +282,29 @@ export default function PieceRate() {
         />
       )}
 
-      {modal !== 'closed' && (
+      {modal === 'create' && (
+        <CreateRatesModal
+          stations={stations}
+          grades={grades}
+          onClose={() => setModal('closed')}
+          onReload={load}
+          onSaved={(count) => {
+            setModal('closed')
+            setNotice(
+              `${count} piece rate${count === 1 ? '' : 's'} submitted — waiting for approval.`,
+            )
+            load()
+          }}
+        />
+      )}
+
+      {modal !== 'closed' && modal !== 'create' && (
         <ContractModal
           stations={stations}
           grades={grades}
-          job={modal === 'create' ? null : modal}
-          currentRate={modal === 'create' ? null : latestRate.get(modal.id) ?? null}
+          job={modal}
+          currentRate={latestRate.get(modal.id) ?? null}
           onClose={() => setModal('closed')}
-          onReload={load}
           onSaved={(submitted) => {
             setModal('closed')
             setNotice(submitted ? 'Piece rate submitted — waiting for approval.' : null)
@@ -587,17 +626,13 @@ function SubmissionsList({
             <span className="count-badge static" style={{ marginLeft: '0.5rem' }}>{pendingCount}</span>
           )}
         </h3>
-        <select
-          className="filter-select"
+        <Select
           value={stationFilter}
-          onChange={(e) => setStationFilter(e.target.value)}
-          title="Filter by station"
-        >
-          <option value="">All stations</option>
-          {stations.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
+          onChange={setStationFilter}
+          options={[{ value: '', label: 'All stations' }, ...stationOptions(stations)]}
+          placeholder="All stations"
+          ariaLabel="Filter by station"
+        />
       </div>
       <div className="table-scroll">
         <table className="table">
@@ -739,17 +774,13 @@ function RatesList({
       <div className="row-form spread">
         <h3>Piece Rate Masterlist</h3>
         <div className="row-form">
-          <select
-            className="filter-select"
+          <Select
             value={stationFilter}
-            onChange={(e) => setStationFilter(e.target.value)}
-            title="Filter by station"
-          >
-            <option value="">All stations</option>
-            {stations.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
+            onChange={setStationFilter}
+            options={[{ value: '', label: 'All stations' }, ...stationOptions(stations)]}
+            placeholder="All stations"
+            ariaLabel="Filter by station"
+          />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -998,17 +1029,13 @@ function HistoryList({
       <div className="row-form spread">
         <h3>Piece Rate History</h3>
         <div className="row-form">
-          <select
-            className="filter-select"
+          <Select
             value={stationFilter}
-            onChange={(e) => setStationFilter(e.target.value)}
-            title="Filter by station"
-          >
-            <option value="">All stations</option>
-            {stations.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
+            onChange={setStationFilter}
+            options={[{ value: '', label: 'All stations' }, ...stationOptions(stations)]}
+            placeholder="All stations"
+            ariaLabel="Filter by station"
+          />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -1073,155 +1100,394 @@ function HistoryList({
 }
 
 /* ------------------------------------------------------------------ */
-/* Floating create/edit window                                        */
-/*                                                                    */
-/* Laid out like the masterlist itself, one line per piece rate, so a  */
-/* whole batch can be keyed in and submitted in one go instead of      */
-/* reopening the window for every single rate. A line may name several */
-/* stations and several tier tags at once — the same job at the same   */
-/* price — and it is written out as one rate per station × tier.       */
+/* Shared save pieces                                                 */
 /* ------------------------------------------------------------------ */
 
-// Picked in the Unit column. It is not a unit but a pay shape: choosing
-// it opens the two hourly-tier columns, and the rate is stored per hour.
-const TIERED = '__tiered__'
-
-interface RateRow {
-  key: number
-  stationIds: string[]
-  gradeIds: string[]
-  description: string
-  rate: string
-  unit: string
-  tier1: string
-  tier2: string
-  effectiveFrom: string
+/** Postgres rejects a repeat of Station + Tier tag + Work description by
+ *  index name; say what that actually means in the window. */
+function saveMessage(message: string) {
+  return message.includes('jobs_station_grade_name_idx')
+    ? 'A piece rate already exists for this exact Tier tag + Station tag + work description — edit that one instead (tick "Show inactive" if it might be hidden).'
+    : message
 }
 
-let rowSeq = 0
-function blankRow(): RateRow {
-  rowSeq += 1
-  return {
-    key: rowSeq,
-    stationIds: [],
-    gradeIds: [],
-    description: '',
-    rate: '',
-    unit: '',
-    tier1: '',
-    tier2: '',
-    effectiveFrom: todayISO(),
-  }
-}
-
-function rowFromJob(job: Job, rate: Rate | null): RateRow {
-  const tiered = rate?.tier2_rate != null
-  rowSeq += 1
-  return {
-    key: rowSeq,
-    stationIds: job.station_id ? [job.station_id] : [],
-    gradeIds: job.grade_id ? [job.grade_id] : [],
-    description: job.name,
-    rate: !tiered && rate ? String(Number(rate.rate)) : '',
-    unit: tiered ? TIERED : job.unit,
-    tier1: tiered && rate ? String(Number(rate.rate)) : '',
-    tier2: tiered && rate?.tier2_rate != null ? String(Number(rate.tier2_rate)) : '',
-    effectiveFrom: rate?.effective_from ?? todayISO(),
-  }
-}
-
-/**
- * A tick-list that looks like a dropdown. Several stations, or several
- * tier tags, on one line — the names are written out in full in the list,
- * however long they are, which a plain <select> could not do inside a
- * table cell. The panel is fixed-positioned so the table's own sideways
- * scrolling cannot clip it.
- */
-function TickPicker({
-  options,
+/** The Unit cell: the usual units on the system's own dropdown, with an
+ *  "Other…" row that swaps the cell for a free-text box so nothing is
+ *  shut out of the list. */
+function UnitPicker({
   value,
   onChange,
-  single,
+  ariaLabel,
 }: {
-  options: { id: string; name: string }[]
-  value: string[]
-  onChange: (ids: string[]) => void
-  single?: boolean
+  value: string
+  onChange: (v: string) => void
+  ariaLabel: string
 }) {
-  const [at, setAt] = useState<{ left: number; top: number; width: number } | null>(null)
-  const face = useRef<HTMLButtonElement>(null)
-  const menu = useRef<HTMLDivElement>(null)
+  const [custom, setCustom] = useState(value !== '' && !UNIT_SUGGESTIONS.includes(value))
 
-  useEffect(() => {
-    if (!at) return
-    const shut = (e: MouseEvent) => {
-      const t = e.target as Node
-      if (!face.current?.contains(t) && !menu.current?.contains(t)) setAt(null)
-    }
-    const move = () => setAt(null)
-    document.addEventListener('mousedown', shut)
-    window.addEventListener('resize', move)
-    // A scroll moves the cell out from under a fixed panel, so close it.
-    window.addEventListener('scroll', move, true)
-    return () => {
-      document.removeEventListener('mousedown', shut)
-      window.removeEventListener('resize', move)
-      window.removeEventListener('scroll', move, true)
-    }
-  }, [at])
-
-  function open() {
-    if (at) return setAt(null)
-    const r = face.current?.getBoundingClientRect()
-    if (!r) return
-    // Drop the panel below the cell, or above it when the window's foot
-    // is too close for the list to be read.
-    const below = window.innerHeight - r.bottom
-    const height = Math.min(240, options.length * 34 + 12)
-    setAt({
-      left: r.left,
-      top: below < height + 12 ? Math.max(8, r.top - height - 4) : r.bottom + 4,
-      width: r.width,
-    })
-  }
-
-  function toggle(id: string) {
-    if (single) {
-      onChange(value.includes(id) ? [] : [id])
-      return setAt(null)
-    }
-    onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id])
-  }
-
-  const label = options.filter((o) => value.includes(o.id)).map((o) => o.name).join(', ')
-
-  return (
-    <>
-      <button type="button" className="pickbox" ref={face} onClick={open} title={label}>
-        <span className="pickbox-text">{label}</span>
-        <span className="pickbox-caret" aria-hidden="true">▾</span>
-      </button>
-      {at && (
-        <div
-          className="pickbox-menu"
-          ref={menu}
-          style={{ left: at.left, top: at.top, minWidth: at.width }}
+  if (custom) {
+    return (
+      <div className="pr-rate-cell">
+        <input value={value} onChange={(e) => onChange(e.target.value)} aria-label={ariaLabel} />
+        <button
+          type="button"
+          className="pr-tier-toggle"
+          onClick={() => {
+            setCustom(false)
+            onChange('')
+          }}
         >
-          {options.map((o) => (
-            <label key={o.id} className="pickbox-item">
-              <input
-                type="checkbox"
-                checked={value.includes(o.id)}
-                onChange={() => toggle(o.id)}
-              />
-              <span>{o.name}</span>
-            </label>
-          ))}
-        </div>
-      )}
-    </>
+          Pick from the list
+        </button>
+      </div>
+    )
+  }
+  return (
+    <Select
+      block
+      value={value}
+      ariaLabel={ariaLabel}
+      placeholder="Choose unit…"
+      options={[
+        ...UNIT_SUGGESTIONS.map((u) => ({ value: u, label: u })),
+        { value: UNIT_OTHER, label: 'Other…' },
+      ]}
+      onChange={(v) => {
+        if (v === UNIT_OTHER) {
+          setCustom(true)
+          onChange('')
+        } else {
+          onChange(v)
+        }
+      }}
+    />
   )
 }
+
+/* ------------------------------------------------------------------ */
+/* Create window — a batch of new piece rates, laid out the way the    */
+/* masterlist reads: one line per rate, left to right, and "+ Row" for */
+/* the next one. Everything keyed in here is submitted for approval    */
+/* together when the window is sent.                                   */
+/* ------------------------------------------------------------------ */
+
+interface DraftRow {
+  key: number
+  gradeId: string
+  stationId: string
+  description: string
+  unit: string
+  tiered: boolean
+  rate: string
+  tier2: string
+  effectiveFrom: string
+  /** Marked when this is the row that stopped the batch. */
+  bad?: boolean
+}
+
+function isBlankRow(r: DraftRow) {
+  return (
+    !r.stationId && !r.gradeId && !r.description.trim() && !r.unit.trim() && !r.rate.trim()
+  )
+}
+
+function CreateRatesModal({
+  stations,
+  grades,
+  onClose,
+  onSaved,
+  onReload,
+}: {
+  stations: Station[]
+  grades: Grade[]
+  onClose: () => void
+  onSaved: (count: number) => void
+  onReload: () => void
+}) {
+  const overlayProps = useOverlayClose(onClose)
+  const nextKey = useRef(1)
+
+  // A fresh line carries over the station, unit and date of the one above
+  // it — a batch is nearly always the same station on the same day.
+  const blank = (from?: DraftRow): DraftRow => ({
+    key: nextKey.current++,
+    gradeId: '',
+    stationId: from?.stationId ?? '',
+    description: '',
+    unit: from?.unit ?? '',
+    tiered: false,
+    rate: '',
+    tier2: '',
+    effectiveFrom: from?.effectiveFrom ?? todayISO(),
+  })
+
+  const [rows, setRows] = useState<DraftRow[]>(() => [blank()])
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  const patch = (key: number, fields: Partial<DraftRow>) =>
+    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...fields, bad: false } : r)))
+  const addRow = () => setRows((rs) => [...rs, blank(rs[rs.length - 1])])
+  const dropRow = (key: number) =>
+    setRows((rs) => (rs.length === 1 ? rs : rs.filter((r) => r.key !== key)))
+
+  const filled = rows.filter((r) => !isBlankRow(r))
+
+  function reject(row: DraftRow, message: string) {
+    setRows((rs) => rs.map((r) => ({ ...r, bad: r.key === row.key })))
+    setError(message)
+  }
+
+  async function submit() {
+    setError(null)
+    if (filled.length === 0) return setError('Fill in at least one row.')
+
+    // Check the whole batch before writing any of it.
+    const seen = new Set<string>()
+    for (const r of filled) {
+      const n = rows.indexOf(r) + 1
+      if (!r.stationId) return reject(r, `Row ${n}: choose a station tag.`)
+      if (!r.description.trim()) return reject(r, `Row ${n}: enter the piece rate work description.`)
+      if (!r.unit.trim()) return reject(r, `Row ${n}: choose a unit.`)
+      const rateValue = Number(r.rate)
+      if (r.rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
+        return reject(r, `Row ${n}: enter a valid non-negative piece rate.`)
+      }
+      if (r.tiered) {
+        const t2 = Number(r.tier2)
+        if (r.tier2.trim() === '' || Number.isNaN(t2) || t2 < 0) {
+          return reject(r, `Row ${n}: enter a valid non-negative Tier 2 rate.`)
+        }
+      }
+      if (!r.effectiveFrom) return reject(r, `Row ${n}: pick an effective date.`)
+      const key = `${r.stationId}::${r.gradeId}::${r.description.trim().toLowerCase()}`
+      if (seen.has(key)) {
+        return reject(r, `Row ${n}: same tier tag, station tag and work description as an earlier row.`)
+      }
+      seen.add(key)
+    }
+
+    setSaving(true)
+    const savedKeys: number[] = []
+    let failure: { key: number; message: string } | null = null
+
+    for (const r of filled) {
+      const n = rows.indexOf(r) + 1
+      // Every new contract waits for verify + approve, admins included.
+      const { data, error: jobErr } = await supabase
+        .from('jobs')
+        .insert({
+          station_id: r.stationId,
+          grade_id: r.gradeId || null,
+          name: r.description.trim(),
+          unit: r.unit.trim(),
+          approval_status: 'pending',
+        })
+        .select()
+        .single()
+      if (jobErr || !data) {
+        failure = { key: r.key, message: `Row ${n}: ${saveMessage(jobErr?.message ?? 'could not be saved.')}` }
+        break
+      }
+      const { error: rateErr } = await supabase.from('piece_rates').upsert(
+        {
+          job_id: data.id,
+          rate: Number(r.rate),
+          tier2_rate: r.tiered ? Number(r.tier2) : null,
+          effective_from: r.effectiveFrom,
+        },
+        { onConflict: 'job_id,effective_from' },
+      )
+      if (rateErr) {
+        // Take the contract back out, so the row can simply be sent again
+        // instead of colliding with a half-made entry.
+        await supabase.from('jobs').delete().eq('id', data.id)
+        failure = { key: r.key, message: `Row ${n}: ${rateErr.message}` }
+        break
+      }
+      savedKeys.push(r.key)
+    }
+
+    setSaving(false)
+    if (!failure) return onSaved(filled.length)
+
+    // Whatever went in is gone from the grid, so sending again can't
+    // double it up; what is left is the row that stopped, and the rest.
+    const stopped = failure
+    setRows((rs) => {
+      const left = rs.filter((r) => !savedKeys.includes(r.key))
+      return left.length === 0 ? [blank()] : left.map((r) => ({ ...r, bad: r.key === stopped.key }))
+    })
+    setError(
+      savedKeys.length > 0
+        ? `${savedKeys.length} row(s) submitted, then it stopped. ${stopped.message}`
+        : stopped.message,
+    )
+    if (savedKeys.length > 0) onReload()
+  }
+
+  return (
+    <div className="modal-overlay" {...overlayProps}>
+      <div className="modal modal-xwide">
+        <div className="row-form spread">
+          <h2>Create new piece rate</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <p className="muted small" style={{ margin: 0 }}>
+          One line per rate — add as many as you need with “+ Row”. Every line is
+          submitted for approval before it appears in the masterlist.
+        </p>
+
+        {error && <div className="error">{error}</div>}
+
+        <div className="pr-grid">
+          <div className="pr-grid-head">
+            <span>Tier Tag</span>
+            <span>Station Tag</span>
+            <span>Piece Rate Work Description</span>
+            <span>Unit</span>
+            <span>Piece Rate (RM)</span>
+            <span>Effective date</span>
+            <span />
+          </div>
+
+          {rows.map((r, i) => (
+            <div className={`pr-grid-row ${r.bad ? 'bad' : ''}`} key={r.key}>
+              <div className="pr-cell">
+                <span className="pr-cell-label">Tier Tag</span>
+                <Select
+                  block
+                  value={r.gradeId}
+                  onChange={(v) => patch(r.key, { gradeId: v })}
+                  options={[{ value: '', label: 'All positions' }, ...tagOptions(grades)]}
+                  placeholder="Choose tier tag…"
+                  ariaLabel={`Row ${i + 1} tier tag`}
+                />
+              </div>
+
+              <div className="pr-cell">
+                <span className="pr-cell-label">Station Tag</span>
+                <Select
+                  block
+                  value={r.stationId}
+                  onChange={(v) => patch(r.key, { stationId: v })}
+                  options={stationOptions(stations)}
+                  placeholder="Choose station tag…"
+                  ariaLabel={`Row ${i + 1} station tag`}
+                />
+              </div>
+
+              <div className="pr-cell wide">
+                <span className="pr-cell-label">Piece Rate Work Description</span>
+                <input
+                  value={r.description}
+                  onChange={(e) => patch(r.key, { description: e.target.value })}
+                  aria-label={`Row ${i + 1} piece rate work description`}
+                />
+              </div>
+
+              <div className="pr-cell">
+                <span className="pr-cell-label">Unit</span>
+                <UnitPicker
+                  value={r.unit}
+                  onChange={(v) => patch(r.key, { unit: v })}
+                  ariaLabel={`Row ${i + 1} unit`}
+                />
+              </div>
+
+              <div className="pr-cell">
+                <span className="pr-cell-label">Piece Rate (RM)</span>
+                <div className="pr-rate-cell">
+                  {r.tiered ? (
+                    <div className="pr-tier-inputs">
+                      <label>
+                        <span>1st–4th /hr</span>
+                        <input
+                          inputMode="decimal"
+                          value={r.rate}
+                          onChange={(e) => patch(r.key, { rate: e.target.value })}
+                          aria-label={`Row ${i + 1} tier 1 rate`}
+                        />
+                      </label>
+                      <label>
+                        <span>5th+ /hr</span>
+                        <input
+                          inputMode="decimal"
+                          value={r.tier2}
+                          onChange={(e) => patch(r.key, { tier2: e.target.value })}
+                          aria-label={`Row ${i + 1} tier 2 rate`}
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <input
+                      inputMode="decimal"
+                      value={r.rate}
+                      onChange={(e) => patch(r.key, { rate: e.target.value })}
+                      aria-label={`Row ${i + 1} piece rate`}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className="pr-tier-toggle"
+                    onClick={() => patch(r.key, { tiered: !r.tiered, tier2: '' })}
+                  >
+                    {r.tiered ? 'Flat rate' : 'Tiered by hour'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="pr-cell">
+                <span className="pr-cell-label">Effective date</span>
+                <input
+                  type="date"
+                  value={r.effectiveFrom}
+                  onChange={(e) => patch(r.key, { effectiveFrom: e.target.value })}
+                  aria-label={`Row ${i + 1} effective date`}
+                />
+              </div>
+
+              <button
+                type="button"
+                className="pr-row-drop"
+                onClick={() => dropRow(r.key)}
+                disabled={rows.length === 1}
+                title="Remove this row"
+                aria-label={`Remove row ${i + 1}`}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="row-form spread">
+          <button type="button" className="btn ghost" onClick={addRow}>+ Row</button>
+          <div className="row-form">
+            <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn" onClick={submit} disabled={saving}>
+              {saving
+                ? 'Submitting…'
+                : filled.length > 1
+                  ? `Submit ${filled.length} rates for approval`
+                  : 'Submit for approval'}
+            </button>
+          </div>
+        </div>
+
+        <p className="small muted" style={{ margin: 0 }}>
+          Tiered by hour: every hour resets — the first 4 units done pay Tier 1,
+          the 5th unit onward that same hour pays Tier 2. Payroll uses whichever
+          rate is effective on the day worked.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Edit window — one existing contract at a time                      */
+/* ------------------------------------------------------------------ */
 
 function ContractModal({
   stations,
@@ -1230,105 +1496,53 @@ function ContractModal({
   currentRate,
   onClose,
   onSaved,
-  onReload,
 }: {
   stations: Station[]
   grades: Grade[]
-  job: Job | null
+  job: Job
   currentRate: Rate | null
   onClose: () => void
   onSaved: (submittedForApproval: boolean) => void
-  onReload: () => void
 }) {
-  const [rows, setRows] = useState<RateRow[]>(() => [job ? rowFromJob(job, currentRate) : blankRow()])
+  const overlayProps = useOverlayClose(onClose)
+  const [stationId, setStationId] = useState(job.station_id)
+  const [gradeId, setGradeId] = useState(job.grade_id ?? '')
+  const [description, setDescription] = useState(job.name)
+  const [unit, setUnit] = useState(job.unit)
+  const [rate, setRate] = useState(currentRate ? String(Number(currentRate.rate)) : '')
+  const [tiered, setTiered] = useState(currentRate?.tier2_rate != null)
+  const [tier2, setTier2] = useState(
+    currentRate?.tier2_rate != null ? String(Number(currentRate.tier2_rate)) : '',
+  )
+  const [effectiveFrom, setEffectiveFrom] = useState(currentRate?.effective_from ?? todayISO())
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // The two hourly columns belong to the table, not to one line, so they
-  // appear as soon as any line is paid by the hour.
-  const anyTiered = rows.some((r) => r.unit === TIERED)
-
-  // Piece rates are paid to the people who work a station, so the tier
-  // list starts at Station Head and runs down. The tiers above run the
-  // whole mill and are never on a piece rate.
-  const tierOptions = useMemo(() => {
-    const floor = stationTierOf(grades)
-    const list = grades.filter((g) => floor === null || g.sort_order >= floor)
-    // An older rate may sit on a tier above that line; keep it listed so
-    // editing it doesn't silently move it somewhere else.
-    if (job?.grade_id && !list.some((g) => g.id === job.grade_id)) {
-      const own = grades.find((g) => g.id === job.grade_id)
-      if (own) return [own, ...list]
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    if (!stationId) return setError('Choose a station tag.')
+    if (!description.trim()) return setError('Enter the piece rate work description.')
+    const rateValue = Number(rate)
+    if (rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
+      return setError('Enter a valid non-negative rate.')
     }
-    return list
-  }, [grades, job])
-
-  // An older contract may carry a unit nobody would pick today; keep it in
-  // the list so editing that rate doesn't silently change its unit.
-  const unitOptions = useMemo(() => {
-    const list = [...UNIT_OPTIONS]
-    if (job?.unit && !list.includes(job.unit)) list.unshift(job.unit)
-    return list
-  }, [job])
-
-  function patch(key: number, change: Partial<RateRow>) {
-    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...change } : r)))
-  }
-
-  function addRow() {
-    setRows((rs) => [...rs, blankRow()])
-  }
-
-  function removeRow(key: number) {
-    setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.key !== key) : rs))
-  }
-
-  /** Every rate one line stands for: the same job at each station × tier. */
-  function spread(row: RateRow) {
-    const tiers = row.gradeIds.length ? row.gradeIds : ['']
-    const out: { stationId: string; gradeId: string }[] = []
-    for (const s of row.stationIds) for (const g of tiers) out.push({ stationId: s, gradeId: g })
-    return out
-  }
-
-  /** What stops this line from being saved, or null when it is ready. */
-  function problem(row: RateRow): string | null {
-    if (row.stationIds.length === 0) return 'pick a station.'
-    if (!row.description.trim()) return 'enter the work description.'
-    if (!row.unit) return 'pick a unit.'
-    const money = (v: string) => {
-      const n = Number(v)
-      return v.trim() !== '' && !Number.isNaN(n) && n >= 0
+    const tier2Value = tiered ? Number(tier2) : null
+    if (tiered && (tier2.trim() === '' || Number.isNaN(tier2Value) || (tier2Value as number) < 0)) {
+      return setError('Enter a valid non-negative Tier 2 rate.')
     }
-    if (row.unit === TIERED) {
-      if (!money(row.tier1)) return 'enter a valid Tier 1 rate.'
-      if (!money(row.tier2)) return 'enter a valid Tier 2 rate.'
-    } else if (!money(row.rate)) {
-      return 'enter a valid non-negative piece rate.'
+    if (!effectiveFrom) {
+      return setError('Pick an effective date.')
     }
-    if (!row.effectiveFrom) return 'pick an effective date.'
-    return null
-  }
-
-  /** Writes one rate. Returns true when it now waits for approval. */
-  async function saveOne(
-    row: RateRow,
-    where: { stationId: string; gradeId: string },
-    existing: Job | null,
-  ): Promise<boolean> {
-    const tiered = row.unit === TIERED
-    const rateValue = Number(tiered ? row.tier1 : row.rate)
-    const tier2Value = tiered ? Number(row.tier2) : null
-    const fields = {
-      station_id: where.stationId,
-      grade_id: where.gradeId || null,
-      name: row.description.trim(),
-      unit: tiered ? '/hour' : row.unit,
-    }
-    let jobId = existing?.id
-    let submitted = false
-
-    if (existing) {
+    setSaving(true)
+    try {
+      let submitted = false
+      const fields = {
+        station_id: stationId,
+        grade_id: gradeId || null,
+        name: description.trim(),
+        unit: unit.trim() || 'unit',
+      }
       // Only send the identity fields (station/tag/description/unit) when
       // one actually changed — Postgres re-checks the station+tag+name
       // uniqueness constraint against every other row whenever an UPDATE
@@ -1336,266 +1550,162 @@ function ContractModal({
       // the rate on an unrelated field would otherwise fail if some other
       // job happens to share that combination.
       const identityChanged =
-        fields.station_id !== existing.station_id ||
-        fields.grade_id !== existing.grade_id ||
-        fields.name !== existing.name ||
-        fields.unit !== existing.unit
+        fields.station_id !== job.station_id ||
+        fields.grade_id !== job.grade_id ||
+        fields.name !== job.name ||
+        fields.unit !== job.unit
       if (identityChanged) {
-        const { error } = await supabase.from('jobs').update(fields).eq('id', existing.id)
-        if (error) {
-          throw new Error(
-            error.message.includes('jobs_station_grade_name_idx')
-              ? 'Another piece rate already exists for this exact Station + Tag + Work description — change one of those, or edit the existing entry instead (check "Show inactive" if it might be hidden).'
-              : error.message,
+        const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
+        if (error) throw new Error(saveMessage(error.message))
+      }
+      const unchanged =
+        currentRate &&
+        Number(currentRate.rate) === rateValue &&
+        (currentRate.tier2_rate ?? null) === tier2Value &&
+        currentRate.effective_from === effectiveFrom
+      if (!unchanged) {
+        const { error } = await supabase
+          .from('piece_rates')
+          .upsert(
+            { job_id: job.id, rate: rateValue, tier2_rate: tier2Value, effective_from: effectiveFrom },
+            { onConflict: 'job_id,effective_from' },
           )
+        if (error) throw new Error(error.message)
+        // A price change on an APPROVED contract must go through verify +
+        // approve again — otherwise editing the rate would bypass the flow.
+        if (job.approval_status === 'approved') {
+          submitted = true
+          const { error: reErr } = await supabase
+            .from('jobs')
+            .update({
+              approval_status: 'pending',
+              verified_by: null,
+              verified_at: null,
+              approved_by: null,
+              approved_at: null,
+            } as never)
+            .eq('id', job.id)
+          if (reErr) throw new Error(reErr.message)
         }
-      }
-    } else {
-      // Every new contract waits for verify + approve, admins included.
-      submitted = true
-      const { data, error } = await supabase
-        .from('jobs')
-        .insert({ ...fields, approval_status: 'pending' })
-        .select()
-        .single()
-      if (error) {
-        throw new Error(
-          error.message.includes('jobs_station_grade_name_idx')
-            ? 'a piece rate already exists for this exact Station + Tag + Work description — edit that one instead (check "Show inactive" if it might be hidden).'
-            : error.message,
-        )
-      }
-      jobId = data.id
-    }
-
-    const unchanged =
-      existing && currentRate &&
-      Number(currentRate.rate) === rateValue &&
-      (currentRate.tier2_rate ?? null) === tier2Value &&
-      currentRate.effective_from === row.effectiveFrom
-    if (jobId && !unchanged) {
-      const { error } = await supabase
-        .from('piece_rates')
-        .upsert(
-          { job_id: jobId, rate: rateValue, tier2_rate: tier2Value, effective_from: row.effectiveFrom },
-          { onConflict: 'job_id,effective_from' },
-        )
-      if (error) throw new Error(error.message)
-      // A price change on an APPROVED contract must go through verify +
-      // approve again — otherwise editing the rate would bypass the flow.
-      if (existing && existing.approval_status === 'approved') {
-        submitted = true
-        const { error: reErr } = await supabase
-          .from('jobs')
-          .update({
-            approval_status: 'pending',
-            verified_by: null,
-            verified_at: null,
-            approved_by: null,
-            approved_at: null,
-          } as never)
-          .eq('id', existing.id)
-        if (reErr) throw new Error(reErr.message)
-      }
-    }
-    return submitted
-  }
-
-  async function save(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    const name = (id: string, list: { id: string; name: string }[]) =>
-      list.find((x) => x.id === id)?.name ?? '—'
-    const label = (i: number) => (rows.length > 1 ? `Row ${i + 1}: ` : '')
-
-    for (let i = 0; i < rows.length; i++) {
-      const p = problem(rows[i])
-      if (p) return setError(label(i) + p.charAt(0).toUpperCase() + p.slice(1))
-    }
-
-    setSaving(true)
-    try {
-      let submitted = false
-      const done: number[] = []
-      let written = 0
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i]
-        for (const where of spread(row)) {
-          try {
-            submitted = (await saveOne(row, where, job)) || submitted
-            written += 1
-          } catch (err) {
-            // Rates already written stay written. Their lines are taken
-            // off the window so a retry cannot submit them a second time,
-            // and the list behind is refreshed so they show up there.
-            const msg = err instanceof Error ? err.message : String(err)
-            const at = `${name(where.stationId, stations)}${
-              where.gradeId ? ` · ${name(where.gradeId, tierOptions)}` : ''
-            }`
-            if (done.length) {
-              setRows((rs) => rs.filter((r) => !done.includes(r.key)))
-              onReload()
-            }
-            setError(
-              `${label(i)}${at} — ${msg}` +
-                (written ? ` (${written} rate(s) before it were saved.)` : ''),
-            )
-            return
-          }
-        }
-        done.push(row.key)
       }
       onSaved(submitted)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <form className="modal modal-table" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+    <div className="modal-overlay" {...overlayProps}>
+      <form className="modal" onSubmit={save}>
         <div className="row-form spread">
-          <h2>{job ? 'Edit piece rate' : 'Create new piece rate'}</h2>
+          <h2>Edit piece rate</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         {error && <div className="error">{error}</div>}
 
-        {!job && (
+        {/* A <label> is not used around these two: they are buttons, and a
+            label forwards its own click to the control it wraps, which
+            would toggle the dropdown straight back shut. */}
+        <div className="field">
+          <span>Tier Tag</span>
+          <Select
+            block
+            value={gradeId}
+            onChange={setGradeId}
+            options={[{ value: '', label: 'All positions' }, ...tagOptions(grades)]}
+            placeholder="Choose tier tag…"
+            ariaLabel="Tier tag"
+          />
+        </div>
+
+        <div className="field">
+          <span>Station Tag</span>
+          <Select
+            block
+            value={stationId}
+            onChange={setStationId}
+            options={stationOptions(stations)}
+            placeholder="Choose station tag…"
+            ariaLabel="Station tag"
+          />
+        </div>
+
+        <label className="field">
+          <span>Piece Rate Work Description</span>
+          <input value={description} onChange={(e) => setDescription(e.target.value)} required />
+        </label>
+
+        <div className="field">
+          <span>Unit</span>
+          <UnitPicker value={unit} onChange={setUnit} ariaLabel="Unit" />
+        </div>
+
+        <div className="tiered-toggle">
+          <button type="button" className={!tiered ? 'active' : ''} onClick={() => setTiered(false)}>
+            Flat rate
+          </button>
+          <button type="button" className={tiered ? 'active' : ''} onClick={() => setTiered(true)}>
+            Tiered by hour
+          </button>
+        </div>
+
+        {tiered ? (
           <div className="row-form">
-            <button type="button" className="btn ghost" onClick={addRow}>+ Add row</button>
+            <label className="field inline grow">
+              <span>Tier 1 — 1st to 4th /hr</span>
+              <input
+                inputMode="decimal"
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+                required
+              />
+            </label>
+            <label className="field inline grow">
+              <span>Tier 2 — 5th onward /hr</span>
+              <input
+                inputMode="decimal"
+                value={tier2}
+                onChange={(e) => setTier2(e.target.value)}
+                required
+              />
+            </label>
           </div>
+        ) : (
+          <label className="field">
+            <span>Piece Rate (RM)</span>
+            <input
+              inputMode="decimal"
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              required
+            />
+          </label>
+        )}
+        {tiered && (
+          <p className="small muted" style={{ margin: 0 }}>
+            Every hour resets: the first 4 units done pay Tier 1, the 5th unit
+            onward that same hour pays Tier 2 — then it starts over next hour.
+          </p>
         )}
 
-        <div className="table-scroll">
-          <table className="table rate-rows">
-            <thead>
-              <tr>
-                <th className="c-station">Station tag</th>
-                <th className="c-tag">Tier tag</th>
-                <th className="c-desc">Work description</th>
-                <th className="c-num">Piece rate (RM)</th>
-                <th className="c-unit">Unit</th>
-                {anyTiered && (
-                  <>
-                    <th className="c-num">Tier 1 — 1st to 4th /hr</th>
-                    <th className="c-num">Tier 2 — 5th onward /hr</th>
-                  </>
-                )}
-                <th className="c-date">Effective date</th>
-                {rows.length > 1 && <th className="c-kill" />}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const tiered = r.unit === TIERED
-                return (
-                  <tr key={r.key}>
-                    <td className="c-station">
-                      <TickPicker
-                        options={stations}
-                        value={r.stationIds}
-                        single={Boolean(job)}
-                        onChange={(ids) => patch(r.key, { stationIds: ids })}
-                      />
-                    </td>
-                    <td className="c-tag">
-                      <TickPicker
-                        options={tierOptions}
-                        value={r.gradeIds}
-                        single={Boolean(job)}
-                        onChange={(ids) => patch(r.key, { gradeIds: ids })}
-                      />
-                    </td>
-                    <td className="c-desc">
-                      <input
-                        value={r.description}
-                        onChange={(e) => patch(r.key, { description: e.target.value })}
-                      />
-                    </td>
-                    <td className="c-num">
-                      {tiered ? (
-                        <span className="cell-none">—</span>
-                      ) : (
-                        <input
-                          inputMode="decimal"
-                          className="money"
-                          value={r.rate}
-                          onChange={(e) => patch(r.key, { rate: e.target.value })}
-                        />
-                      )}
-                    </td>
-                    <td className="c-unit">
-                      <select
-                        value={r.unit}
-                        onChange={(e) => patch(r.key, { unit: e.target.value })}
-                      >
-                        <option value="" />
-                        {unitOptions.map((u) => (
-                          <option key={u} value={u}>{u}</option>
-                        ))}
-                        <option value={TIERED}>Tiered by hour</option>
-                      </select>
-                    </td>
-                    {anyTiered && (
-                      <>
-                        <td className="c-num">
-                          {tiered ? (
-                            <input
-                              inputMode="decimal"
-                              className="money"
-                              value={r.tier1}
-                              onChange={(e) => patch(r.key, { tier1: e.target.value })}
-                            />
-                          ) : (
-                            <span className="cell-none">—</span>
-                          )}
-                        </td>
-                        <td className="c-num">
-                          {tiered ? (
-                            <input
-                              inputMode="decimal"
-                              className="money"
-                              value={r.tier2}
-                              onChange={(e) => patch(r.key, { tier2: e.target.value })}
-                            />
-                          ) : (
-                            <span className="cell-none">—</span>
-                          )}
-                        </td>
-                      </>
-                    )}
-                    <td className="c-date">
-                      <input
-                        type="date"
-                        value={r.effectiveFrom}
-                        onChange={(e) => patch(r.key, { effectiveFrom: e.target.value })}
-                      />
-                    </td>
-                    {rows.length > 1 && (
-                      <td className="c-kill">
-                        <button
-                          type="button"
-                          className="modal-close"
-                          onClick={() => removeRow(r.key)}
-                          title="Remove this row"
-                          aria-label="Remove this row"
-                        >
-                          ×
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        <label className="field">
+          <span>Effective date</span>
+          <input
+            type="date"
+            value={effectiveFrom}
+            onChange={(e) => setEffectiveFrom(e.target.value)}
+            required
+          />
+          <span className="small">Payroll uses whichever rate is effective on the day worked.</span>
+        </label>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : job ? 'Save changes' : 'Submit for approval'}
+            {saving ? 'Saving…' : 'Save changes'}
           </button>
         </div>
       </form>

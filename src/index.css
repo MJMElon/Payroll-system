@@ -192,17 +192,82 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   .account { margin-left: auto; }
 }
 
-/* Selects share the input look */
+/* Selects share the input look. The browser's own arrow is dropped for one
+   drawn in our ink, so a closed dropdown reads as part of the app rather
+   than as an operating-system widget. */
 select {
-  padding: 0.6rem 0.7rem; border: 1px solid var(--border);
-  border-radius: 8px; font-size: 0.95rem; background: var(--surface); color: var(--text);
+  appearance: none; -webkit-appearance: none;
+  padding: 0.6rem 2rem 0.6rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 0.95rem; color: var(--text); cursor: pointer;
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236a7380' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 0.6rem center;
 }
+select:hover { border-color: var(--accent); }
 select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 
 /* Standalone filter dropdown (e.g. "All stations") — same bordered look as
    any select, just a bit wider so the label isn't cramped. */
 .filter-select { min-width: 160px; }
 .filter-select:hover { border-color: var(--accent); }
+
+/* ------------------------------------------------------------------ */
+/* The system's own dropdown (components/Select.tsx). A native select   */
+/* hands its option list to the operating system, which paints it in a  */
+/* style we cannot reach; this is the same control drawn on our own     */
+/* surfaces so the open list matches the page it sits on.               */
+/* ------------------------------------------------------------------ */
+.ui-select { position: relative; display: inline-flex; flex-direction: column; min-width: 160px; }
+.ui-select.block { display: flex; width: 100%; min-width: 0; }
+.ui-select-trigger {
+  appearance: none; cursor: pointer; width: 100%;
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 0.6rem 0.55rem 0.7rem; min-height: 40px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff, #f7f8fa);
+  color: var(--text); font: inherit; font-size: 0.92rem; text-align: left;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(25, 32, 42, 0.05);
+}
+.ui-select-trigger:hover:not(:disabled) { border-color: var(--accent); background: var(--surface); }
+.ui-select-trigger:disabled { background: var(--bg); color: var(--muted); cursor: default; }
+.ui-select.open .ui-select-trigger {
+  border-color: var(--accent); background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(76, 88, 102, 0.14);
+}
+.ui-select.invalid .ui-select-trigger { border-color: #f1a9a6; background: #fdf4f4; }
+.ui-select-value {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-select-value.placeholder { color: var(--muted); }
+.ui-select-caret { flex: none; color: var(--muted); transition: transform 0.15s ease; }
+.ui-select.open .ui-select-caret { transform: rotate(180deg); }
+
+.ui-select-menu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 5px); z-index: 60;
+  min-width: 100%; max-height: 264px; overflow-y: auto; padding: 0.3rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(25, 35, 50, 0.22);
+  animation: ui-select-in 0.12s ease-out;
+}
+.ui-select-menu.up { top: auto; bottom: calc(100% + 5px); }
+@keyframes ui-select-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.ui-select-option {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  appearance: none; border: none; background: none; cursor: pointer;
+  padding: 0.45rem 0.55rem; border-radius: 8px;
+  font: inherit; font-size: 0.9rem; color: var(--text); text-align: left;
+}
+.ui-select-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-select-option[data-active='true'] { background: var(--bg); }
+.ui-select-option[aria-selected='true'] {
+  background: var(--accent-soft); color: var(--accent-strong); font-weight: 600;
+}
+.ui-select-option .tick { flex: none; opacity: 0; }
+.ui-select-option[aria-selected='true'] .tick { opacity: 1; }
+.ui-select-empty { padding: 0.5rem 0.55rem; font-size: 0.85rem; color: var(--muted); }
 
 /* Tabs */
 .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); }
@@ -511,9 +576,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 /* Square module tiles on the main page */
 .module-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
+/* The mark and the name are ONE centred group rather than a pair pushed
+   to opposite corners — a square tile holding two short lines had a hole
+   in the middle of it. The grip lifts out of the flow into the corner. */
 .module-tile {
-  width: 190px; aspect-ratio: 1;
-  display: flex; flex-direction: column; justify-content: space-between;
+  width: 190px; aspect-ratio: 1; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.8rem; text-align: center;
   background: linear-gradient(160deg, #ffffff, #eef0f4);
   border-radius: 20px; padding: 1.15rem;
   box-shadow: var(--shadow);
@@ -534,14 +603,30 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .module-tile:hover {
   box-shadow: 0 4px 8px rgba(25, 32, 42, 0.09), 0 22px 48px rgba(30, 42, 58, 0.22);
 }
-.module-tile h2 { margin: 0 0 0.2rem; font-size: 1.02rem; }
+/* Two lines are always reserved for the name, so a one-line tile and a
+   two-line tile still line their marks up across the row. */
+.module-tile h2 {
+  margin: 0; font-size: 1rem; line-height: 1.25; min-height: 2.5em;
+  display: flex; align-items: center; justify-content: center;
+}
 .module-tile p { margin: 0; }
+/* The grip in the corner: the tile can be picked up and reordered, said
+   on the tile itself rather than in a line of text under the grid. */
+.tile-grip {
+  position: absolute; top: 0.6rem; right: 0.6rem;
+  display: inline-flex; padding: 0.15rem 0.05rem; border-radius: 6px;
+  color: var(--muted); opacity: 0.38; cursor: grab;
+  transition: opacity 0.15s ease;
+}
+.module-tile:hover .tile-grip { opacity: 0.85; }
+.module-tile.dragging .tile-grip { cursor: grabbing; opacity: 1; }
 .tile-icon {
-  width: 44px; height: 44px; border-radius: 13px;
+  width: 54px; height: 54px; border-radius: 17px;
   display: inline-flex; align-items: center; justify-content: center;
   background: linear-gradient(135deg, #79828d, #a9b1ba 55%, #8d959f); color: #fff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 6px 16px rgba(60, 70, 85, 0.30);
 }
+.module-tile .tile-icon svg { width: 24px; height: 24px; }
 
 /* Floating windows (modals) */
 .modal-overlay {
@@ -807,6 +892,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-lineitem:first-of-type { border-top: none; }
 .mob-lineitem .mob-person-name { font-size: 0.86rem; }
+
+/* A station is the heading of everything under it, so its row is given
+   room to sit as one — and carries the move control once it is open. */
+.mob-stationrow {
+  display: flex; align-items: center; gap: 0.3rem;
+  border-top: 1px solid #eef0f4; border-radius: 10px;
+}
+.mob-stationrow:first-of-type { border-top: none; }
+.mob-stationrow .mob-lineitem {
+  flex: 1; border-top: none; padding: 0.75rem 0.4rem;
+}
+.mob-stationrow.open { background: var(--accent-soft); }
+.mob-stationrow.open .mob-lineitem:hover { background: none; }
+.mob-stationrow .mob-icon-btn.corner { margin-right: 0.35rem; }
 .mob-lineitem:hover { background: #f6f8fa; }
 
 /* Profile — the selfie. The whole circle is the button, with a camera
@@ -966,7 +1065,6 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   padding: 0.5rem 0 0.6rem 0.5rem; margin-left: 0.2rem;
   border-left: 2px solid var(--accent-soft);
 }
-.mob-lineitem.open { background: var(--accent-soft); }
 .mob-lineitem .mob-caret.open { transform: rotate(90deg); }
 /* A press-and-hold must not turn into a text selection or a magnifier. */
 .mob-member { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
@@ -1961,3 +2059,254 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: var(--accent-soft); border-radius: 10px;
 }
 .tier-chosen-who { display: flex; flex-direction: column; gap: 0.05rem; margin-right: auto; min-width: 0; }
+
+/* ------------------------------------------------------------------ */
+/* PIECE RATE — the multi-row create window. The pop-out is widened to  */
+/* the masterlist's shape so a new rate is keyed in on ONE line, in the */
+/* same left-to-right order the masterlist reads: tier tag, station,    */
+/* work description, unit, rate, effective date. "+ Row" stacks another */
+/* line, so a whole batch of rates goes in without reopening.           */
+/* ------------------------------------------------------------------ */
+.modal.modal-xwide { max-width: min(1180px, 96vw); }
+
+.pr-grid { display: flex; flex-direction: column; gap: 0.5rem; }
+.pr-grid-head, .pr-grid-row {
+  display: grid;
+  grid-template-columns:
+    minmax(140px, 1fr) minmax(140px, 1fr) minmax(190px, 1.7fr)
+    minmax(132px, 1.05fr) minmax(120px, 0.95fr) minmax(140px, 1.05fr) 34px;
+  gap: 0.5rem; align-items: start;
+}
+.pr-grid-head {
+  padding: 0 0.1rem 0.1rem; font-size: 0.7rem; font-weight: 800;
+  color: var(--accent-strong); text-transform: uppercase; letter-spacing: 0.06em;
+}
+.pr-grid-row {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+  padding: 0.55rem; position: relative;
+}
+.pr-grid-row.bad { border-color: #f1a9a6; background: #fdf4f4; }
+.pr-grid-row input {
+  width: 100%; min-width: 0; padding: 0.55rem 0.6rem; min-height: 40px;
+  font-size: 0.92rem; border-radius: 10px;
+}
+.pr-cell { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+/* Column names ride at the top on a wide window; on a narrow one they
+   move into each cell so a stacked row still says what it is. */
+.pr-cell-label { display: none; font-size: 0.7rem; font-weight: 700; color: var(--muted); }
+
+.pr-rate-cell { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.pr-tier-inputs { display: flex; gap: 0.3rem; }
+.pr-tier-inputs label { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.pr-tier-inputs span { font-size: 0.66rem; color: var(--muted); }
+.pr-tier-toggle {
+  appearance: none; border: none; background: none; cursor: pointer; padding: 0;
+  align-self: flex-start; font-size: 0.7rem; font-weight: 700; color: var(--accent);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.pr-tier-toggle:hover { color: var(--accent-strong); }
+
+.pr-row-drop {
+  appearance: none; border: 1px solid transparent; background: none; cursor: pointer;
+  width: 32px; height: 40px; border-radius: 10px;
+  color: var(--muted); font-size: 1.05rem; line-height: 1; align-self: start;
+}
+.pr-row-drop:hover:not(:disabled) { background: #fbeceb; border-color: #f1cfcd; color: var(--danger); }
+.pr-row-drop:disabled { opacity: 0.3; cursor: default; }
+
+.pr-row-no {
+  font-size: 0.7rem; font-weight: 800; color: var(--muted);
+}
+
+@media (max-width: 1000px) {
+  .pr-grid-head { display: none; }
+  .pr-grid-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+  .pr-grid-row .pr-cell-label { display: block; }
+  .pr-grid-row { padding: 1.9rem 0.6rem 0.6rem; }
+  .pr-grid-row .pr-cell.wide { grid-column: 1 / -1; }
+  /* Stacked, the row is a block — its "remove" sits in the block's own
+     top corner rather than trailing the last field. */
+  .pr-row-drop { position: absolute; top: 0.3rem; right: 0.35rem; }
+}
+@media (max-width: 560px) {
+  .pr-grid-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ------------------------------------------------------------------ */
+/* OPERATION MODULE — the all-stations entry list. Built for a mill    */
+/* that keeps adding stations: a searchable rail badged with what is   */
+/* waiting where, and the entries themselves broken into one block per */
+/* station instead of one undifferentiated wall of rows.               */
+/* ------------------------------------------------------------------ */
+.op-rail { min-width: 210px; max-height: 78vh; overflow-y: auto; }
+.op-rail-head { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.4rem; }
+.op-rail-head .op-rail-search { margin-bottom: 0; }
+.op-rail-toggle {
+  appearance: none; cursor: pointer; flex: none;
+  width: 28px; height: 28px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  font-size: 0.8rem; line-height: 1;
+}
+.op-rail-toggle:hover { border-color: var(--accent); color: var(--text); }
+/* Folded away, the rail leaves a strip behind — never a hidden control
+   with no way back to it. */
+.op-rail-mini {
+  display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
+  flex: none; padding-right: 0.9rem; border-right: 1px solid var(--border);
+}
+.op-rail-word {
+  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--muted);
+}
+.op-rail-search {
+  padding: 0.45rem 0.6rem; font-size: 0.85rem; border-radius: 9px;
+  margin-bottom: 0.4rem; width: 100%;
+}
+.op-rail-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-group-title {
+  margin: 0.65rem 0 0.1rem; padding: 0 0.7rem;
+  font-size: 0.66rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.07em;
+}
+
+/* What the current filter adds up to, read at a glance before the rows. */
+.op-stats { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.op-stat {
+  display: flex; flex-direction: column; gap: 0.05rem;
+  background: var(--bg); border-radius: 10px; padding: 0.45rem 0.7rem; min-width: 96px;
+}
+.op-stat-label {
+  font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); font-weight: 700;
+}
+.op-stat-value { font-size: 1.05rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.op-stat.warn { background: #fdeeda; }
+.op-stat.warn .op-stat-label { color: #b45309; }
+.op-stat.act { background: var(--accent-soft); }
+.op-stat.act .op-stat-label, .op-stat.act .op-stat-value { color: var(--accent-strong); }
+
+.op-needsme { margin-bottom: 0; white-space: nowrap; }
+
+/* One station, one block. */
+.op-group { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.op-group-head {
+  display: flex; align-items: center; gap: 0.55rem;
+  padding: 0.5rem 0.7rem; background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.op-group-toggle {
+  appearance: none; border: none; background: none; cursor: pointer;
+  display: flex; align-items: center; gap: 0.45rem; padding: 0;
+  font: inherit; color: var(--text); text-align: left; min-width: 0;
+}
+.op-caret { color: var(--muted); font-size: 0.75rem; width: 0.8rem; flex: none; }
+.op-group-name {
+  font-family: 'Montserrat', system-ui, sans-serif; font-weight: 700; font-size: 0.95rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.op-group-meta {
+  margin-left: auto; display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.78rem; color: var(--muted); white-space: nowrap;
+}
+.op-group-meta strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.op-group .table th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+/* Ten columns need room; below it the block scrolls sideways rather than
+   crushing the worker and job names into columns of single letters. */
+/* Twelve columns do not fit the Settings page width, so the block scrolls
+   sideways at its own edge rather than wrapping every name onto three
+   lines. The width below is what the columns need UNwrapped; padding is
+   tightened to keep that number as low as it can honestly go. */
+.op-table { min-width: 1000px; }
+/* Tiered rate, once the 5th unit was reached: which units paid which
+   price, one price per line. */
+.op-rate-break { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 0.05rem; }
+.op-table th, .op-table td { padding: 0.45rem 0.5rem; }
+.op-table th, .op-table td { white-space: nowrap; }
+/* The one column that can run long: it is clipped with the whole name on
+   hover, so one wordy job cannot push the table twice as wide. */
+.op-job { max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+/* Actions ride the right edge as the block scrolls sideways — view and
+   delete are the point of the row, so they never scroll out of reach. */
+.op-table th:last-child, .op-table td.op-actions {
+  position: sticky; right: 0; z-index: 2; background: var(--surface);
+  box-shadow: -10px 0 12px -10px rgba(25, 32, 42, 0.28);
+}
+.op-table th:last-child { z-index: 3; }
+.op-table tr.op-row-on td.op-actions { background: var(--accent-soft); }
+.op-actions .linkbtn { margin-left: 0.4rem; }
+
+/* Filter bar above the tabs — the Search button lines up with the fields
+   rather than with their labels. */
+.op-filters { align-items: flex-end; }
+.op-filters .btn { margin-bottom: 1px; }
+.op-tabbar { margin: 0; }
+/* The three Work Record tabs split the bar's full width evenly. */
+.tabs.glass.op-tabs { display: flex; align-self: stretch; }
+.op-tabs .tab { flex: 1; text-align: center; }
+
+/* Count riding in a tab label. */
+.tab-count {
+  display: inline-block; margin-left: 0.3rem; padding: 0 0.35rem;
+  background: var(--accent-soft); color: var(--accent-strong);
+  border-radius: 999px; font-size: 0.7rem; font-weight: 800;
+}
+.tab.active .tab-count { background: var(--accent); color: var(--accent-ink); }
+
+/* Label / value lines inside the work-record pop-out. */
+.op-line { display: flex; gap: 0.7rem; align-items: baseline; font-size: 0.85rem; }
+.op-line-label { color: var(--muted); min-width: 132px; flex: none; }
+.op-line-value { min-width: 0; }
+
+/* The day laid out on the mill clock: one line per hour, submissions
+   numbered inside the hour they arrived; empty stretches fold into one
+   quiet line so the shape of the day stays visible without the noise. */
+.op-timeline { display: flex; flex-direction: column; margin-top: 0.2rem; }
+.op-tl-row {
+  display: flex; gap: 0.8rem; align-items: flex-start;
+  padding: 0.4rem 0; border-top: 1px solid var(--border);
+}
+.op-tl-row:first-child { border-top: none; }
+.op-tl-row.empty { padding: 0.15rem 0; }
+.op-tl-hour {
+  flex: none; width: 108px; font-size: 0.75rem; font-weight: 700;
+  color: var(--accent-strong); font-variant-numeric: tabular-nums; padding-top: 0.1rem;
+}
+.op-tl-row.empty .op-tl-hour { color: var(--muted); font-weight: 600; }
+.op-tl-none { color: var(--border); }
+.op-tl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; flex: 1; min-width: 0; }
+.op-tl-entry {
+  display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;
+  font-size: 0.83rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
+  padding: 0.35rem 0.55rem;
+}
+.op-tl-no { font-weight: 800; color: var(--muted); }
+.op-tl-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.op-tl-qty { font-weight: 700; }
+.op-tl-amt { color: var(--muted); font-variant-numeric: tabular-nums; }
+.op-tl-actions { margin-left: auto; display: flex; align-items: center; gap: 0.35rem; }
+.op-tl-reason { flex-basis: 100%; }
+
+/* Selection: only rows this user may actually action carry a box. */
+.op-check-col { width: 30px; padding-right: 0 !important; }
+.op-check { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.op-row-on > td { background: var(--accent-soft); }
+
+/* The bar that appears once rows are ticked — a whole shift cleared in
+   one action instead of one click per row. */
+.op-bulkbar {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.55rem 0.75rem; border-radius: 12px;
+  background: var(--accent-soft); border: 1px solid rgba(76, 88, 102, 0.22);
+}
+.op-bulk-count { font-weight: 800; font-size: 0.85rem; color: var(--accent-strong); }
+.op-bulkbar .btn { padding: 0.4rem 0.75rem; font-size: 0.85rem; }
+
+@media (max-width: 720px) {
+  .op-rail { max-height: none; }
+  .rail-group-title { display: none; }
+  .op-group-meta { display: none; }
+  .op-rail-mini {
+    flex-direction: row; width: 100%; padding-right: 0; padding-bottom: 0.5rem;
+    border-right: none; border-bottom: 1px solid var(--border); justify-content: flex-start;
+  }
+}
