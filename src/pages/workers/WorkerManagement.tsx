@@ -302,20 +302,29 @@ export default function WorkerManagement() {
 
   /* ---------------- team actions ---------------- */
 
-  async function createTeam(leader: Profile) {
-    const grade = gradeOf(leader)
-    if (!grade) return setError('That leader has no tier tag yet — place them in the chain first.')
-    const station = stationsOf(leader)[0] ?? null
-    const siblings = teams.filter((t) => t.created_by === leader.id)
+  /**
+   * Add a team to a station. It belongs to the station-head tier and to
+   * the station it was added in; its name is the first "Team A", "Team B",
+   * … not already used AT THAT STATION, since two teams at one station
+   * reading the same is exactly what makes a chart useless.
+   */
+  async function createTeam(station: Station | null) {
+    if (!headGrade) return
+    const head = visible.find(
+      (p) =>
+        p.grade_id === headGrade.id &&
+        (station ? stationsOf(p).includes(station.id) : stationsOf(p).length === 0),
+    )
+    const siblings = teams.filter((t) => (t.station_id ?? null) === (station?.id ?? null))
     const name = nextTeamName(siblings.map((t) => t.name))
     setError(null)
     const { data, error } = await supabase
       .from('teams')
       .insert({
         name,
-        grade_id: grade.id,
-        station_id: station,
-        created_by: leader.id,
+        grade_id: headGrade.id,
+        station_id: station?.id ?? null,
+        created_by: head?.id ?? profile?.id ?? null,
         sort_order: siblings.length,
       })
       .select()
@@ -326,8 +335,8 @@ export default function WorkerManagement() {
       // instead of passing the raw database message through.
       return setError(
         /row-level security/i.test(error.message)
-          ? `The database refused a team at ${grade.name}. That needs a tier tag of ` +
-            `${grade.name} or above — yours is ${myGrade?.name ?? 'not set'}. If it already is, ` +
+          ? `The database refused a team at ${headGrade.name}. That needs a tier tag of ` +
+            `${headGrade.name} or above — yours is ${myGrade?.name ?? 'not set'}. If it already is, ` +
             'the teams table has no write policy: run supabase/fix-team-policies.sql.'
           : error.message,
       )
@@ -341,8 +350,18 @@ export default function WorkerManagement() {
 
   async function saveTeamName(team: Team) {
     const name = renameDraft.trim()
+    if (!name || name === team.name) return setRenamingId(null)
+    // Two teams at one station may not read the same.
+    const clash = teams.some(
+      (t) =>
+        t.id !== team.id &&
+        (t.station_id ?? null) === (team.station_id ?? null) &&
+        t.name.trim().toLowerCase() === name.toLowerCase(),
+    )
+    if (clash) {
+      return setError(`This station already has a team called "${name}".`)
+    }
     setRenamingId(null)
-    if (!name || name === team.name) return
     const { error } = await supabase.from('teams').update({ name }).eq('id', team.id)
     if (error) return setError(error.message)
     setError(null)
@@ -725,15 +744,9 @@ export default function WorkerManagement() {
     const isMe = p.id === profile?.id
     const key = `block:${p.id}`
     const allowed = canPlaceUnder(p)
-    // Teams are a station-floor thing, and so is the station line: the
-    // tiers above run the whole mill, so their block is just a name.
+    // The station line only means something on the floor: the tiers above
+    // run the whole mill, so their block is just a name.
     const onTheFloor = worksAtAStation(tier)
-    const canAddTeam =
-      Boolean(grade) &&
-      tier !== null &&
-      onTheFloor &&
-      tier < bottomTier &&
-      canOwnTeamsAt(tier, stationsOf(p)[0] ?? null)
     return (
       <article
         key={p.id}
@@ -760,23 +773,6 @@ export default function WorkerManagement() {
           <span className="wm-block-meta">
             {stationLabel(p)}
             {team ? ` · ${team.name}` : ''}
-          </span>
-        )}
-        {canAddTeam && (
-          <span className="wm-block-foot">
-            {
-              <button
-                type="button"
-                className="wm-add"
-                title={`Add a team under ${displayName(p)}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  createTeam(p)
-                }}
-              >
-                + Team
-              </button>
-            }
           </span>
         )}
       </article>
@@ -859,16 +855,37 @@ export default function WorkerManagement() {
         </div>
 
         {columns.length === 0 ? (
-          <p className="wm-cluster-empty" style={{ paddingLeft: '0.2rem' }}>
-            No team yet — use "+ Team" on a {headGrade.name} block.
-          </p>
+          <div className="wm-srow">
+            <span className="wm-srow-label" />
+            <div className="wm-srow-body">
+              {canOwnTeamsAt(headGrade.sort_order, station?.id ?? null) ? (
+                <button type="button" className="wm-add" onClick={() => createTeam(station)}>
+                  + Team
+                </button>
+              ) : (
+                <span className="wm-cluster-empty">No team yet.</span>
+              )}
+            </div>
+          </div>
         ) : (
           <div
             className="wm-grid"
             style={{ gridTemplateColumns: `9rem repeat(${columns.length}, minmax(150px, 1fr))` }}
           >
-            {/* Row of team names — the column headings, said once. */}
-            <span />
+            {/* Row of team names — the column headings, said once. Adding a
+                team adds a column, so the button sits with them. */}
+            <span className="wm-grid-corner">
+              {canOwnTeamsAt(headGrade.sort_order, station?.id ?? null) && (
+                <button
+                  type="button"
+                  className="wm-add"
+                  title={`Add a team at ${station?.name ?? 'this station'}`}
+                  onClick={() => createTeam(station)}
+                >
+                  + Team
+                </button>
+              )}
+            </span>
             {columns.map((t) => (
               <div className="wm-grid-head" key={`h:${key}:${t?.id ?? 'none'}`}>
                 {t && renamingId === t.id ? (

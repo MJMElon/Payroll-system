@@ -1426,6 +1426,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   border-radius: 12px; padding: 0.85rem 0.95rem;
   display: flex; flex-direction: column; gap: 0.55rem;
 }
+/* The sideways scrollbar must not eat into the panel's own spacing. */
+.wm-stations { scrollbar-gutter: stable; }
 .wm-formation-head { display: flex; }
 .wm-formation-head .wm-section-title { flex: 1; }
 
@@ -1484,13 +1486,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem;
   margin-top: 0.25rem;
 }
+/* Adding a team adds a column, so the button sits with the column
+   headings and is always there — not hidden behind a hover. */
 .wm-add {
-  appearance: none; cursor: pointer; font-family: inherit;
+  appearance: none; cursor: pointer; font-family: inherit; flex: none;
   background: var(--surface); border: 1px dashed #b8c0ca; color: var(--accent-strong);
-  border-radius: 7px; padding: 0.05rem 0.4rem; font-size: 0.68rem; font-weight: 700;
-  white-space: nowrap; visibility: hidden;
+  border-radius: 7px; padding: 0.15rem 0.5rem; font-size: 0.7rem; font-weight: 700;
+  white-space: nowrap;
 }
-.wm-block:hover .wm-add, .wm-block.selected .wm-add { visibility: visible; }
 .wm-add:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
 
 /* Who holds a tier, listed in its pop-out. */
@@ -1503,11 +1506,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Station boxes: the floor from the station-head tier down. Every station
    is the SAME tier, so they stand side by side — stacked, they read as a
    hierarchy that is not there. */
-.wm-stations {
-  display: flex; gap: 0.7rem; align-items: flex-start;
-  overflow-x: auto; padding: 0.1rem 0.1rem 0.3rem;
-}
-.wm-all-stations { max-width: none; margin-bottom: 0.6rem; }
+.wm-stations { display: flex; gap: 0.7rem; align-items: flex-start; overflow-x: auto; }
+.wm-all-stations { max-width: none; }
 .wm-station-box {
   flex: 0 0 auto; min-width: 360px; max-width: 720px;
   border: 1px solid var(--border); border-radius: 12px;
@@ -1539,6 +1539,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Teams are the COLUMNS, tiers the ROWS: a name never repeats what its
    column and row already say. */
 .wm-grid { display: grid; gap: 0.3rem 0.45rem; align-items: start; margin-top: 0.15rem; }
+.wm-grid-corner { display: flex; align-items: center; padding-bottom: 0.3rem; }
 .wm-grid-head {
   display: flex; align-items: center; gap: 0.25rem;
   padding: 0.15rem 0.3rem 0.3rem; border-bottom: 1px solid var(--border);
@@ -1653,5 +1654,4 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 @media (max-width: 820px) {
   .wm-side { position: static; }
   .wm-side-inner { max-height: 240px; }
-  .wm-add { visibility: visible; }
 }
