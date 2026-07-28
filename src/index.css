@@ -2254,16 +2254,31 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .op-filters { align-items: flex-end; }
 .op-filters .btn { margin-bottom: 1px; }
 .op-tabbar { margin: 0; }
-/* The three Work Record tabs split the bar's full width evenly. The open
-   tab wears the button's dark metal so there is no squinting at two
-   near-identical whites to find where you are. */
-.tabs.glass.op-tabs { display: flex; align-self: stretch; }
-.op-tabs .tab { flex: 1; text-align: center; font-weight: 600; }
-.tabs.glass.op-tabs .tab.active {
-  color: #fff;
-  background: linear-gradient(180deg, #566270, #333c47);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 4px 14px rgba(35, 45, 58, 0.32);
+/* The three Work Record tabs: one squared bar, split evenly, the open
+   tab wearing the page banner's brushed-metal shine — no rounded pills. */
+.op-tabs {
+  display: flex; width: 100%; overflow: hidden;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.38));
+  backdrop-filter: blur(10px) saturate(160%);
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
 }
+.op-tabs .tab {
+  flex: 1; appearance: none; border: none; background: none; cursor: pointer;
+  padding: 0.62rem 0.8rem; text-align: center; margin-bottom: 0;
+  font: inherit; font-size: 0.92rem; font-weight: 600; color: var(--muted);
+  border-left: 1px solid var(--border); border-bottom: none; border-radius: 0;
+}
+.op-tabs .tab:first-child { border-left: none; }
+.op-tabs .tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.55); }
+.op-tabs .tab.active {
+  color: #fff;
+  background: linear-gradient(110deg, #2c333c 15%, #8b95a1 40%, #dfe4e9 50%, #8b95a1 60%, #2c333c 85%);
+  background-size: 200% auto;
+  animation: metal-shine 5s linear infinite;
+  text-shadow: 0 1px 2px rgba(10, 15, 22, 0.45);
+}
+@media (prefers-reduced-motion: reduce) { .op-tabs .tab.active { animation: none; } }
 
 /* The station whose records are on screen, said in the section title so
    it survives the rail being folded away. */
@@ -2306,35 +2321,30 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font-weight: 800; font-size: 0.95rem;
 }
 
-/* The day laid out on the mill clock: one line per hour, submissions
-   numbered inside the hour they arrived; empty stretches fold into one
-   quiet line so the shape of the day stays visible without the noise. */
-.op-timeline { display: flex; flex-direction: column; margin-top: 0.2rem; }
-.op-tl-row {
-  display: flex; gap: 0.8rem; align-items: flex-start;
-  padding: 0.4rem 0; border-top: 1px solid var(--border);
+/* Submitted Work Record pop-out. The title carries a by-line; station
+   and date share the next row; sections breathe with a larger gap. */
+.op-rec-title { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.op-rec-by { font-size: 0.9rem; color: var(--muted); display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.op-rec-by strong { color: var(--text); font-size: 1rem; }
+.op-tag-sm { font-size: 0.66rem; padding: 0.1rem 0.45rem; }
+.op-rec-sub { font-size: 0.9rem; }
+.op-rec-sub .op-head-station { font-weight: 600; color: var(--text); }
+.op-rec-sec { margin-top: 0.5rem; padding: 1rem 1.1rem; gap: 0.6rem; }
+
+/* The day on the mill clock, as a headed table: Timeline (the hour),
+   Count, Time, Rate, the photo, its status, and the sign-off. */
+.op-tl-table th, .op-tl-table td { padding: 0.45rem 0.55rem; }
+.op-tl-table .op-tl-hour {
+  font-size: 0.78rem; font-weight: 700; color: var(--accent-strong);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-.op-tl-row:first-child { border-top: none; }
-.op-tl-row.empty { padding: 0.15rem 0; }
-.op-tl-hour {
-  flex: none; width: 108px; font-size: 0.75rem; font-weight: 700;
-  color: var(--accent-strong); font-variant-numeric: tabular-nums; padding-top: 0.1rem;
-}
-.op-tl-row.empty .op-tl-hour { color: var(--muted); font-weight: 600; }
+.op-tl-empty .op-tl-hour { color: var(--muted); font-weight: 600; }
+.op-tl-empty td { padding-top: 0.25rem; padding-bottom: 0.25rem; }
 .op-tl-none { color: var(--border); }
-.op-tl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; flex: 1; min-width: 0; }
-.op-tl-entry {
-  display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;
-  font-size: 0.83rem;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
-  padding: 0.35rem 0.55rem;
-}
 .op-tl-no { font-weight: 800; color: var(--muted); }
-.op-tl-time { color: var(--muted); font-variant-numeric: tabular-nums; }
-.op-tl-qty { font-weight: 700; }
-.op-tl-amt { color: var(--muted); font-variant-numeric: tabular-nums; }
-.op-tl-actions { margin-left: auto; display: flex; align-items: center; gap: 0.35rem; }
-.op-tl-reason { flex-basis: 100%; }
+.op-tl-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.op-photo-link { font-size: 1.05rem; text-decoration: none; }
+.op-photo-link:hover { filter: brightness(1.15); }
 
 /* Selection: only rows this user may actually action carry a box. */
 .op-check-col { width: 30px; padding-right: 0 !important; }

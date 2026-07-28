@@ -111,11 +111,6 @@ const TrashIcon = () => (
     <path d="M10 11v6M14 11v6" />
   </svg>
 )
-const PencilIcon = () => (
-  <svg {...iconProps}>
-    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-  </svg>
-)
 
 /** One table row: everything one worker submitted for one job on one day. */
 interface WorkGroup {
@@ -144,9 +139,6 @@ export default function Operation() {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   const [lockedPeriods, setLockedPeriods] = useState<{ period_start: string; period_end: string }[]>([])
-  // What is still waiting, per station, across ALL dates — the rail badge
-  // has to point at old stragglers too, not just the range on screen.
-  const [openByStation, setOpenByStation] = useState<Map<string, number>>(new Map())
 
   // 'all' = every station at once, which is where the module opens.
   const [scope, setScope] = useState<'all' | string>('all')
@@ -188,17 +180,6 @@ export default function Operation() {
     setSearch(searchInput)
   }
 
-  /** How many entries are still waiting on someone, station by station. */
-  async function loadOpenCounts() {
-    const { data } = await supabase
-      .from('production_entries')
-      .select('station_id, approval_status')
-      .in('approval_status', ['pending', 'verified'])
-    const m = new Map<string, number>()
-    for (const row of data ?? []) m.set(row.station_id, (m.get(row.station_id) ?? 0) + 1)
-    setOpenByStation(m)
-  }
-
   useEffect(() => {
     async function load() {
       const [s, g, j, r, p] = await Promise.all([
@@ -222,7 +203,6 @@ export default function Operation() {
         .select('period_start, period_end')
         .eq('status', 'finalized')
       setLockedPeriods(lp ?? [])
-      await loadOpenCounts()
       setLoading(false)
     }
     load()
@@ -458,7 +438,7 @@ export default function Operation() {
       .eq('id', e.id)
     setBusy(null)
     if (error) return setError(error.message)
-    await Promise.all([loadEntries(), loadOpenCounts()])
+    await loadEntries()
   }
 
   /** The same step for every entry in the pop-out that is ready for it. */
@@ -473,42 +453,7 @@ export default function Operation() {
     setBusy(null)
     if (error) return setError(error.message)
     setNotice(`${list.length} entr${list.length === 1 ? 'y' : 'ies'} ${next === 'verified' ? 'verified' : 'approved'}.`)
-    await Promise.all([loadEntries(), loadOpenCounts()])
-  }
-
-  async function editQty(e: ProductionEntry) {
-    const raw = window.prompt('New quantity:', String(e.quantity))
-    if (raw === null) return
-    const qty = Number(raw)
-    if (!Number.isFinite(qty) || qty <= 0) return setError('Quantity must be a positive number.')
-    setBusy(e.id)
-    setError(null)
-    const fields: Record<string, unknown> = { quantity: qty }
-    if (stat(e) === 'rejected') {
-      // Editing a rejected entry resubmits it for approval.
-      Object.assign(fields, {
-        approval_status: 'pending',
-        rejected_reason: null,
-        verified_by: null,
-        verified_at: null,
-        approved_by: null,
-        approved_at: null,
-      })
-    }
-    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
-    setBusy(null)
-    if (error) return setError(error.message)
-    await Promise.all([loadEntries(), loadOpenCounts()])
-  }
-
-  async function deleteEntry(e: ProductionEntry) {
-    if (!window.confirm(`Delete this entry (${e.quantity} × ${jobName(e.job_id)})?`)) return
-    setBusy(e.id)
-    setError(null)
-    const { error } = await supabase.from('production_entries').delete().eq('id', e.id)
-    setBusy(null)
-    if (error) return setError(error.message)
-    await Promise.all([loadEntries(), loadOpenCounts()])
+    await loadEntries()
   }
 
   async function deleteGroup(g: WorkGroup) {
@@ -530,7 +475,7 @@ export default function Operation() {
     setBusy(null)
     if (error) return setError(error.message)
     if (detailKey === g.key) setDetailKey(null)
-    await Promise.all([loadEntries(), loadOpenCounts()])
+    await loadEntries()
   }
 
   const badge = (s: string) => {
@@ -548,7 +493,6 @@ export default function Operation() {
   const railList = stations.filter((s) => (railNeedle ? s.name.toLowerCase().includes(railNeedle) : true))
   const mineList = railList.filter((s) => myStationIds.includes(s.id))
   const otherList = railList.filter((s) => !myStationIds.includes(s.id))
-  const totalOpen = [...openByStation.values()].reduce((a, b) => a + b, 0)
 
   // The pop-out's group is rebuilt from the CURRENT entries (not the tab
   // slice), so signing one submission off updates in place instead of
@@ -559,7 +503,6 @@ export default function Operation() {
 
   const stationButton = (s: Station) => {
     const mine = myStationIds.includes(s.id)
-    const open = openByStation.get(s.id) ?? 0
     return (
       <button
         key={s.id}
@@ -570,9 +513,6 @@ export default function Operation() {
       >
         <span className={`tag-dot ${mine ? 'dot-gold' : 'dot-grey'}`} aria-hidden="true" />
         <span className="op-rail-name">{s.name}</span>
-        {open > 0 && (
-          <span className="count-badge static" title={`${open} waiting on someone`}>{open}</span>
-        )}
       </button>
     )
   }
@@ -689,11 +629,6 @@ export default function Operation() {
               »
             </button>
             <span className="op-rail-word">Stations</span>
-            {totalOpen > 0 && (
-              <span className="count-badge static" title={`${totalOpen} waiting across every station`}>
-                {totalOpen}
-              </span>
-            )}
           </div>
         ) : (
           <nav className="sidebar-nav op-rail">
@@ -726,11 +661,6 @@ export default function Operation() {
             >
               <IconAllStations />
               <span className="op-rail-name">All stations</span>
-              {totalOpen > 0 && (
-                <span className="count-badge static" title={`${totalOpen} waiting across every station`}>
-                  {totalOpen}
-                </span>
-              )}
             </button>
 
             {mineList.length > 0 && <p className="rail-group-title">Your stations</p>}
@@ -771,8 +701,8 @@ export default function Operation() {
               <button className="btn" type="submit">Search</button>
             </form>
 
-            {/* The three tabs share the bar's full width evenly. */}
-            <div className="tabs glass op-tabs">
+            {/* Squared segments; the open one wears the banner's metal shine. */}
+            <div className="op-tabs">
               <button
                 type="button"
                 className={`tab ${tab === 'open' ? 'active' : ''}`}
@@ -874,13 +804,10 @@ export default function Operation() {
           groupAmount={groupAmount(detailGroup)}
           evidenceUrl={evidenceUrl}
           actionFor={actionFor}
-          canModify={canModify}
           busy={busy}
           badge={badge}
           onAct={act}
           onActMany={actMany}
-          onEditQty={editQty}
-          onDelete={deleteEntry}
         />
       )}
     </div>
@@ -907,13 +834,10 @@ function GroupModal({
   groupAmount,
   evidenceUrl,
   actionFor,
-  canModify,
   busy,
   badge,
   onAct,
   onActMany,
-  onEditQty,
-  onDelete,
 }: {
   group: WorkGroup
   onClose: () => void
@@ -927,13 +851,10 @@ function GroupModal({
   groupAmount: number
   evidenceUrl: (entryId: string) => string | null
   actionFor: (e: ProductionEntry) => 'verified' | 'approved' | null
-  canModify: (e: ProductionEntry) => boolean
   busy: string | null
   badge: (s: string) => JSX.Element
   onAct: (e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') => void
   onActMany: (list: ProductionEntry[], next: 'verified' | 'approved') => void
-  onEditQty: (e: ProductionEntry) => void
-  onDelete: (e: ProductionEntry) => void
 }) {
   const overlay = useOverlayClose(onClose)
 
@@ -971,24 +892,22 @@ function GroupModal({
     <div className="modal-overlay" {...overlay}>
       <div className="modal modal-view">
         <div className="row-form spread">
-          <h2>Work Record</h2>
+          <div className="op-rec-title">
+            <h2>Submitted Work Record</h2>
+            <span className="op-rec-by">
+              by <strong>{workerName}</strong>
+              {tier && <span className={`${tagClass(tier.color)} op-tag-sm`}>{tier.name}</span>}
+            </span>
+          </div>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
-        {/* Who did the work: the tag and the name carry the card, the date
-            sits at the right, the station reads underneath. */}
-        <div className="op-head">
-          <div className="op-head-main">
-            <div className="op-head-name">
-              {tier && <span className={tagClass(tier.color)}>{tier.name}</span>}
-              <strong>{workerName}</strong>
-            </div>
-            <div className="op-head-station">{stationName}</div>
-          </div>
-          <div className="op-head-date">{fmtDate(group.date)}</div>
+        <div className="row-form spread op-rec-sub">
+          <span className="op-head-station">{stationName}</span>
+          <span className="op-head-date">{fmtDate(group.date)}</span>
         </div>
 
-        <div className="tag-section">
+        <div className="tag-section op-rec-sec">
           <div className="row-form spread" style={{ gap: '0.4rem' }}>
             <div>
               <div className="op-job-title">{job?.name ?? 'Work'}</div>
@@ -1008,32 +927,62 @@ function GroupModal({
             </div>
           </div>
 
-          <div className="op-timeline">
-            {slots.map((s) => (
-              <div className={`op-tl-row ${s.entries.length === 0 ? 'empty' : ''}`} key={s.start}>
-                <span className="op-tl-hour">
-                  {hh(DAY_START_HOUR + s.start)} – {hh(DAY_START_HOUR + s.end)}
-                </span>
-                {s.entries.length === 0 ? (
-                  <span className="op-tl-none">—</span>
-                ) : (
-                  <ol className="op-tl-list">
-                    {s.entries.map((e, i) => {
+          <div className="tag-section-title">Photo evidence</div>
+          <div className="board-scroll">
+            <table className="table op-tl-table">
+              <thead>
+                <tr>
+                  <th>Timeline</th>
+                  <th>Count</th>
+                  <th>Time</th>
+                  <th className="right">Rate (RM)</th>
+                  <th>Photo</th>
+                  <th>Status</th>
+                  <th className="right" />
+                </tr>
+              </thead>
+              <tbody>
+                {slots.map((sl) =>
+                  sl.entries.length === 0 ? (
+                    <tr className="op-tl-empty" key={sl.start}>
+                      <td className="op-tl-hour">{hh(DAY_START_HOUR + sl.start)} – {hh(DAY_START_HOUR + sl.end)}</td>
+                      <td colSpan={6} className="op-tl-none">—</td>
+                    </tr>
+                  ) : (
+                    sl.entries.map((e, i) => {
                       const step = actionFor(e)
                       const photo = evidenceUrl(e.id)
                       return (
-                        <li className="op-tl-entry" key={e.id}>
-                          <span className="op-tl-no">{i + 1}.</span>
-                          <span className="op-tl-time">{timeOf(e)}</span>
-                          <span className="op-tl-qty">{e.quantity} {job?.unit ?? ''}</span>
-                          <span className="op-tl-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-                          {photo ? (
-                            <a className="linkbtn" href={photo} target="_blank" rel="noreferrer">📷 Photo</a>
-                          ) : (
-                            <span className="muted small">no photo</span>
-                          )}
-                          {badge(e.approval_status ?? 'approved')}
-                          <span className="op-tl-actions">
+                        <tr key={e.id}>
+                          <td className="op-tl-hour">
+                            {i === 0 ? `${hh(DAY_START_HOUR + sl.start)} – ${hh(DAY_START_HOUR + sl.end)}` : ''}
+                          </td>
+                          <td className="op-tl-no">{i + 1}</td>
+                          <td className="op-tl-time">{timeOf(e)}</td>
+                          <td className="right nowrap">{amountFor(e.job_id, e.quantity).toFixed(2)}</td>
+                          <td>
+                            {photo ? (
+                              <a
+                                className="op-photo-link"
+                                href={photo}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Open the photo"
+                                aria-label="Open the photo"
+                              >
+                                📷
+                              </a>
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </td>
+                          <td
+                            className="nowrap"
+                            title={e.approval_status === 'rejected' ? e.rejected_reason ?? undefined : undefined}
+                          >
+                            {badge(e.approval_status ?? 'approved')}
+                          </td>
+                          <td className="right nowrap">
                             {step === 'verified' && (
                               <button className="linkbtn" disabled={busy === e.id} onClick={() => onAct(e, 'verified')}>
                                 ✓ Verify
@@ -1049,44 +998,19 @@ function GroupModal({
                                 ✗ Reject
                               </button>
                             )}
-                            {canModify(e) && (
-                              <>
-                                <button
-                                  className="icon-btn sm"
-                                  title="Edit quantity"
-                                  aria-label="Edit quantity"
-                                  disabled={busy === e.id}
-                                  onClick={() => onEditQty(e)}
-                                >
-                                  <PencilIcon />
-                                </button>
-                                <button
-                                  className="icon-btn sm danger"
-                                  title="Delete this entry"
-                                  aria-label="Delete this entry"
-                                  disabled={busy === e.id}
-                                  onClick={() => onDelete(e)}
-                                >
-                                  <TrashIcon />
-                                </button>
-                              </>
-                            )}
-                          </span>
-                          {e.approval_status === 'rejected' && e.rejected_reason && (
-                            <div className="small muted op-tl-reason">{e.rejected_reason}</div>
-                          )}
-                        </li>
+                          </td>
+                        </tr>
                       )
-                    })}
-                  </ol>
+                    })
+                  ),
                 )}
-              </div>
-            ))}
+              </tbody>
+            </table>
           </div>
         </div>
 
         {/* The calculation — the piece rate line by line, then the total. */}
-        <div className="tag-section">
+        <div className="tag-section op-rec-sec">
           <div className="tag-section-title">The calculation</div>
           {!rate ? (
             <p className="muted small" style={{ margin: 0 }}>No effective piece rate found for this job.</p>
