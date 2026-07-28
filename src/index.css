@@ -61,7 +61,7 @@ a { color: inherit; }
   100% { background-position: -60% 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .app::before, .app::after, .brand-logo, .module-tile, .wm-page-title { animation: none !important; }
+  .app::before, .app::after, .brand-logo, .module-tile, .wm-page-title, .module-title { animation: none !important; }
 }
 .topbar {
   display: flex; align-items: center; gap: 1.25rem;
@@ -1314,8 +1314,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   text-decoration: none; white-space: nowrap; margin-bottom: 0;
 }
 /* The page banner: the team is worth showing off, so it wears the same
-   brushed-metal shine as the MJM mark in the top bar. */
-.wm-page-title {
+   brushed-metal shine as the MJM mark in the top bar. `.module-title` is
+   that same banner under a name any module can wear. */
+.wm-page-title, .module-title {
   margin: 0.15rem 0 0.7rem; text-align: center;
   font-family: 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 2.1rem; font-weight: 800; letter-spacing: 0.06em;
@@ -1325,7 +1326,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   -webkit-text-fill-color: transparent; color: transparent;
   animation: metal-shine 5s linear infinite;
 }
-@media (max-width: 560px) { .wm-page-title { font-size: 1.6rem; } }
+@media (max-width: 560px) { .wm-page-title, .module-title { font-size: 1.6rem; } }
 
 /* Three columns; the middle one carries the chart. */
 .wm-cols {
@@ -1603,6 +1604,26 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* station instead of one undifferentiated wall of rows.               */
 /* ------------------------------------------------------------------ */
 .op-rail { min-width: 210px; max-height: 78vh; overflow-y: auto; }
+.op-rail-head { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.4rem; }
+.op-rail-head .op-rail-search { margin-bottom: 0; }
+.op-rail-toggle {
+  appearance: none; cursor: pointer; flex: none;
+  width: 28px; height: 28px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  font-size: 0.8rem; line-height: 1;
+}
+.op-rail-toggle:hover { border-color: var(--accent); color: var(--text); }
+/* Folded away, the rail leaves a strip behind — never a hidden control
+   with no way back to it. */
+.op-rail-mini {
+  display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
+  flex: none; padding-right: 0.9rem; border-right: 1px solid var(--border);
+}
+.op-rail-vert {
+  writing-mode: vertical-rl; text-orientation: mixed;
+  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--muted);
+}
 .op-rail-search {
   padding: 0.45rem 0.6rem; font-size: 0.85rem; border-radius: 9px;
   margin-bottom: 0.4rem; width: 100%;
@@ -1678,4 +1699,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   .op-rail { max-height: none; }
   .rail-group-title { display: none; }
   .op-group-meta { display: none; }
+  .op-rail-mini {
+    flex-direction: row; width: 100%; padding-right: 0; padding-bottom: 0.5rem;
+    border-right: none; border-bottom: 1px solid var(--border); justify-content: flex-start;
+  }
+  .op-rail-vert { writing-mode: horizontal-tb; }
 }

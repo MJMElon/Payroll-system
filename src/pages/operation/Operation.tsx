@@ -41,6 +41,10 @@ const TIER1_UNIT_CAP = 4 // tiered hourly rates: tier-1 price covers the first 4
 // A station rail longer than this gets a search box above it.
 const RAIL_SEARCH_FROM = 8
 
+// Whether the rail is folded away is a personal preference, kept in this
+// browser rather than on the account.
+const RAIL_KEY = 'mjm-op-rail-open'
+
 type StatusFilter = 'all' | 'pending' | 'verified' | 'approved' | 'rejected'
 
 const STATUS_OPTIONS = [
@@ -85,6 +89,7 @@ export default function Operation() {
   // 'all' = every station at once, which is where the module opens.
   const [scope, setScope] = useState<'all' | string>('all')
   const [railSearch, setRailSearch] = useState('')
+  const [railOpen, setRailOpen] = useState(() => localStorage.getItem(RAIL_KEY) !== 'closed')
   const [from, setFrom] = useState(monthStartISO())
   const [to, setTo] = useState(todayISO())
   const [status, setStatus] = useState<StatusFilter>('all')
@@ -98,6 +103,13 @@ export default function Operation() {
   const [loading, setLoading] = useState(true)
 
   const myStationIds = profile?.station_ids ?? []
+
+  function toggleRail() {
+    setRailOpen((open) => {
+      localStorage.setItem(RAIL_KEY, open ? 'closed' : 'open')
+      return !open
+    })
+  }
 
   /** How many entries are still waiting on someone, station by station. */
   async function loadOpenCounts() {
@@ -429,24 +441,58 @@ export default function Operation() {
       <header className="module-head">
         <Link to="/" className="btn ghost module-back">← Back to main page</Link>
       </header>
-      <h1>Operation module</h1>
+      <h1 className="module-title">Operation module</h1>
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
       <div className="sidebar-layout">
         {/* Station rail — searchable, your own stations first, each badged
-            with what is still waiting there. */}
+            with what is still waiting there, and foldable when the entry
+            list wants the whole width. */}
+        {!railOpen ? (
+          <div className="op-rail-mini">
+            <button
+              type="button"
+              className="op-rail-toggle"
+              onClick={toggleRail}
+              title="Show the station list"
+              aria-label="Show the station list"
+              aria-expanded={false}
+            >
+              »
+            </button>
+            <span className="op-rail-vert">Stations</span>
+            {totalOpen > 0 && (
+              <span className="count-badge static" title={`${totalOpen} waiting across every station`}>
+                {totalOpen}
+              </span>
+            )}
+          </div>
+        ) : (
         <nav className="sidebar-nav op-rail">
-          {stations.length > RAIL_SEARCH_FROM && (
-            <input
-              className="op-rail-search"
-              value={railSearch}
-              onChange={(e) => setRailSearch(e.target.value)}
-              placeholder="Search station…"
-              aria-label="Search station"
-            />
-          )}
+          <div className="op-rail-head">
+            {stations.length > RAIL_SEARCH_FROM && (
+              <input
+                className="op-rail-search"
+                value={railSearch}
+                onChange={(e) => setRailSearch(e.target.value)}
+                placeholder="Search station…"
+                aria-label="Search station"
+              />
+            )}
+            <button
+              type="button"
+              className="op-rail-toggle"
+              onClick={toggleRail}
+              title="Hide the station list"
+              aria-label="Hide the station list"
+              aria-expanded
+              style={{ marginLeft: 'auto' }}
+            >
+              «
+            </button>
+          </div>
           <button
             type="button"
             className={`sidebar-link station-link ${scope === 'all' ? 'active' : ''}`}
@@ -469,6 +515,7 @@ export default function Operation() {
           {otherList.map(stationButton)}
           {railList.length === 0 && <p className="muted small">No station matches.</p>}
         </nav>
+        )}
 
         <div className="sidebar-content stack">
           <div className="card stack">
