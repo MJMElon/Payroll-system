@@ -1085,10 +1085,10 @@ export default function WorkerManagement() {
 
   return (
     <div className="wm-page" style={wideStyle}>
-      <header className="wm-head">
-        <Link to="/" className="btn ghost wm-back">← Back to main page</Link>
+      <header className="module-bar">
+        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
       </header>
-      <h1 className="wm-page-title">Team Manage</h1>
+      <h1 className="module-banner">Team Manage</h1>
 
       {error && <div className="error">{error}</div>}
 

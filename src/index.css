@@ -61,7 +61,7 @@ a { color: inherit; }
   100% { background-position: -60% 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .app::before, .app::after, .brand-logo, .module-tile, .wm-page-title { animation: none !important; }
+  .app::before, .app::after, .brand-logo, .module-tile, .module-banner { animation: none !important; }
 }
 .topbar {
   display: flex; align-items: center; gap: 1.25rem;
@@ -246,7 +246,7 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
     0 6px 16px rgba(25, 35, 50, 0.13);
 }
 
-/* Page sidebar (e.g. Piece Rate Management sections) */
+/* Page sidebar (e.g. Piece Rate Module sections) */
 .sidebar-layout { display: flex; gap: 1.5rem; align-items: flex-start; }
 .sidebar-nav {
   display: flex; flex-direction: column; gap: 0.15rem;
@@ -1503,14 +1503,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* ------------------------------------------------------------------ */
 .wm-page { display: flex; flex-direction: column; gap: 0.75rem; }
 
-.wm-head { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
-.wm-head .wm-back {
-  padding: 0.4rem 0.75rem; font-size: 0.82rem; border-radius: 8px;
-  text-decoration: none; white-space: nowrap; margin-bottom: 0;
-}
+/* A module page opens with the way out on its own line and the banner
+   centred beneath it. (.page-head, used by Settings, puts the two on one
+   row instead — this is the taller treatment.) */
+.module-bar { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
+.module-bar .backlink-btn { margin-bottom: 0; text-decoration: none; }
 /* The page banner: the team is worth showing off, so it wears the same
    brushed-metal shine as the MJM mark in the top bar. */
-.wm-page-title {
+.module-banner {
   margin: 0.15rem 0 0.7rem; text-align: center;
   font-family: 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 2.1rem; font-weight: 800; letter-spacing: 0.06em;
@@ -1520,7 +1520,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   -webkit-text-fill-color: transparent; color: transparent;
   animation: metal-shine 5s linear infinite;
 }
-@media (max-width: 560px) { .wm-page-title { font-size: 1.6rem; } }
+@media (max-width: 560px) { .module-banner { font-size: 1.6rem; } }
 
 /* Three columns; the middle one carries the chart. */
 .wm-cols {

@@ -44,7 +44,9 @@ export default function PieceRate() {
   const isAdmin = profile?.role === 'admin'
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
   const [showApprovals, setShowApprovals] = useState(false)
-  const [tab, setTab] = useState<'approval' | 'master' | 'history'>('approval')
+  // The masterlist is what the module is FOR, so it leads and opens first;
+  // approvals and history follow it.
+  const [tab, setTab] = useState<'master' | 'approval' | 'history'>('master')
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -145,16 +147,24 @@ export default function PieceRate() {
 
   return (
     <div className="stack">
-      <div>
-        <Link to="/" className="small muted backlink">← Back to main page</Link>
-        <h1>Piece Rate Management</h1>
-      </div>
+      <header className="module-bar">
+        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
+      </header>
+      <h1 className="module-banner">Piece Rate Module</h1>
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}
 
       <div className="sidebar-layout">
         <nav className="sidebar-nav">
+          <button
+            type="button"
+            className={`sidebar-link ${tab === 'master' ? 'active' : ''}`}
+            onClick={() => setTab('master')}
+          >
+            <IconMaster />
+            <span>Piece Rate Masterlist</span>
+          </button>
           <button
             type="button"
             className={`sidebar-link ${tab === 'approval' ? 'active' : ''}`}
@@ -165,14 +175,6 @@ export default function PieceRate() {
             {openApprovals.length > 0 && (
               <span className="count-badge static">{openApprovals.length}</span>
             )}
-          </button>
-          <button
-            type="button"
-            className={`sidebar-link ${tab === 'master' ? 'active' : ''}`}
-            onClick={() => setTab('master')}
-          >
-            <IconMaster />
-            <span>Piece Rate Masterlist</span>
           </button>
           <button
             type="button"
