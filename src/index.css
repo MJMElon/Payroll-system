@@ -61,7 +61,7 @@ a { color: inherit; }
   100% { background-position: -60% 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .app::before, .app::after, .brand-logo, .module-tile, .wm-page-title { animation: none !important; }
+  .app::before, .app::after, .brand-logo, .module-tile, .module-banner { animation: none !important; }
 }
 .topbar {
   display: flex; align-items: center; gap: 1.25rem;
@@ -311,7 +311,7 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
     0 6px 16px rgba(25, 35, 50, 0.13);
 }
 
-/* Page sidebar (e.g. Piece Rate Management sections) */
+/* Page sidebar (e.g. Piece Rate Module sections) */
 .sidebar-layout { display: flex; gap: 1.5rem; align-items: flex-start; }
 .sidebar-nav {
   display: flex; flex-direction: column; gap: 0.15rem;
@@ -811,6 +811,16 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-icon-btn:hover:not(:disabled) { background: var(--accent-strong); color: #fff; }
 .mob-icon-btn:disabled { opacity: 0.45; cursor: default; }
 
+/* Leaving a station you drilled into — its own row, at the top of the
+   card, where a way back is looked for. */
+.mob-backrow {
+  appearance: none; border: none; cursor: pointer; width: 100%;
+  background: #eef0f4; color: var(--accent-strong);
+  border-radius: 9px; padding: 0.4rem 0.6rem;
+  font-size: 0.75rem; font-weight: 700; text-align: left;
+}
+.mob-backrow:hover { background: var(--accent-soft); }
+
 /* Which station and team the chart below is drawn for. */
 .mob-chart-where {
   display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap;
@@ -994,19 +1004,27 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   box-shadow: 0 1px 2px rgba(10, 40, 28, 0.06); cursor: grab;
 }
 .mob-member.dragging { opacity: 0.45; cursor: grabbing; }
-/* Held long enough to be moved. The wobble is the whole signal — until a
-   name does this, nothing on the board can be dragged. */
-@keyframes mob-wobble {
-  0%, 100% { transform: rotate(-1.1deg); }
-  50% { transform: rotate(1.1deg); }
+/* In move mode a name lifts straight away — the mode is the permission,
+   so there is nothing to hold. A staged move shows until it is saved. */
+.mob-member.movable { cursor: grab; box-shadow: 0 0 0 1px #dfe4ea; }
+.mob-member.staged { box-shadow: 0 0 0 1.5px var(--accent-strong); background: var(--accent-soft); }
+
+/* The move mode's own bar: what is pending, and the way to commit it. */
+.mob-movebar {
+  display: flex; align-items: center; gap: 0.4rem;
+  background: var(--accent-soft); border-radius: 10px; padding: 0.35rem 0.5rem;
 }
-.mob-member.armed {
-  animation: mob-wobble 0.22s ease-in-out infinite;
-  box-shadow: 0 0 0 1.5px var(--accent-strong), 0 3px 8px rgba(10, 40, 28, 0.14);
+.mob-movebar .mob-sub { flex: 1; color: var(--accent-strong); font-weight: 700; }
+.mob-icon-btn.on { background: var(--accent-strong); color: #fff; }
+
+/* A station opened in place, its structure under its own button. */
+.mob-expand {
+  display: flex; flex-direction: column; gap: 0.45rem;
+  padding: 0.5rem 0 0.6rem 0.5rem; margin-left: 0.2rem;
+  border-left: 2px solid var(--accent-soft);
 }
-@media (prefers-reduced-motion: reduce) {
-  .mob-member.armed { animation: none; }
-}
+.mob-lineitem.open { background: var(--accent-soft); }
+.mob-lineitem .mob-caret.open { transform: rotate(90deg); }
 /* A press-and-hold must not turn into a text selection or a magnifier. */
 .mob-member { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
 .mob-member-grip { color: #c3cad2; font-size: 0.75rem; letter-spacing: -2px; flex: none; }
@@ -1030,6 +1048,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   max-height: 100%; overflow-y: auto;
 }
 .mob-modal .mob-row { flex: none; }
+/* The sheet scrolls, so its heading — and the X on it — stay put. */
+.mob-modal > .mob-card-label:first-child {
+  position: sticky; top: -1rem; z-index: 1;
+  background: #fff; padding: 0.55rem 0 0.35rem; margin-top: -0.55rem;
+}
+.mob-card-label .mob-icon-btn.corner.close { font-size: 0.8rem; }
 /* A lane that only reports, never takes a drop. */
 .mob-lane.static { border-style: solid; border-color: #eceff3; background: #f8fafb; }
 
@@ -1142,6 +1166,27 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Photo evidence grid */
 .mob-photo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
 .mob-photo { width: 100%; height: 90px; object-fit: cover; border-radius: 10px; display: block; }
+/* A photo waiting to be sent — removable while it still can be. */
+.mob-photo-slot { position: relative; display: block; }
+/* How many photos back a record — and the way into them. */
+.mob-photochip {
+  appearance: none; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  background: var(--accent-soft); color: var(--accent-strong);
+  border-radius: 999px; padding: 0.2rem 0.55rem;
+  font-size: 0.7rem; font-weight: 700;
+}
+.mob-photochip:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.mob-photochip.none { background: #eef0f4; color: var(--muted); cursor: default; }
+.mob-photo-x {
+  position: absolute; top: 4px; right: 4px;
+  appearance: none; border: none; cursor: pointer;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(12, 18, 16, 0.66); color: #fff;
+  font-size: 0.7rem; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.mob-photo-x:hover { background: #b91c1c; }
 
 /* Profile dashboard */
 .mob-stat { font-weight: 800; font-size: 1.25rem; font-family: 'Montserrat', sans-serif; }
@@ -1551,17 +1596,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* ------------------------------------------------------------------ */
 .wm-page { display: flex; flex-direction: column; gap: 0.75rem; }
 
-/* The way out of a module. Team Manage set the shape; `.module-head` /
-   `.module-back` is the same pair of rules under a name any module can
-   wear, so every module leaves by the same door. */
-.wm-head, .module-head { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
-.wm-head .wm-back, .module-head .module-back {
-  padding: 0.4rem 0.75rem; font-size: 0.82rem; border-radius: 8px;
-  text-decoration: none; white-space: nowrap; margin-bottom: 0;
-}
+/* A module page opens with the way out on its own line and the banner
+   centred beneath it. (.page-head, used by Settings, puts the two on one
+   row instead — this is the taller treatment.) */
+.module-bar { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
+.module-bar .backlink-btn { margin-bottom: 0; text-decoration: none; }
 /* The page banner: the team is worth showing off, so it wears the same
    brushed-metal shine as the MJM mark in the top bar. */
-.wm-page-title {
+.module-banner {
   margin: 0.15rem 0 0.7rem; text-align: center;
   font-family: 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 2.1rem; font-weight: 800; letter-spacing: 0.06em;
@@ -1571,7 +1613,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   -webkit-text-fill-color: transparent; color: transparent;
   animation: metal-shine 5s linear infinite;
 }
-@media (max-width: 560px) { .wm-page-title { font-size: 1.6rem; } }
+@media (max-width: 560px) { .module-banner { font-size: 1.6rem; } }
 
 /* Three columns; the middle one carries the chart. */
 .wm-cols {
@@ -1700,7 +1742,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .wm-station-box.shut .wm-station-head { padding-bottom: 0; border-bottom: none; }
 .wm-station-box.shut { width: auto; min-width: 0; }
-.wm-station-caret { color: var(--muted); font-size: 0.7rem; }
+/* Sits beside the name, not at the far end: a wide station scrolls
+   sideways, and a control you have to scroll to find is no control. */
+.wm-station-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.55rem; height: 1.55rem; flex: none;
+  color: var(--muted); border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface);
+}
+.wm-station-head:hover .wm-station-toggle { border-color: var(--accent-strong); color: var(--accent-strong); }
 .wm-station-head:hover .wm-station-name { color: var(--text); }
 .wm-station-name {
   font-size: 0.82rem; font-weight: 800; letter-spacing: 0.05em;
@@ -1716,7 +1766,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   color: var(--muted); font-size: 0.72rem; font-weight: 700;
 }
 .wm-srow-body {
-  flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+  flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center;
   border: 1px dashed transparent; border-radius: 9px; padding: 0.15rem;
 }
 .wm-srow-body.col { flex-direction: column; align-items: stretch; gap: 0.3rem; }
@@ -1748,8 +1798,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-grid-head.add { border-bottom: none; background: none; border-left: none; }
 .wm-grid-head:hover .wm-icon { visibility: visible; }
 .wm-cell {
-  display: flex; flex-wrap: wrap; gap: 0.3rem; align-content: flex-start;
-  min-height: 2rem; padding: 0.25rem 0.45rem;
+  display: flex; flex-wrap: wrap; gap: 0.4rem; align-content: flex-start;
+  min-height: 2.3rem; padding: 0.3rem 0.45rem;
   border: 1px dashed transparent; border-radius: 0 0 8px 8px;
 }
 .wm-cell.over { border-color: var(--accent-strong); background: var(--accent-soft); }
@@ -1763,13 +1813,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Every name on the chart is the same block: one size, so a row of them
    reads as a row and nothing looks more important than its neighbour. */
 .wm-block.mini {
-  width: 142px; padding: 0.3rem 0.5rem;
+  width: 162px; padding: 0.42rem 0.6rem;
 }
+.wm-block.mini .wm-block-name { font-size: 0.8rem; }
 .wm-block.mini .wm-block-name { display: block; overflow: hidden; text-overflow: ellipsis; }
 /* The slot names are dropped into, sized like a block so the row keeps
    its rhythm. It sits after the names, never between them. */
 .wm-add-person {
-  width: 142px; min-height: 1.9rem; order: 99;
+  width: 162px; min-height: 2.15rem; order: 99;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px dashed #cdd4dc; border-radius: 10px; padding: 0.3rem 0.5rem;
   color: #9aa3ae; font-size: 0.72rem; font-weight: 600; white-space: nowrap;

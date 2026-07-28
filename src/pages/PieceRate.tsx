@@ -64,8 +64,9 @@ export default function PieceRate() {
   const isAdmin = profile?.role === 'admin'
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
   const [showApprovals, setShowApprovals] = useState(false)
-  // The masterlist is the module's front page; approvals sit behind it.
-  const [tab, setTab] = useState<'approval' | 'master' | 'history'>('master')
+  // The masterlist is what the module is FOR, so it leads and opens first;
+  // approvals and history follow it.
+  const [tab, setTab] = useState<'master' | 'approval' | 'history'>('master')
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -166,10 +167,10 @@ export default function PieceRate() {
 
   return (
     <div className="stack">
-      <header className="module-head">
-        <Link to="/" className="btn ghost module-back">← Back to main page</Link>
+      <header className="module-bar">
+        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
       </header>
-      <h1>Piece Rate Module</h1>
+      <h1 className="module-banner">Piece Rate Module</h1>
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="notice">{notice}</div>}

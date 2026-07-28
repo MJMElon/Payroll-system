@@ -487,6 +487,18 @@ export default function WorkerManagement() {
         return false
       }
     }
+    // A staff number is unique too, and saying so beats a database error
+    // about a constraint nobody outside this file has heard of.
+    if (typeof patch.employee_code === 'string' && patch.employee_code.trim() !== '') {
+      const code = patch.employee_code.trim().toLowerCase()
+      const clash = profiles.find(
+        (p) => p.id !== person.id && (p.employee_code ?? '').trim().toLowerCase() === code,
+      )
+      if (clash) {
+        setError(`Staff no. ${patch.employee_code} already belongs to ${displayName(clash)}.`)
+        return false
+      }
+    }
     setError(null)
     const { data, error } = await supabase
       .from('access_profiles')
@@ -495,12 +507,19 @@ export default function WorkerManagement() {
       .select('id')
     if (error) {
       // The database has the last word on uniqueness — two people saving
-      // the same number at once would slip past the check above.
+      // the same value at once would slip past the checks above. Name the
+      // field that actually clashed: this form does not touch the email,
+      // so blaming the email for every duplicate is just wrong.
+      const where = error.message.toLowerCase()
       setError(
         error.code === '23505'
-          ? error.message.includes('phone')
+          ? where.includes('phone')
             ? 'That phone number is already used by someone else.'
-            : 'That email is already used by another account.'
+            : where.includes('employee_code')
+              ? 'That staff no. is already used by someone else.'
+              : where.includes('email')
+                ? 'That email is already used by another account.'
+                : `Those details clash with another account (${error.message}).`
           : error.message,
       )
       return false
@@ -828,10 +847,37 @@ export default function WorkerManagement() {
           type="button"
           className="wm-station-head"
           aria-expanded={open}
+          aria-label={`${open ? 'Collapse' : 'Expand'} ${station?.name ?? 'No station yet'}`}
+          title={open ? 'Collapse' : 'Expand'}
           onClick={() => setOpenStations((m) => ({ ...m, [key]: !open }))}
         >
-          <span className="wm-station-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
           <span className="wm-station-name">{station?.name ?? 'No station yet'}</span>
+          {/* Chevrons pointing out to open, in to close — the symbol says
+              it without a word to read. */}
+          <span className="wm-station-toggle" aria-hidden="true">
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              {open ? (
+                <>
+                  <path d="M4 7l5 5-5 5" />
+                  <path d="M20 7l-5 5 5 5" />
+                </>
+              ) : (
+                <>
+                  <path d="M9 7l-5 5 5 5" />
+                  <path d="M15 7l5 5-5 5" />
+                </>
+              )}
+            </svg>
+          </span>
         </button>
         {open && (
           <>
@@ -886,7 +932,7 @@ export default function WorkerManagement() {
             style={{
               // Two blocks wide, so a team column is never a single-file
               // queue of names and every station reads at the same rhythm.
-              gridTemplateColumns: `9rem repeat(${columns.length}, 322px) auto`,
+              gridTemplateColumns: `9rem repeat(${columns.length}, 352px) auto`,
             }}
           >
             {/* Row of team names — the column headings, said once — with
@@ -1039,10 +1085,10 @@ export default function WorkerManagement() {
 
   return (
     <div className="wm-page" style={wideStyle}>
-      <header className="wm-head">
-        <Link to="/" className="btn ghost wm-back">← Back to main page</Link>
+      <header className="module-bar">
+        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
       </header>
-      <h1 className="wm-page-title">Team Manage</h1>
+      <h1 className="module-banner">Team Manage</h1>
 
       {error && <div className="error">{error}</div>}
 
