@@ -1583,9 +1583,17 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   border: 1px solid var(--border); border-radius: 12px;
   background: #fafbfc; padding: 0.6rem 0.7rem 0.7rem;
 }
+.wm-station-box .wm-srow:first-of-type { padding-top: 0.5rem; }
 .wm-station-head {
-  padding-bottom: 0.45rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border);
+  appearance: none; background: none; border: none; cursor: pointer;
+  width: 100%; text-align: left; display: flex; align-items: center; gap: 0.45rem;
+  padding: 0 0 0.45rem; border-bottom: 1px solid var(--border);
+  font-family: inherit;
 }
+.wm-station-box.shut .wm-station-head { padding-bottom: 0; border-bottom: none; }
+.wm-station-box.shut { width: auto; min-width: 0; }
+.wm-station-caret { color: var(--muted); font-size: 0.7rem; }
+.wm-station-head:hover .wm-station-name { color: var(--text); }
 .wm-station-name {
   font-size: 0.82rem; font-weight: 800; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--accent-strong);
@@ -1608,7 +1616,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 /* Teams are the COLUMNS, tiers the ROWS: a name never repeats what its
    column and row already say. */
-.wm-grid { display: grid; gap: 0.3rem 0.45rem; align-items: start; margin-top: 0.15rem; }
+.wm-grid { display: grid; gap: 0.3rem 0.9rem; align-items: start; margin-top: 0.15rem; }
 /* The add button closes the row of column headings on the right. */
 .wm-grid-head.add { border-bottom: none; padding-left: 0.15rem; justify-content: center; }
 .wm-add-icon {
@@ -1619,19 +1627,26 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: inline-flex; align-items: center; justify-content: center;
 }
 .wm-add-icon:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
+/* One team must not blur into the next: its heading sits on a solid rule,
+   every other column carries a light tint, and a divider runs down the
+   left of each column after the first. */
 .wm-grid-head {
   display: flex; align-items: center; gap: 0.25rem;
-  padding: 0.15rem 0.3rem 0.3rem; border-bottom: 1px solid var(--border);
+  padding: 0.2rem 0.45rem 0.35rem; border-bottom: 2px solid #ccd3db;
+  border-radius: 8px 8px 0 0;
 }
+.wm-grid-head.alt, .wm-cell.alt { background: #f2f4f7; }
+.wm-grid-head.divided, .wm-cell.divided { border-left: 1px solid var(--border); }
+.wm-grid-head.add { border-bottom: none; background: none; border-left: none; }
 .wm-grid-head:hover .wm-icon { visibility: visible; }
 .wm-cell {
   display: flex; flex-wrap: wrap; gap: 0.3rem; align-content: flex-start;
-  min-height: 2rem; padding: 0.15rem;
-  border: 1px dashed transparent; border-radius: 8px;
+  min-height: 2rem; padding: 0.25rem 0.45rem;
+  border: 1px dashed transparent; border-radius: 0 0 8px 8px;
 }
 .wm-cell.over { border-color: var(--accent-strong); background: var(--accent-soft); }
 .wm-tline-name {
-  font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em;
+  font-size: 0.76rem; font-weight: 800; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--accent-strong);
 }
 .wm-tline-name.none { color: var(--muted); font-weight: 600; }
@@ -1704,9 +1719,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-panel-tools { display: flex; align-items: center; gap: 0.2rem; }
 .wm-panel-tools .wm-icon { visibility: visible; font-size: 0.9rem; padding: 0.2rem 0.35rem; }
 .wm-fields { display: flex; flex-direction: column; gap: 0.3rem; }
-.wm-field { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.82rem; }
+.wm-field {
+  display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem;
+  min-height: 1.85rem;
+}
 .wm-field-label {
   flex: none; width: 5.6rem; color: var(--muted); font-size: 0.75rem;
+  align-self: center;
 }
 .wm-field-label::after { content: ' :'; }
 .wm-field-value { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
@@ -1751,7 +1770,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .row-btn { padding: 0.3rem 0.7rem; font-size: 0.8rem; white-space: nowrap; }
 
 /* Adding someone to a tier: search, then pick from what matches. */
-.tier-add { position: relative; margin-top: 0.5rem; max-width: 360px; }
+.tier-add { position: relative; margin-top: 0.5rem; max-width: 460px; }
 .tier-add .row-input { max-width: none; }
 .tier-hits {
   display: flex; flex-direction: column; gap: 0.15rem;
@@ -1767,3 +1786,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .tier-hit:hover:not(:disabled) { background: var(--accent-soft); }
 .tier-hit:disabled { opacity: 0.5; cursor: default; }
 .tier-hit-name { font-size: 0.88rem; font-weight: 600; }
+
+/* Picked from the search, waiting on Add. */
+.tier-chosen {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  margin-top: 0.4rem; padding: 0.45rem 0.6rem;
+  background: var(--accent-soft); border-radius: 10px;
+}
+.tier-chosen-who { display: flex; flex-direction: column; gap: 0.05rem; margin-right: auto; min-width: 0; }

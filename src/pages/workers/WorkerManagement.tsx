@@ -16,7 +16,8 @@
 //           sheet of the tag itself.
 //
 //           FROM the station-head tier down — one box per STATION, side by
-//           side (they are the same tier), and inside each box a grid:
+//           side (they are the same tier), each closed until its name is
+//           clicked. Inside an open box, a grid:
 //           TEAMS ARE THE COLUMNS, named once at the top; TIERS ARE THE
 //           ROWS, named once down the left:
 //
@@ -107,6 +108,9 @@ export default function WorkerManagement() {
   const [rates, setRates] = useState<PieceRate[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [signupsOpen, setSignupsOpen] = useState(true)
+  // Which station boxes are open. A station is a lot of chart, so they
+  // start closed and open on their own name.
+  const [openStations, setOpenStations] = useState<Record<string, boolean>>({})
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [dragId, setDragId] = useState<string | null>(null)
@@ -817,11 +821,20 @@ export default function WorkerManagement() {
     const columns: (Team | null)[] = [...boxTeams, ...(hasLoose ? [null] : [])]
 
     const headRowKey = `srow:${key}:${headGrade.id}`
+    const open = openStations[key] ?? false
     return (
-      <section className="wm-station-box" key={key}>
-        <header className="wm-station-head">
+      <section className={`wm-station-box ${open ? '' : 'shut'}`} key={key}>
+        <button
+          type="button"
+          className="wm-station-head"
+          aria-expanded={open}
+          onClick={() => setOpenStations((m) => ({ ...m, [key]: !open }))}
+        >
+          <span className="wm-station-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
           <span className="wm-station-name">{station?.name ?? 'No station yet'}</span>
-        </header>
+        </button>
+        {open && (
+          <>
 
         {/* The station head runs every team here, so they sit above the grid. */}
         <div className="wm-srow">
@@ -873,15 +886,18 @@ export default function WorkerManagement() {
             style={{
               // Two blocks wide, so a team column is never a single-file
               // queue of names and every station reads at the same rhythm.
-              gridTemplateColumns: `9rem repeat(${columns.length}, 300px) auto`,
+              gridTemplateColumns: `9rem repeat(${columns.length}, 322px) auto`,
             }}
           >
             {/* Row of team names — the column headings, said once — with
                 the add button at its right end, since a new team is a new
                 column. */}
             <span />
-            {columns.map((t) => (
-              <div className="wm-grid-head" key={`h:${key}:${t?.id ?? 'none'}`}>
+            {columns.map((t, col) => (
+              <div
+                className={`wm-grid-head ${col % 2 ? 'alt' : ''} ${col > 0 ? 'divided' : ''}`}
+                key={`h:${key}:${t?.id ?? 'none'}`}
+              >
                 {t && renamingId === t.id ? (
                   <input
                     className="wm-cluster-input"
@@ -940,7 +956,7 @@ export default function WorkerManagement() {
             {lowerGrades.map((g) => (
               <Fragment key={g.id}>
                 <span className="wm-srow-label">{g.name} :</span>
-                {columns.map((t) => {
+                {columns.map((t, col) => {
                   const cellKey = `cell:${key}:${g.id}:${t?.id ?? 'none'}`
                   const people = below.filter(
                     (p) =>
@@ -951,7 +967,12 @@ export default function WorkerManagement() {
                   )
                   return (
                     <div
-                      className={`wm-cell ${dropKey === cellKey ? 'over' : ''}`}
+                      className={[
+                        'wm-cell',
+                        col % 2 ? 'alt' : '',
+                        col > 0 ? 'divided' : '',
+                        dropKey === cellKey ? 'over' : '',
+                      ].join(' ')}
                       key={cellKey}
                       onDragOver={(e) => {
                         if (!belowMe(g.sort_order)) return
@@ -978,6 +999,8 @@ export default function WorkerManagement() {
               </Fragment>
             ))}
           </div>
+        )}
+          </>
         )}
       </section>
     )
@@ -1308,6 +1331,7 @@ function WorkerPanel({
               <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} placeholder="EMP001" />
               <Row label="Station" value={stationText} />
               <Row label="Team" value={team?.name} />
+              <Row label="Email" value={person.email} />
               <EditRow label="Phone" value={form.phone} onChange={set('phone')} />
             </>
           ) : (
