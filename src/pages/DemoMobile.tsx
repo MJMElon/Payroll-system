@@ -4109,7 +4109,7 @@ function TeamTab({
         {/* 1 — Pending Allocation: the name, and one icon to claim them.
             The section label is deliberately a small caps rule so it never
             reads as one of the names underneath it. */}
-        {canManageTeam && (
+        {canManageTeam && (!hasHeadRow || activeStation) && (
           <div className="mob-card">
             <div className="mob-card-label">
               Pending Allocation{' '}
@@ -4147,9 +4147,16 @@ function TeamTab({
             people arranged on the tiers below — the rungs above are not
             repeated as empty lanes, they are already drawn above you. */}
         <div className="mob-card">
+          {/* Drilled into a station from above: leaving is a row of its own,
+              not a word tucked beside the station's name. */}
+          {activeStation && (hasHeadRow || myStations.length > 1) && (
+            <button className="mob-backrow" onClick={() => setPickedStation(null)}>
+              ‹ All stations
+            </button>
+          )}
           <div className="mob-card-label">
-            <span>My Team</span>
-            {myTeam.length > 0 && <span className="mob-chip">{myTeam.length}</span>}
+            <span>{hasHeadRow && !activeStation ? 'Stations' : 'My Team'}</span>
+            {myTeam.length > 0 && !hasHeadRow && <span className="mob-chip">{myTeam.length}</span>}
             {runsTeams && canCreateTeam && activeStation && (
               <button
                 className="mob-icon-btn corner"
