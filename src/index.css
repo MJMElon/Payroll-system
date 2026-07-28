@@ -1519,15 +1519,6 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem;
   margin-top: 0.25rem;
 }
-/* Adding a team adds a column, so the button sits with the column
-   headings and is always there — not hidden behind a hover. */
-.wm-add {
-  appearance: none; cursor: pointer; font-family: inherit; flex: none;
-  background: var(--surface); border: 1px dashed #b8c0ca; color: var(--accent-strong);
-  border-radius: 7px; padding: 0.15rem 0.5rem; font-size: 0.7rem; font-weight: 700;
-  white-space: nowrap;
-}
-.wm-add:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
 
 /* Who holds a tier, listed in its pop-out. */
 .tier-people { display: flex; flex-wrap: wrap; gap: 0.35rem; }
@@ -1572,7 +1563,16 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Teams are the COLUMNS, tiers the ROWS: a name never repeats what its
    column and row already say. */
 .wm-grid { display: grid; gap: 0.3rem 0.45rem; align-items: start; margin-top: 0.15rem; }
-.wm-grid-corner { display: flex; align-items: center; padding-bottom: 0.3rem; }
+/* The add button closes the row of column headings on the right. */
+.wm-grid-head.add { border-bottom: none; padding-left: 0.15rem; justify-content: center; }
+.wm-add-icon {
+  appearance: none; cursor: pointer; font-family: inherit;
+  width: 1.5rem; height: 1.5rem; line-height: 1; flex: none;
+  background: var(--surface); border: 1px dashed #b8c0ca; color: var(--accent-strong);
+  border-radius: 50%; font-size: 0.95rem; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.wm-add-icon:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
 .wm-grid-head {
   display: flex; align-items: center; gap: 0.25rem;
   padding: 0.15rem 0.3rem 0.3rem; border-bottom: 1px solid var(--border);

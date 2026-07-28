@@ -846,34 +846,31 @@ export default function WorkerManagement() {
           <div className="wm-srow">
             <span className="wm-srow-label" />
             <div className="wm-srow-body">
-              {canOwnTeamsAt(headGrade.sort_order, station?.id ?? null) ? (
-                <button type="button" className="wm-add" onClick={() => createTeam(station)}>
-                  + Team
+              <span className="wm-cluster-empty">No team yet.</span>
+              {canOwnTeamsAt(headGrade.sort_order, station?.id ?? null) && (
+                <button
+                  type="button"
+                  className="wm-add-icon"
+                  title={`Add a team at ${station?.name ?? 'this station'}`}
+                  aria-label="Add team"
+                  onClick={() => createTeam(station)}
+                >
+                  +
                 </button>
-              ) : (
-                <span className="wm-cluster-empty">No team yet.</span>
               )}
             </div>
           </div>
         ) : (
           <div
             className="wm-grid"
-            style={{ gridTemplateColumns: `9rem repeat(${columns.length}, minmax(150px, 1fr))` }}
+            style={{
+              gridTemplateColumns: `9rem repeat(${columns.length}, minmax(150px, 1fr)) auto`,
+            }}
           >
-            {/* Row of team names — the column headings, said once. Adding a
-                team adds a column, so the button sits with them. */}
-            <span className="wm-grid-corner">
-              {canOwnTeamsAt(headGrade.sort_order, station?.id ?? null) && (
-                <button
-                  type="button"
-                  className="wm-add"
-                  title={`Add a team at ${station?.name ?? 'this station'}`}
-                  onClick={() => createTeam(station)}
-                >
-                  + Team
-                </button>
-              )}
-            </span>
+            {/* Row of team names — the column headings, said once — with
+                the add button at its right end, since a new team is a new
+                column. */}
+            <span />
             {columns.map((t) => (
               <div className="wm-grid-head" key={`h:${key}:${t?.id ?? 'none'}`}>
                 {t && renamingId === t.id ? (
@@ -916,6 +913,19 @@ export default function WorkerManagement() {
                 )}
               </div>
             ))}
+            <div className="wm-grid-head add">
+              {canOwnTeamsAt(headGrade.sort_order, station?.id ?? null) && (
+                <button
+                  type="button"
+                  className="wm-add-icon"
+                  title={`Add a team at ${station?.name ?? 'this station'}`}
+                  aria-label="Add team"
+                  onClick={() => createTeam(station)}
+                >
+                  +
+                </button>
+              )}
+            </div>
 
             {/* One row per tier below the head. */}
             {lowerGrades.map((g) => (
@@ -954,6 +964,7 @@ export default function WorkerManagement() {
                     </div>
                   )
                 })}
+                <span />
               </Fragment>
             ))}
           </div>
