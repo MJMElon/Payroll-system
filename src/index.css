@@ -779,6 +779,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-org-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mob-org-text .mob-entry-name { font-size: 0.85rem; }
 
+/* A label with nothing beside it reads better centred. */
+.mob-card-label.centred { justify-content: center; letter-spacing: 0.14em; }
+
 /* A card's section label. Deliberately unlike a person's name: small,
    uppercase, tracked out and muted, so a list of names underneath never
    reads as a continuation of the heading. */
@@ -888,6 +891,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   padding: 0.4rem 0.2rem; border-top: 1px solid #eef0f4; border-radius: 8px;
 }
 .mob-lineitem:first-of-type { border-top: none; }
+.mob-lineitem .mob-person-name { font-size: 0.86rem; }
 .mob-lineitem:hover { background: #f6f8fa; }
 
 /* Profile — the selfie. The whole circle is the button, with a camera
@@ -945,15 +949,30 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    as wide as the phone minus a peek of the next, so it is obvious there is
    more to the right. */
 .mob-teamscroll {
-  display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.3rem;
-  scroll-snap-type: x mandatory; margin: 0 -0.2rem;
+  display: flex; align-items: stretch; gap: 0.45rem;
+  overflow-x: auto; padding-bottom: 0.35rem;
+  scroll-snap-type: x mandatory; margin: 0 -0.1rem;
 }
+/* One team fills the width, with the add block beside it as the only
+   thing peeking — a half-shown second team read as a layout fault. */
 .mob-teamcol {
-  flex: none; width: 84%; scroll-snap-align: start;
-  display: flex; flex-direction: column; gap: 0.4rem;
-  border: 1px solid #e4e8ed; border-radius: 12px; padding: 0.5rem;
+  flex: none; width: calc(100% - 3.4rem); scroll-snap-align: start;
+  display: flex; flex-direction: column; gap: 0.35rem;
+  border: 1px solid #e4e8ed; border-radius: 12px; padding: 0.45rem;
   background: #fbfcfd;
 }
+/* The place a new team would go, shaped like one but only as wide as the
+   symbol it carries. */
+.mob-teamcol.add {
+  appearance: none; cursor: pointer; width: 2.6rem; padding: 0;
+  align-items: center; justify-content: center;
+  border-style: dashed; border-color: var(--accent);
+  color: var(--accent-strong); font-size: 1.3rem; font-weight: 800;
+  background: var(--accent-soft);
+}
+.mob-teamcol.add:hover { background: var(--accent); color: #fff; }
+.mob-teamcol.draft { width: calc(100% - 3.4rem); }
+.mob-teamcol.draft .mob-input { font-size: 0.8rem; padding: 0.4rem 0.5rem; }
 .mob-teamcol.loose, .mob-teamcol.draft { border-style: dashed; background: #fff; }
 /* The team's leader heads its column — shown, never a drop target. */
 .mob-teamlead {
@@ -975,10 +994,16 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-lane-add:hover { background: var(--accent); color: #fff; }
 .mob-teamcol-name {
-  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em;
+  font-size: 0.66rem; font-weight: 800; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--accent-strong);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* Names on the board are read in a column a third of a phone wide, so
+   they sit a step down from a heading and never shout. */
+.mob-teamcol .mob-person-name,
+.mob-lane .mob-person-name { font-size: 0.78rem; font-weight: 600; text-transform: none; }
+.mob-teamcol .mob-lane { padding: 0.35rem 0.4rem; gap: 0.3rem; }
+.mob-teamcol .mob-member { padding: 0.32rem 0.4rem; }
 .mob-teamcol .mob-lane { background: #fff; }
 /* A column is narrow, so the tier picker drops onto its own full-width
    line rather than squeezing the name into an ellipsis. */
@@ -995,7 +1020,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-lane.locked { background: #f4f6f8; border-style: solid; border-color: #eceff3; opacity: 0.75; }
 .mob-lane-head { display: flex; align-items: center; gap: 0.4rem; }
 .mob-lane-head .tag-dot { width: 10px; height: 10px; border-radius: 4px; flex: none; }
-.mob-lane-name { font-weight: 800; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.mob-lane-name { font-weight: 800; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .mob-lane-lock { margin-left: auto; font-size: 0.7rem; }
 .mob-lane-empty { color: var(--muted); font-size: 0.7rem; padding: 0.15rem 0.1rem; }
 .mob-member {
@@ -1009,12 +1034,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-member.movable { cursor: grab; box-shadow: 0 0 0 1px #dfe4ea; }
 .mob-member.staged { box-shadow: 0 0 0 1.5px var(--accent-strong); background: var(--accent-soft); }
 
-/* The move mode's own bar: what is pending, and the way to commit it. */
+/* The move controls, inside the station they act on. */
 .mob-movebar {
   display: flex; align-items: center; gap: 0.4rem;
-  background: var(--accent-soft); border-radius: 10px; padding: 0.35rem 0.5rem;
+  background: #f4f6f8; border-radius: 10px; padding: 0.3rem 0.4rem;
 }
-.mob-movebar .mob-sub { flex: 1; color: var(--accent-strong); font-weight: 700; }
+.mob-movebar.on { background: var(--accent-soft); }
+.mob-movebar .mob-sub { flex: 1; font-size: 0.68rem; }
+.mob-movebar.on .mob-sub { color: var(--accent-strong); font-weight: 700; }
+.mob-movebar .mob-icon-btn.corner { margin-left: 0; }
 .mob-icon-btn.on { background: var(--accent-strong); color: #fff; }
 
 /* A station opened in place, its structure under its own button. */
