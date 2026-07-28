@@ -486,6 +486,20 @@ export default function WorkerManagement() {
       }
       patch.basic_salary = n
     }
+    // Two people must not share a phone number. Compared by its digits
+    // alone, so "012-345 6789" and "0123456789" are the same number.
+    if (typeof patch.phone === 'string' && patch.phone.trim() !== '') {
+      const digits = (v: string) => v.replace(/\D/g, '')
+      const mine = digits(patch.phone)
+      const clash =
+        mine === ''
+          ? undefined
+          : profiles.find((p) => p.id !== person.id && p.phone && digits(p.phone) === mine)
+      if (clash) {
+        setError(`That phone number already belongs to ${displayName(clash)}.`)
+        return false
+      }
+    }
     setError(null)
     const { data, error } = await supabase
       .from('access_profiles')
@@ -493,7 +507,15 @@ export default function WorkerManagement() {
       .eq('id', person.id)
       .select('id')
     if (error) {
-      setError(error.message)
+      // The database has the last word on uniqueness — two people saving
+      // the same number at once would slip past the check above.
+      setError(
+        error.code === '23505'
+          ? error.message.includes('phone')
+            ? 'That phone number is already used by someone else.'
+            : 'That email is already used by another account.'
+          : error.message,
+      )
       return false
     }
     if (!data || data.length === 0) {
