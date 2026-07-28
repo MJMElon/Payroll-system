@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { effectiveCapabilities, effectiveModules, MODULE_OPTIONS } from '../lib/tags'
+import { effectiveCapabilities, effectiveModules } from '../lib/tags'
 import {
   profileName,
   supabase,
@@ -31,6 +31,14 @@ import {
 } from '../lib/supabase'
 
 type Tab = 'performance' | 'mywork' | 'record' | 'team' | 'profile'
+
+/**
+ * Tier 1 is the super admin — it holds every capability no matter what is
+ * ticked (see effectiveCapabilities). That makes it an access level rather
+ * than a rung of the operating chart, so charts start below it and it is
+ * never treated as a job on the floor.
+ */
+const ADMIN_TIER_ORDER = 1
 
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
@@ -662,12 +670,11 @@ function PerformanceTab({
   }, [])
   const mtd = entries.filter((e) => e.work_date >= monthStart)
 
-  // My work — this operator's own earnings/records, shown here (rather than
-  // a separate Profile tab) since Performance is where "how am I doing"
-  // belongs. Only tiers that record their own work (data-entry) see it.
+  // This person's own records, for the weekly output chart and the
+  // rejected-work nudge. The money totals they used to feed (earned, days
+  // worked, average per day, waiting on approval) now live on the Profile
+  // tab — the one place that answers "how did I do".
   const [myEntries, setMyEntries] = useState<ProductionEntry[]>([])
-  const [pendingAmount, setPendingAmount] = useState(0)
-  const [pendingCount, setPendingCount] = useState(0)
 
   useEffect(() => {
     if (!canEntry || !profileId) return
@@ -690,53 +697,9 @@ function PerformanceTab({
     return () => clearInterval(t)
   }, [canEntry, profileId])
 
-  // Live estimate for photos taken today that haven't converted into a
-  // production entry yet (the still-running hour, or one waiting on the
-  // next background pass) — grouped by job + hour, same tiered math as
-  // everywhere else, so the total isn't a surprise once it does convert.
-  useEffect(() => {
-    if (!canEntry || !profileId) return
-    function loadPending() {
-      const start = new Date()
-      start.setHours(0, 0, 0, 0)
-      supabase
-        .from('photo_records')
-        .select('id, job_id, taken_at')
-        .eq('created_by', profileId)
-        .is('entry_id', null)
-        .not('job_id', 'is', null)
-        .gte('taken_at', start.toISOString())
-        .then(({ data }) => {
-          const groups = new Map<string, { jobId: string; count: number }>()
-          for (const r of data ?? []) {
-            if (!r.job_id) continue
-            const key = `${r.job_id}::${new Date(r.taken_at).getHours()}`
-            const g = groups.get(key)
-            if (g) g.count += 1
-            else groups.set(key, { jobId: r.job_id, count: 1 })
-          }
-          let amt = 0
-          let cnt = 0
-          for (const { jobId, count } of groups.values()) {
-            amt += amountFor(jobId, count)
-            cnt += count
-          }
-          setPendingAmount(amt)
-          setPendingCount(cnt)
-        })
-    }
-    loadPending()
-    const t = setInterval(loadPending, 30_000)
-    return () => clearInterval(t)
-  }, [canEntry, profileId, amountFor])
-
-  const myAmountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
   const myMonthEntries = myEntries.filter(
     (e) => e.work_date >= monthStart && e.approval_status !== 'rejected',
   )
-  const myTotal = myMonthEntries.reduce((s, e) => s + myAmountOf(e), 0)
-  const myDays = new Set(myMonthEntries.map((e) => e.work_date)).size
-  const myAvg = myDays > 0 ? myTotal / myDays : 0
   const needsFix = myEntries.filter((e) => e.approval_status === 'rejected').length
 
   // This week's daily quantity (Mon–Sun).
@@ -920,27 +883,6 @@ function PerformanceTab({
           <>
             <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
               My work · {myMonthEntries.length} record{myMonthEntries.length === 1 ? '' : 's'} this month
-            </div>
-
-            <div className="mob-grid2">
-              <div className="mob-card">
-                <div className="mob-field-label">This month</div>
-                <div className="mob-stat">{RM(myTotal)}</div>
-              </div>
-              <div className="mob-card">
-                <div className="mob-field-label">Days worked</div>
-                <div className="mob-stat">{myDays}</div>
-              </div>
-            </div>
-            <div className="mob-grid2">
-              <div className="mob-card">
-                <div className="mob-field-label">Avg / day</div>
-                <div className="mob-stat">{RM(myAvg)}</div>
-              </div>
-              <div className="mob-card">
-                <div className="mob-field-label">Pending this hr</div>
-                <div className="mob-stat">{pendingCount > 0 ? RM(pendingAmount) : '—'}</div>
-              </div>
             </div>
 
             {needsFix > 0 && (
@@ -1158,7 +1100,8 @@ function StationScreen({
       </div>
 
       <div className="mob-body">
-        {tier?.name === 'Management' ? (
+        {/* The admin tier is an access level, not a job on the floor. */}
+        {tier?.sort_order === ADMIN_TIER_ORDER ? (
           <div className="mob-card">
             <div className="mob-sub">We can't work under {station.name}.</div>
           </div>
@@ -1596,14 +1539,21 @@ function RecordTab({
   const tier2Rate = jobId ? tier2RateFor(jobId) : null
   const amount = jobId ? amountFor(jobId, Number(qty) || 0) : 0
 
-  // The Operator-tagged sibling job with the same name at the same station —
-  // that's whose Daily Job Record entries actually represent cages tipped.
-  const operatorJob = job
+  // The same job at the same station, tagged to the tier DIRECTLY BELOW
+  // this one — that is whose Daily Job Record entries are the cages
+  // actually tipped. Found by position, not by tier name, so inserting a
+  // tier in between moves the pull to it without a code change.
+  const tierBelow = tier
+    ? grades
+        .filter((g) => g.sort_order > tier.sort_order)
+        .sort((a, b) => a.sort_order - b.sort_order)[0] ?? null
+    : null
+  const operatorJob = job && tierBelow
     ? jobs.find(
         (j) =>
           j.station_id === job.station_id &&
           j.name === job.name &&
-          grades.find((g) => g.id === j.grade_id)?.name === 'Operator',
+          j.grade_id === tierBelow.id,
       )
     : undefined
   const ashAmount = isASH && jobId ? amountFor(jobId, pulledQty) : 0
@@ -2698,29 +2648,7 @@ function ProfileTab({
   tier2RateFor: (jobId: string) => number | null
   onError: (m: string | null) => void
 }) {
-  const [workerName, setWorkerName] = useState<string | null>(null)
-  const [supervisorName, setSupervisorName] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
-
-  useEffect(() => {
-    if (!profile?.worker_id) return setWorkerName(null)
-    supabase
-      .from('workers')
-      .select('full_name')
-      .eq('id', profile.worker_id)
-      .maybeSingle()
-      .then(({ data }) => setWorkerName(data?.full_name ?? null))
-  }, [profile?.worker_id])
-
-  useEffect(() => {
-    if (!profile?.supervisor_id) return setSupervisorName(null)
-    supabase
-      .from('access_profiles')
-      .select('id, full_name, email')
-      .eq('id', profile.supervisor_id)
-      .maybeSingle()
-      .then(({ data }) => setSupervisorName(data ? profileName(data) : null))
-  }, [profile?.supervisor_id])
 
   const myName = profileName(profile)
 
@@ -2734,13 +2662,6 @@ function ProfileTab({
     myStationIds.length === 0
       ? 'All stations'
       : myStationIds.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
-
-  // Only the modules that are actually ticked per tag get named — the
-  // common ones (station status) are open to everyone and go unsaid.
-  const moduleLabels = (profile?.modules ?? [])
-    .map((k) => MODULE_OPTIONS.find((m) => m.key === k)?.label)
-    .filter(Boolean)
-    .join(', ')
 
   const Row = ({ label, value }: { label: string; value: string }) => (
     <div className="mob-row">
@@ -2780,12 +2701,6 @@ function ProfileTab({
               <Row label="Worker ID" value={profile?.employee_code ?? '—'} />
               <Row label="Email" value={profile?.email ?? '—'} />
               <Row label="Phone number" value={profile?.phone ?? '—'} />
-              <div className="mob-detail-rule" />
-              <Row label="Role" value={profile?.role ? profile.role[0].toUpperCase() + profile.role.slice(1) : '—'} />
-              <Row label="Modules" value={moduleLabels || '—'} />
-              <Row label="Status" value={profile?.tags_confirmed ? 'Confirmed' : 'Pending confirmation'} />
-              <Row label="Reports to" value={supervisorName ?? '—'} />
-              <Row label="Linked worker record" value={workerName ?? '—'} />
             </>
           )}
         </div>
@@ -3207,23 +3122,22 @@ function PayslipSection({ profile }: { profile: Profile | null }) {
 /* TAB 4 — TEAM                                                        */
 /*                                                                     */
 /* 1. Pending Allocation — name only, one icon to pull them into your  */
-/*    team. They land on the bottom (Operator) tier.                   */
-/* 2. My Team — the chart for YOUR station and team. It starts at the  */
-/*    Manager rung (Management is an admin tier and stays off it) and  */
-/*    walks down a tier at a time to you: name and tier, nothing else, */
-/*    since every rung on this chart is your own station anyway.       */
+/*    team, keeping the tier they signed up on.                        */
+/* 2. My Team — the chart for YOUR station and team. It starts one     */
+/*    rung under the admin tier and walks down to you: name and tier,  */
+/*    nothing else, since every rung is your own station anyway.       */
 /* 3. Team members — one lane per tier. Drag a member onto the lane    */
 /*    matches what they actually do. A leader may hand out any tier    */
 /*    BELOW their own; their own tier and anything above it is locked, */
 /*    and dropping there explains the ceiling instead of failing       */
 /*    silently.                                                        */
+/*                                                                     */
+/* Every rule here is read off sort_order, never off a tier's NAME —   */
+/* add or rename a tier in Tags management and these screens follow it */
+/* with no code change.                                                */
 /* ------------------------------------------------------------------ */
 
-/** The chart climbs this far and stops — Management sits above it. */
-const TOP_CHART_TIER = 'Manager'
 
-/** A new sign up joins the team on this tier until the leader moves them. */
-const INTAKE_TIER = 'Operator'
 
 function TeamTab({
   profile,
@@ -3295,21 +3209,19 @@ function TeamTab({
   }
 
   // Tier 1 is the highest, so "up" means a SMALLER sort_order. The chart
-  // runs from just above your tier to the Manager tier inclusive.
-  const topTier = grades.find((g) => g.name === TOP_CHART_TIER)
-  const topOrder = topTier?.sort_order ?? Math.min(...grades.map((g) => g.sort_order), 1)
+  // runs from just above your tier to the first rung under the admin tier,
+  // read off position — insert a tier anywhere and it appears by itself.
   const upperTiers = tier
     ? grades
-        .filter((g) => g.sort_order < tier.sort_order && g.sort_order >= topOrder)
+        .filter((g) => g.sort_order < tier.sort_order && g.sort_order > ADMIN_TIER_ORDER)
         .sort((a, b) => b.sort_order - a.sort_order) // nearest upper first
     : []
+  const chartTop = grades
+    .filter((g) => g.sort_order > ADMIN_TIER_ORDER)
+    .sort((a, b) => a.sort_order - b.sort_order)[0] ?? null
 
   const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
   const isLeader = tier !== null && grades.length > 0 && tier.sort_order < bottomTier
-  const intakeGrade =
-    grades.find((g) => g.name === INTAKE_TIER) ??
-    grades.find((g) => g.sort_order === bottomTier) ??
-    null
 
   // The highest tier this leader may hand out — exactly one rung below their
   // own. Everything at or above their own tier is off limits.
@@ -3335,16 +3247,25 @@ function TeamTab({
     myLeader?.team_name ??
     (myLeader ? `${profileName(myLeader)}'s team` : 'No team yet')
 
-  /** Pull a new sign up into my team, landing them on the intake tier. */
+  /**
+   * Pull a new sign up into my team. They keep the tier they signed up on,
+   * which is already the lowest one — the leader then drags them up to what
+   * they actually do. Only if that tier is somehow NOT below the leader
+   * (a hand-edited row, a tier inserted since) do they drop to the bottom
+   * rung, so the board can always move them.
+   */
   async function claim(p: Profile) {
     if (!profile) return
+    const signupGrade = grades.find((g) => g.id === p.grade_id) ?? null
+    const placeable = signupGrade != null && mayAssign(signupGrade)
+    const floor = grades.find((g) => g.sort_order === bottomTier) ?? null
     setBusy(p.id)
     setError(null)
     const { error: err } = await supabase
       .from('access_profiles')
       .update({
         supervisor_id: profile.id,
-        grade_id: intakeGrade?.id ?? p.grade_id,
+        grade_id: placeable ? p.grade_id : floor?.id ?? p.grade_id,
         station_ids: profile.station_ids ?? [],
         station_id: profile.station_ids?.[0] ?? profile.station_id ?? null,
         tags_confirmed: true,
@@ -3484,7 +3405,7 @@ function TeamTab({
           {!loading && upperTiers.length === 0 && (
             <div className="mob-sub">
               {tier
-                ? `The ${tier.name} tier sits at or above ${TOP_CHART_TIER} — nothing above it on this chart.`
+                ? `The ${tier.name} tier sits at or above ${chartTop?.name ?? 'the top of the chart'} — nothing above it here.`
                 : 'No tier selected.'}
             </div>
           )}
