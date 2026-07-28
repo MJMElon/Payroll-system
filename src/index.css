@@ -592,8 +592,19 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .module-tile:hover {
   box-shadow: 0 4px 8px rgba(25, 32, 42, 0.09), 0 22px 48px rgba(30, 42, 58, 0.22);
 }
-.module-tile h2 { margin: 0 0 0.2rem; font-size: 1.02rem; }
+.module-tile h2 { margin: 0; font-size: 1.02rem; }
 .module-tile p { margin: 0; }
+/* The tile's top line: its mark on the left, and on the right the grip
+   that says the tile can be picked up and reordered — the affordance the
+   grid used to spell out in a sentence underneath it. */
+.tile-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+.tile-grip {
+  display: inline-flex; padding: 0.15rem 0.05rem; border-radius: 6px;
+  color: var(--muted); opacity: 0.4; cursor: grab;
+  transition: opacity 0.15s ease;
+}
+.module-tile:hover .tile-grip { opacity: 0.85; }
+.module-tile.dragging .tile-grip { cursor: grabbing; opacity: 1; }
 .tile-icon {
   width: 44px; height: 44px; border-radius: 13px;
   display: inline-flex; align-items: center; justify-content: center;

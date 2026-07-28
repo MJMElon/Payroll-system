@@ -19,7 +19,6 @@ interface ModuleDef {
   key: string
   to: string
   title: string
-  desc: string
   icon: JSX.Element
   show: (canSeePayroll: boolean) => boolean
 }
@@ -28,8 +27,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'operation',
     to: '/operation',
-    title: 'Operation',
-    desc: 'Station work records & approvals',
+    title: 'Operation module',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -42,8 +40,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'worker-management',
     to: '/workers',
-    title: 'Team Manage',
-    desc: 'Teams, sign-ups & salaries',
+    title: 'Team manage',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -58,8 +55,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'payroll',
     to: '/payroll',
-    title: 'Payroll Report',
-    desc: 'Runs, adjustments & finalize',
+    title: 'Payroll module',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -73,8 +69,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'piece-rate',
     to: '/piece-rate',
-    title: 'Piece Rate Management',
-    desc: 'Rates, approvals & history',
+    title: 'Piece rate module',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -87,8 +82,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'demo-mobile',
     to: '/demo-mobile',
-    title: 'Demo Mobile View',
-    desc: '',
+    title: 'Demo mobile view',
     show: () => true,
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -168,7 +162,7 @@ export default function Dashboard() {
 
   return (
     <div className="stack">
-      <h1>Overall Status:</h1>
+      <h1>Mill performance</h1>
 
       {canSee('station-status') && <StationBoard />}
 
@@ -188,16 +182,29 @@ export default function Dashboard() {
             }}
             title="Drag to reorder"
           >
-            <span className="tile-icon" aria-hidden="true">{m.icon}</span>
-            <div>
-              <h2>{m.title}</h2>
-              {m.desc && <p className="muted small">{m.desc}</p>}
-            </div>
+            <span className="tile-top">
+              <span className="tile-icon" aria-hidden="true">{m.icon}</span>
+              <span className="tile-grip" aria-hidden="true"><IconGrip /></span>
+            </span>
+            <h2>{m.title}</h2>
           </Link>
         ))}
       </div>
-      <p className="muted small">Drag the blocks to arrange them in your preferred order.</p>
     </div>
+  )
+}
+
+/** Six-dot grip — the "you can drag this" mark, worn by every tile. */
+function IconGrip() {
+  return (
+    <svg width="14" height="18" viewBox="0 0 14 18" fill="currentColor" aria-hidden="true">
+      <circle cx="4" cy="4" r="1.6" />
+      <circle cx="10" cy="4" r="1.6" />
+      <circle cx="4" cy="9" r="1.6" />
+      <circle cx="10" cy="9" r="1.6" />
+      <circle cx="4" cy="14" r="1.6" />
+      <circle cx="10" cy="14" r="1.6" />
+    </svg>
   )
 }
 
