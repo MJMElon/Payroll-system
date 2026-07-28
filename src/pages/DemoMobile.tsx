@@ -1165,12 +1165,6 @@ function PerformanceTab({
               </div>
             </div>
 
-            {awaiting.length > 0 && (
-              <button className="mob-alert" onClick={() => setShowApprovals(true)}>
-                ⚠ {awaiting.length} record{awaiting.length === 1 ? '' : 's'} awaiting {canFinal ? 'final approval' : 'verification'} — tap to review →
-              </button>
-            )}
-
             {stationPct.length > 0 && !millWide && (
               <div className="mob-card">
                 <div className="mob-title">Approval completion by station</div>
@@ -2189,6 +2183,7 @@ function EntryDetail({
   amountFor,
   tier2RateFor,
   onBack,
+  workerTier,
   decide,
 }: {
   entry: ProductionEntry
@@ -2200,6 +2195,8 @@ function EntryDetail({
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
   onBack: () => void
+  /** The tier tag of whoever submitted it — the viewer's own by default. */
+  workerTier?: Grade | null
   /** Shown only when the viewer's tag grants the step this record is at. */
   decide?: { canVerify: boolean; canApprove: boolean; busy: boolean; act: (next: 'verified' | 'approved' | 'rejected') => void }
 }) {
@@ -2219,9 +2216,52 @@ function EntryDetail({
   const photoUrl = (path: string | null) =>
     path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
 
+  const workerTag = workerTier === undefined ? tier : workerTier
   const submittedAt = new Date(entry.created_at)
   const verified = Boolean(entry.verified_by) || status === 'approved'
   const approved = status === 'approved'
+  const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
+  const hhmm = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const rate1 = rateFor(entry.job_id)
+  const rate2 = tier2RateFor(entry.job_id)
+
+  // One row per photo where the work was stamped hour by hour, otherwise
+  // the entry is the single row. The rate on a row is the tier that unit
+  // actually earned.
+  const rateAt = (index: number) =>
+    rate2 != null && index >= TIER1_UNIT_CAP ? rate2 : rate1
+  const rows =
+    photos.length > 0
+      ? photos
+          .slice()
+          .sort((a, b) => a.taken_at.localeCompare(b.taken_at))
+          .map((ph, i) => ({
+            key: ph.id,
+            time: hhmm(new Date(ph.taken_at)),
+            qty: 1,
+            rate: rateAt(i),
+            url: photoUrl(ph.photo_path),
+          }))
+      : [{
+          key: entry.id,
+          time: hhmm(submittedAt),
+          qty: entry.quantity,
+          rate: rate1,
+          url: null as string | null,
+        }]
+
+  // The sum, said the way it was worked out: each rate against the units
+  // that earned it.
+  const calcLines =
+    rate2 == null || entry.quantity <= TIER1_UNIT_CAP
+      ? [{ label: `${fmtQty(entry.quantity)} × ${RM(rate1)}`, value: entry.quantity * rate1 }]
+      : [
+          { label: `${TIER1_UNIT_CAP} × ${RM(rate1)}`, value: TIER1_UNIT_CAP * rate1 },
+          {
+            label: `${fmtQty(entry.quantity - TIER1_UNIT_CAP)} × ${RM(rate2)}`,
+            value: (entry.quantity - TIER1_UNIT_CAP) * rate2,
+          },
+        ]
 
   return (
     <>
@@ -2232,68 +2272,67 @@ function EntryDetail({
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Entry detail</div>
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Submitted work record</div>
 
+        {/* Whose record this is and what it is for. No money here — the
+            rate belongs with the parameters it was applied to, and the
+            total with the sum that produced it. */}
         <div className="mob-card">
-          <div className="mob-row">
-            <span>
-              <div className="mob-entry-name">{job?.name ?? 'Work'} · {station?.name ?? '?'}</div>
-              <div className="mob-station-meta">
-                {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-                  day: 'numeric', month: 'long', year: 'numeric',
-                })} · {myName}
-              </div>
-            </span>
-            <span className="mob-detail-amt">{RM(total)}</span>
-          </div>
-          {statusChip(status)}
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">Submitted parameters</div>
-          <div className="mob-grid2">
-            <div>
-              <div className="mob-field-label">Quantity</div>
-              <div className="mob-param">{entry.quantity} {job ? job.unit.replace('/', '') : ''}</div>
-            </div>
-            <div>
-              <div className="mob-field-label">Rate</div>
-              <div className="mob-param">{rateLabelFor(rateFor, tier2RateFor, entry.job_id)}{job?.unit ?? ''}</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">
-            Photo evidence{' '}
-            <span className="mob-chip">{photos.length} photo{photos.length === 1 ? '' : 's'}</span>
-          </div>
-          {photos.length === 0 && <div className="mob-sub">No photos attached.</div>}
-          <div className="mob-photo-grid">
-            {photos.map((p) => {
-              const url = photoUrl(p.photo_path)
-              return url ? (
-                <a key={p.id} href={url} target="_blank" rel="noreferrer">
-                  <img className="mob-photo" src={url} alt="evidence" />
-                </a>
-              ) : (
-                <span key={p.id} className="mob-chip">no photo</span>
-              )
+          <div className="mob-entry-name">{station?.name ?? '?'}</div>
+          <div className="mob-station-meta">
+            {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+              day: 'numeric', month: 'long', year: 'numeric',
             })}
           </div>
+          <div className="mob-review-tags" style={{ marginTop: '0.2rem' }}>
+            {workerTag && <span className={tagClass(workerTag.color)}>{workerTag.name}</span>}
+            <span className="mob-entry-name">{myName}</span>
+          </div>
+          <div className="mob-row" style={{ marginTop: '0.2rem' }}>
+            <span>{job?.name ?? 'Work'}</span>
+            {statusChip(status)}
+          </div>
+        </div>
+
+        {/* What was actually submitted. Hourly work arrives a photo at a
+            time, so each stamp is its own row with the rate it earned —
+            the first few in an hour pay the higher tier. The evidence sits
+            beside the row it belongs to rather than in a gallery of its
+            own. */}
+        <div className="mob-card">
+          <div className="mob-title">Submitted parameter</div>
+          <div className="mob-paramrows">
+            {rows.map((r, i) => (
+              <div className="mob-paramrow" key={r.key}>
+                <span className="mob-paramrow-time">{r.time}</span>
+                <span className="mob-paramrow-qty">
+                  {fmtQty(r.qty)} {job ? job.unit.replace('/', '') : ''}
+                </span>
+                <span className="mob-paramrow-rate">{RM(r.rate)}{job?.unit ?? ''}</span>
+                <span className="mob-paramrow-photo">
+                  {r.url ? (
+                    <a href={r.url} target="_blank" rel="noreferrer">
+                      <img className="mob-photo sm" src={r.url} alt={`evidence ${i + 1}`} />
+                    </a>
+                  ) : (
+                    <span className="mob-chip">no photo</span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="mob-card">
-          <div className="mob-title">Earnings breakdown</div>
-          <div className="mob-breakrow">
-            <span>
-              Base ({breakdownFor(rateFor, tier2RateFor, entry.job_id, entry.quantity)}
-              {job?.unit ?? ''})
-            </span>
-            <span>{total.toFixed(2)}</span>
-          </div>
+          <div className="mob-title">Calculation</div>
+          {calcLines.map((l) => (
+            <div className="mob-breakrow" key={l.label}>
+              <span>{l.label}</span>
+              <span>{l.value.toFixed(2)}</span>
+            </div>
+          ))}
           <div className="mob-breakrow total">
-            <span>Total</span>
+            <span>Total amount</span>
             <span>{RM(total)}</span>
           </div>
         </div>
@@ -2316,7 +2355,7 @@ function EntryDetail({
               <span>
                 <div className="mob-step-name">Verification</div>
                 <div className="mob-station-meta">
-                  {entry.verified_by ? entry.verified_by : status === 'rejected' ? 'Rejected' : verified ? 'Done' : 'Pending · verify tier'}
+                  {entry.verified_by ? entry.verified_by : status === 'rejected' ? 'Rejected' : verified ? 'Done' : 'Pending'}
                 </div>
               </span>
             </div>
@@ -2325,7 +2364,7 @@ function EntryDetail({
               <span>
                 <div className="mob-step-name">Final approval</div>
                 <div className="mob-station-meta">
-                  {entry.approved_by ? entry.approved_by : approved ? 'Done' : 'Waiting · approve tier'}
+                  {entry.approved_by ? entry.approved_by : approved ? 'Done' : 'Waiting'}
                 </div>
               </span>
             </div>
@@ -2718,6 +2757,11 @@ function MyWorkTab({
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
         onBack={() => setDetail(null)}
+        workerTier={
+          detail.user_id && detail.user_id !== profileId
+            ? grades.find((g) => g.id === submitters.get(detail.user_id!)?.grade_id) ?? null
+            : tier
+        }
         decide={
           detail.user_id !== profileId && (canVerify || canApprove)
             ? {

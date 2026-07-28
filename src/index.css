@@ -2368,3 +2368,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-review-go {
   align-self: flex-end; font-size: 0.7rem; font-weight: 800; color: var(--accent-strong);
 }
+
+/* Submitted parameters, one row per stamp: when, how much, at what rate,
+   and the photo that backs it. */
+.mob-paramrows { display: flex; flex-direction: column; gap: 0.3rem; }
+.mob-paramrow {
+  display: grid; grid-template-columns: 3.4rem 1fr 1fr 2.6rem;
+  align-items: center; gap: 0.4rem;
+  font-size: 0.72rem; padding: 0.25rem 0; border-top: 1px solid #eef0f4;
+}
+.mob-paramrow:first-child { border-top: none; }
+.mob-paramrow-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mob-paramrow-qty { font-weight: 700; }
+.mob-paramrow-rate { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mob-paramrow-photo { justify-self: end; }
+.mob-photo.sm { width: 34px; height: 34px; object-fit: cover; border-radius: 7px; }
