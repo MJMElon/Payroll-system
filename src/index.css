@@ -1252,6 +1252,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-side { position: sticky; top: 4.25rem; align-self: start; }
 .wm-side-inner {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  transition: border-color 0.12s, background 0.12s;
   padding: 0.8rem 0.9rem 0.9rem; display: flex; flex-direction: column; gap: 0.55rem;
   max-height: calc(100vh - 5.5rem); overflow-y: auto;
 }
@@ -1262,8 +1263,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; align-items: center; gap: 0.4rem;
   font-size: 1rem; font-weight: 600; letter-spacing: -0.01em;
 }
-.wm-side-caret { color: var(--muted); font-size: 0.7rem; }
+.wm-side-caret { color: var(--muted); font-size: 0.7rem; flex: none; }
+.wm-side-label { flex: 1; text-align: left; }
 .wm-side-title .count-badge.static { margin-left: 0.15rem; }
+.wm-side-inner.over { border-color: var(--accent-strong); border-style: dashed; background: var(--accent-soft); }
 .wm-signup-list { display: flex; flex-direction: column; gap: 0.45rem; }
 .wm-block.wm-signup { width: 100%; }
 .wm-block-bar.new { background: linear-gradient(90deg, #f97316, #dc2626); }
@@ -1348,6 +1351,58 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .wm-block:hover .wm-add, .wm-block.selected .wm-add { visibility: visible; }
 .wm-add:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
+
+/* Station boxes: the floor from the station-head tier down. */
+.wm-stations { display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.5rem; }
+.wm-station-box {
+  border: 1px solid var(--border); border-radius: 12px;
+  background: #fafbfc; padding: 0.6rem 0.7rem 0.7rem;
+}
+.wm-station-head {
+  display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap;
+  padding-bottom: 0.45rem; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border);
+}
+.wm-station-name {
+  font-size: 0.82rem; font-weight: 800; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--accent-strong);
+}
+.wm-station-counts { color: var(--muted); font-size: 0.72rem; }
+.wm-station-heads {
+  display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;
+  margin-bottom: 0.55rem;
+}
+.wm-team-boxes { display: flex; gap: 0.6rem; align-items: flex-start; overflow-x: auto; padding-bottom: 0.2rem; }
+
+.wm-team-box {
+  flex: none; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); padding: 0.45rem 0.5rem 0.5rem; min-width: 216px;
+}
+.wm-team-box.over { border-color: var(--accent-strong); box-shadow: 0 0 0 2px var(--accent-soft); }
+.wm-team-box-head {
+  display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
+  padding-bottom: 0.4rem; margin-bottom: 0.45rem; border-bottom: 1px dashed var(--border);
+}
+.wm-team-box-counts { color: var(--muted); font-size: 0.68rem; }
+.wm-team-box-tools { margin-left: auto; display: flex; gap: 0.1rem; }
+.wm-team-box-head:hover .wm-icon { visibility: visible; }
+.wm-team-box-body { display: flex; flex-direction: column; gap: 0.45rem; }
+
+.wm-sub-box {
+  border: 1px dashed #e2e6ec; border-radius: 9px; padding: 0.35rem;
+  display: flex; flex-direction: column; gap: 0.35rem; background: #fcfcfd;
+}
+.wm-sub-box.over { border-color: var(--accent-strong); border-style: solid; background: var(--accent-soft); }
+.wm-sub-box.loose { border-style: dotted; }
+.wm-sub-people { display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; }
+
+/* The compact block used for the deepest tier inside a team. */
+.wm-block.mini {
+  width: auto; min-width: 96px; max-width: 150px;
+  padding: 0.3rem 0.45rem 0.3rem;
+}
+.wm-block.mini .wm-block-bar { height: 2px; }
+.wm-block.mini .wm-block-name { margin-top: 0.1rem; font-size: 0.76rem; }
+.wm-block.mini .wm-block-foot { margin-top: 0; min-height: 0; }
 
 /* A team cluster inside a row. */
 .wm-cluster {
