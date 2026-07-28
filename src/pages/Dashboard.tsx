@@ -73,7 +73,7 @@ const MODULES: ModuleDef[] = [
   {
     key: 'piece-rate',
     to: '/piece-rate',
-    title: 'Piece Rate Management',
+    title: 'Piece Rate Module',
     desc: 'Rates, approvals & history',
     show: () => true,
     icon: (
