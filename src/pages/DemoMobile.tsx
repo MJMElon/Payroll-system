@@ -3426,11 +3426,11 @@ function ProfileTab({
                 )}
               </div>
               {editing && (
-                <div className="row-form">
-                  <button className="mob-mini" disabled={saving} onClick={saveDetails}>
+                <div className="mob-actions">
+                  <button className="mob-mini ghost" onClick={() => setEditing(false)}>Cancel</button>
+                  <button className="mob-mini go" disabled={saving} onClick={saveDetails}>
                     {saving ? 'Saving…' : 'Save'}
                   </button>
-                  <button className="mob-mini" onClick={() => setEditing(false)}>Cancel</button>
                 </div>
               )}
             </>
@@ -4131,9 +4131,20 @@ function TeamTab({
         key: t.id,
         team: t,
         name: t.name || NO_TEAM_NAME,
-        members: people.filter((p) => p.team_id === t.id),
+        members: people.filter((p) => p.team_id === t.id && atStation(p)),
       }))
     : []
+  /**
+   * Everyone at the station in view who sits on a rung below the reader.
+   * This is what "my people" means on a shared floor: the station and the
+   * rung place somebody, not a single supervisor field.
+   */
+  const stationPeople = people.filter((p) => {
+    if (!atStation(p)) return false
+    const order = grades.find((g) => g.id === placedGrade(p))?.sort_order
+    return order != null && tier != null && order > tier.sort_order
+  })
+
   // At this station, under me, and in no team — a freshly claimed sign up,
   // most often.
   const looseMembers = runsTeams
@@ -4450,17 +4461,17 @@ function TeamTab({
               ? 'Drag a name onto another tier'
               : `${staged.size} move${staged.size === 1 ? '' : 's'} ready`}
           </span>
-          <button className="mob-mini" disabled={staged.size === 0 || busy === 'save-moves'} onClick={saveMoves}>
-            Save
-          </button>
           <button
-            className="mob-mini"
+            className="mob-mini ghost"
             onClick={() => {
               setStaged(new Map())
               setMoveMode(false)
             }}
           >
             Cancel
+          </button>
+          <button className="mob-mini go" disabled={staged.size === 0 || busy === 'save-moves'} onClick={saveMoves}>
+            Save
           </button>
         </div>
       )}
@@ -4504,14 +4515,16 @@ function TeamTab({
                     if (e.key === 'Escape') setDraftName(null)
                   }}
                 />
-                <button
-                  className="mob-mini"
-                  disabled={!draftName.trim() || busy === 'new-team'}
-                  onClick={saveTeam}
-                >
-                  Save
-                </button>
-                <button className="mob-mini" onClick={() => setDraftName(null)}>Cancel</button>
+                <div className="mob-actions">
+                  <button className="mob-mini ghost" onClick={() => setDraftName(null)}>Cancel</button>
+                  <button
+                    className="mob-mini go"
+                    disabled={!draftName.trim() || busy === 'new-team'}
+                    onClick={saveTeam}
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
             )}
 
@@ -4548,7 +4561,11 @@ function TeamTab({
         </>
       ) : (
         memberTiers.map((g) => {
-          const members = myTeam.filter((p) => placedGrade(p) === g.id)
+          // The people at this station on this rung — not only those whose
+          // supervisor row happens to point at you. An assistant station
+          // head saw nothing because the operators beside them were tied to
+          // the station and to a team, not to that one field.
+          const members = stationPeople.filter((p) => placedGrade(p) === g.id)
           if (!canManageTeam && members.length === 0) return null
           return <Lane key={g.id} grade={g} team={undefined} members={members} />
         })

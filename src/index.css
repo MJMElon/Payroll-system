@@ -1041,6 +1041,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Step between teams. */
 .mob-teamnav { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; margin-top: 0.15rem; }
 .mob-teamnav .mob-mini { padding: 0.3rem 0.8rem; font-size: 0.9rem; line-height: 1; }
+/* A confirm pair: Cancel then Save, sharing the block's width equally so
+   the commit is where a thumb ends up. */
+.mob-actions { display: flex; gap: 0.4rem; margin-top: 0.15rem; }
+.mob-actions .mob-mini { flex: 1; padding: 0.45rem 0.5rem; text-align: center; }
+.mob-mini.ghost { background: #eef0f4; color: var(--muted); }
+.mob-mini.go { background: var(--accent-strong); color: #fff; }
+.mob-mini.go:disabled { opacity: 0.45; }
+
 /* Naming a new team, before it is written. */
 .mob-newteam { display: flex; flex-direction: column; gap: 0.4rem; }
 /* An empty rung asks to be filled instead of just sitting there. */
