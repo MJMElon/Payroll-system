@@ -267,6 +267,20 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
 }
 .ui-select-option .tick { flex: none; opacity: 0; }
 .ui-select-option[aria-selected='true'] .tick { opacity: 1; }
+/* Tick-several lists (a rate that pays two tiers, or stands at three
+   stations): a box per row, and the names are written out in full — the
+   panel widens past the trigger rather than shortening what it says. */
+.ui-select-menu.floating { position: fixed; right: auto; bottom: auto; }
+.ui-select.multi .ui-select-menu { right: auto; width: max-content; max-width: 320px; }
+.ui-select.multi .ui-select-option-label { overflow: visible; text-overflow: clip; }
+.ui-select-box {
+  flex: none; width: 16px; height: 16px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--surface);
+  display: flex; align-items: center; justify-content: center; color: transparent;
+}
+.ui-select-option[aria-selected='true'] .ui-select-box {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
 .ui-select-empty { padding: 0.5rem 0.55rem; font-size: 0.85rem; color: var(--muted); }
 
 /* Tabs */
@@ -1292,24 +1306,6 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   text-transform: uppercase; letter-spacing: 0.07em;
 }
 
-/* Create piece rate — the window is the listing: one line per rate, so a
-   batch can be keyed in and submitted together. Wide enough for eight
-   columns, and the table itself scrolls sideways on a small screen. */
-.modal.modal-table { max-width: min(1280px, 96vw); }
-.rate-rows th, .rate-rows td { padding: 0.35rem 0.3rem; vertical-align: middle; }
-.rate-rows td select,
-.rate-rows td input { width: 100%; padding: 0.45rem 0.45rem; font-size: 0.85rem; }
-.rate-rows td input.money { text-align: right; }
-.rate-rows .c-station { min-width: 130px; }
-.rate-rows .c-tag { min-width: 125px; }
-.rate-rows .c-desc { min-width: 185px; }
-.rate-rows .c-num { min-width: 102px; }
-.rate-rows th.c-num { text-align: right; }
-.rate-rows .c-unit { min-width: 138px; }
-.rate-rows .c-date { min-width: 142px; }
-.rate-rows .c-kill { width: 34px; }
-.rate-rows .c-kill .modal-close { width: 26px; height: 26px; }
-
 /* Tag editor — titled setting sections */
 .modal.modal-wide { max-width: 640px; }
 .tag-section {
@@ -2050,6 +2046,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* line, so a whole batch of rates goes in without reopening.           */
 /* ------------------------------------------------------------------ */
 .modal.modal-xwide { max-width: min(1180px, 96vw); }
+/* Paid by the hour puts two more columns on every line, so the window
+   takes the extra width rather than squeezing the six it already had. */
+.modal.modal-xwide.tiered { max-width: min(1340px, 96vw); }
 
 .pr-grid { display: flex; flex-direction: column; gap: 0.5rem; }
 .pr-grid-head, .pr-grid-row {
@@ -2058,6 +2057,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
     minmax(140px, 1fr) minmax(140px, 1fr) minmax(190px, 1.7fr)
     minmax(132px, 1.05fr) minmax(120px, 0.95fr) minmax(140px, 1.05fr) 34px;
   gap: 0.5rem; align-items: start;
+}
+.pr-grid.tiered .pr-grid-head,
+.pr-grid.tiered .pr-grid-row {
+  grid-template-columns:
+    minmax(158px, 1.1fr) minmax(158px, 1.1fr) minmax(175px, 1.4fr)
+    minmax(128px, 1fr) minmax(100px, 0.75fr) minmax(100px, 0.75fr)
+    minmax(100px, 0.75fr) minmax(134px, 1fr) 34px;
+}
+/* A line that is not paid by the hour leaves the two hourly cells empty,
+   and one that is leaves the flat rate empty — the dash keeps the cell
+   the same height as the boxes beside it. */
+.pr-none {
+  display: flex; align-items: center; min-height: 40px;
+  padding: 0 0.6rem; color: var(--muted);
 }
 .pr-grid-head {
   padding: 0 0.1rem 0.1rem; font-size: 0.7rem; font-weight: 800;
@@ -2102,7 +2115,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 @media (max-width: 1000px) {
   .pr-grid-head { display: none; }
-  .pr-grid-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+  .pr-grid-row,
+  .pr-grid.tiered .pr-grid-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
   .pr-grid-row .pr-cell-label { display: block; }
   .pr-grid-row { padding: 1.9rem 0.6rem 0.6rem; }
   .pr-grid-row .pr-cell.wide { grid-column: 1 / -1; }
@@ -2111,7 +2125,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   .pr-row-drop { position: absolute; top: 0.3rem; right: 0.35rem; }
 }
 @media (max-width: 560px) {
-  .pr-grid-row { grid-template-columns: minmax(0, 1fr); }
+  .pr-grid-row,
+  .pr-grid.tiered .pr-grid-row { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ------------------------------------------------------------------ */
@@ -2136,9 +2151,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
   flex: none; padding-right: 0.9rem; border-right: 1px solid var(--border);
 }
-.op-rail-vert {
-  writing-mode: vertical-rl; text-orientation: mixed;
-  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.09em;
+.op-rail-word {
+  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.07em;
   text-transform: uppercase; color: var(--muted);
 }
 .op-rail-search {
@@ -2198,7 +2212,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    sideways at its own edge rather than wrapping every name onto three
    lines. The width below is what the columns need UNwrapped; padding is
    tightened to keep that number as low as it can honestly go. */
-.op-table { min-width: 1150px; }
+.op-table { min-width: 1000px; }
+/* Tiered rate, once the 5th unit was reached: which units paid which
+   price, one price per line. */
+.op-rate-break { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 0.05rem; }
 .op-table th, .op-table td { padding: 0.45rem 0.5rem; }
 .op-table th, .op-table td { white-space: nowrap; }
 /* The one column that can run long: it is clipped with the whole name on
@@ -2219,6 +2236,21 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .op-filters { align-items: flex-end; }
 .op-filters .btn { margin-bottom: 1px; }
 .op-tabbar { margin: 0; }
+/* The three Work Record tabs split the bar's full width evenly. The open
+   tab wears the button's dark metal so there is no squinting at two
+   near-identical whites to find where you are. */
+.tabs.glass.op-tabs { display: flex; align-self: stretch; }
+.op-tabs .tab { flex: 1; text-align: center; font-weight: 600; }
+.tabs.glass.op-tabs .tab.active {
+  color: #fff;
+  background: linear-gradient(180deg, #566270, #333c47);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 4px 14px rgba(35, 45, 58, 0.32);
+}
+
+/* The station whose records are on screen, said in the section title so
+   it survives the rail being folded away. */
+.op-h3-station { color: var(--accent-strong); font-weight: 700; }
+
 /* Count riding in a tab label. */
 .tab-count {
   display: inline-block; margin-left: 0.3rem; padding: 0 0.35rem;
@@ -2231,6 +2263,60 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .op-line { display: flex; gap: 0.7rem; align-items: baseline; font-size: 0.85rem; }
 .op-line-label { color: var(--muted); min-width: 132px; flex: none; }
 .op-line-value { min-width: 0; }
+
+/* The record's head: tag + name lead, the date holds the right edge,
+   the station reads underneath. */
+.op-head { display: flex; align-items: flex-start; gap: 0.8rem; }
+.op-head-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.op-head-name { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 1.05rem; }
+.op-head-station { color: var(--muted); font-size: 0.85rem; }
+.op-head-date { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* The job carries the day section as its title. */
+.op-job-title {
+  font-family: 'Montserrat', system-ui, sans-serif;
+  font-weight: 800; font-size: 1rem; margin-bottom: 0.15rem;
+}
+
+/* The calculation: one priced line per rate, the total ruled off. */
+.op-calc-line {
+  display: flex; justify-content: space-between; gap: 0.8rem;
+  font-size: 0.85rem; font-variant-numeric: tabular-nums;
+}
+.op-calc-line.total {
+  border-top: 1px solid var(--border); padding-top: 0.35rem; margin-top: 0.15rem;
+  font-weight: 800; font-size: 0.95rem;
+}
+
+/* The day laid out on the mill clock: one line per hour, submissions
+   numbered inside the hour they arrived; empty stretches fold into one
+   quiet line so the shape of the day stays visible without the noise. */
+.op-timeline { display: flex; flex-direction: column; margin-top: 0.2rem; }
+.op-tl-row {
+  display: flex; gap: 0.8rem; align-items: flex-start;
+  padding: 0.4rem 0; border-top: 1px solid var(--border);
+}
+.op-tl-row:first-child { border-top: none; }
+.op-tl-row.empty { padding: 0.15rem 0; }
+.op-tl-hour {
+  flex: none; width: 108px; font-size: 0.75rem; font-weight: 700;
+  color: var(--accent-strong); font-variant-numeric: tabular-nums; padding-top: 0.1rem;
+}
+.op-tl-row.empty .op-tl-hour { color: var(--muted); font-weight: 600; }
+.op-tl-none { color: var(--border); }
+.op-tl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; flex: 1; min-width: 0; }
+.op-tl-entry {
+  display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;
+  font-size: 0.83rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
+  padding: 0.35rem 0.55rem;
+}
+.op-tl-no { font-weight: 800; color: var(--muted); }
+.op-tl-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.op-tl-qty { font-weight: 700; }
+.op-tl-amt { color: var(--muted); font-variant-numeric: tabular-nums; }
+.op-tl-actions { margin-left: auto; display: flex; align-items: center; gap: 0.35rem; }
+.op-tl-reason { flex-basis: 100%; }
 
 /* Selection: only rows this user may actually action carry a box. */
 .op-check-col { width: 30px; padding-right: 0 !important; }
@@ -2255,5 +2341,4 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
     flex-direction: row; width: 100%; padding-right: 0; padding-bottom: 0.5rem;
     border-right: none; border-bottom: 1px solid var(--border); justify-content: flex-start;
   }
-  .op-rail-vert { writing-mode: horizontal-tb; }
 }
