@@ -595,6 +595,50 @@ function RecordRow({ record, url }: { record: PhotoRecord; url: string | null })
   )
 }
 
+/**
+ * One period of the "work done" target, read like a usage meter: the window
+ * and the headline percentage on top, a single 100% track filled by what was
+ * approved and then by what was rejected, and the counts underneath. The
+ * empty remainder IS the waiting slice — no third segment needed.
+ */
+function ScoreMeter({
+  label,
+  score,
+}: {
+  label: string
+  score: {
+    total: number
+    done: number
+    rejected: number
+    waiting: number
+    donePct: number
+    rejectedPct: number
+    waitingPct: number
+  }
+}) {
+  return (
+    <div className="mob-meter">
+      <div className="mob-meter-head">
+        <span className="mob-meter-label">{label}</span>
+        <span className="mob-meter-pct">{score.donePct}%</span>
+      </div>
+      <div
+        className="mob-scorebar"
+        role="img"
+        aria-label={`${label}: ${score.donePct}% done, ${score.rejectedPct}% rejected, ${score.waitingPct}% waiting`}
+      >
+        <div className="done" style={{ width: `${score.donePct}%` }} />
+        <div className="bad" style={{ width: `${score.rejectedPct}%` }} />
+      </div>
+      <div className="mob-meter-foot">
+        {score.total === 0
+          ? 'Nothing recorded yet'
+          : `${score.total} record${score.total === 1 ? '' : 's'} · ${score.done} done · ${score.rejected} rejected · ${score.waiting} waiting`}
+      </div>
+    </div>
+  )
+}
+
 function statusChip(status: string | undefined) {
   const s = status ?? 'approved'
   const cls = s === 'approved' ? 'ok' : s === 'rejected' ? 'bad' : s === 'verified' ? 'mid' : 'warn'
@@ -697,9 +741,6 @@ function PerformanceTab({
     return () => clearInterval(t)
   }, [canEntry, profileId])
 
-  const myMonthEntries = myEntries.filter(
-    (e) => e.work_date >= monthStart && e.approval_status !== 'rejected',
-  )
   const needsFix = myEntries.filter((e) => e.approval_status === 'rejected').length
 
   // This week's daily quantity (Mon–Sun).
@@ -861,6 +902,46 @@ function PerformanceTab({
     return { workers, output, pct }
   }
   const totalOutput = stations.reduce((s, st) => s + statFor(st.id).output, 0)
+
+  // TODAY, per station. There is no daily target to measure against (a
+  // station's target is per hour, and how many hours it ran is not known
+  // here), so the bar compares the stations with each other and the number
+  // beside it is the real output.
+  const todayStatFor = (sid: string) => {
+    const rows = entries.filter((e) => e.station_id === sid && e.work_date === todayISO())
+    return {
+      workers: new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size,
+      output: rows.reduce((s, e) => s + e.quantity, 0),
+    }
+  }
+  const todayByStation = stations.map((s) => ({ station: s, ...todayStatFor(s.id) }))
+  const busiestToday = Math.max(1, ...todayByStation.map((s) => s.output))
+  const outputToday = todayByStation.reduce((s, x) => s + x.output, 0)
+
+  // My own scorecard, against a target of everything I submit ending up
+  // approved. Read as a meter over two windows: today first, then the week
+  // it sits in. Today is mostly "waiting" by nature — work recorded this
+  // morning has not been through approval yet — which is exactly what the
+  // waiting slice is there to show.
+  const scoreOver = (rows: ProductionEntry[]) => {
+    const count = (k: string) => rows.filter((e) => (e.approval_status ?? 'approved') === k).length
+    const done = count('approved')
+    const rejected = count('rejected')
+    const pct = (n: number) => (rows.length > 0 ? Math.round((n / rows.length) * 100) : 0)
+    const donePct = pct(done)
+    const rejectedPct = pct(rejected)
+    return {
+      total: rows.length,
+      done,
+      rejected,
+      waiting: rows.length - done - rejected,
+      donePct,
+      rejectedPct,
+      waitingPct: Math.max(0, 100 - donePct - rejectedPct),
+    }
+  }
+  const myToday = scoreOver(myEntries.filter((e) => e.work_date === todayISO()))
+  const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
   const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
   const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
   const compliance = scopedRows.length > 0 ? Math.round((doneAll / scopedRows.length) * 100) : null
@@ -879,12 +960,54 @@ function PerformanceTab({
           <div className="mob-sub">{monthLabel} · {scoped ? 'your stations' : 'all stations'}</div>
         </div>
 
+        {/* 1 — how the floor is running TODAY. Tap a station for its records. */}
+        <div className="mob-card">
+          <div className="mob-card-label">Station performance · today</div>
+          <div className="mob-sub">
+            {fmtQty(outputToday)} output across {todayByStation.filter((s) => s.output > 0).length} of{' '}
+            {stations.length} station{stations.length === 1 ? '' : 's'}
+          </div>
+          {stations.length === 0 && (
+            <div className="mob-sub">No stations for your tags yet — set station tags in Settings.</div>
+          )}
+          <div className="mob-bars">
+            {todayByStation.map(({ station: s, output }) => (
+              <button className="mob-barrow tappable" key={s.id} onClick={() => setStation(s)}>
+                <span className="lbl station">{s.name}</span>
+                <span className="mob-bartrack">
+                  <div
+                    className={output > 0 && output === busiestToday ? 'best' : ''}
+                    style={{ width: `${(output / busiestToday) * 100}%` }}
+                  />
+                </span>
+                <span className="val qty">{output > 0 ? fmtQty(output) : '·'}</span>
+              </button>
+            ))}
+          </div>
+          {todayByStation.some((s) => s.workers > 0) && (
+            <div className="mob-sub">
+              {todayByStation.reduce((n, s) => n + s.workers, 0)} working today
+            </div>
+          )}
+        </div>
+
+        {/* 2 — my own scorecard: everything I submit should end up approved. */}
+        {canEntry && (
+          <div className="mob-card">
+            <div className="mob-card-label">My work done</div>
+            <div className="mob-sub">Target 100% approved</div>
+            <ScoreMeter label="Today" score={myToday} />
+            <ScoreMeter label="This week" score={myThisWeek} />
+            <div className="mob-scorekey">
+              <span><i className="dot done" />Work done</span>
+              <span><i className="dot bad" />Rejected</span>
+              <span><i className="dot wait" />Waiting approval</span>
+            </div>
+          </div>
+        )}
+
         {canEntry && (
           <>
-            <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
-              My work · {myMonthEntries.length} record{myMonthEntries.length === 1 ? '' : 's'} this month
-            </div>
-
             {needsFix > 0 && (
               <button className="mob-alert" onClick={onMyWork}>
                 ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
@@ -962,7 +1085,7 @@ function PerformanceTab({
                 <div className="mob-bars">
                   {stationPct.map((s) => (
                     <div className="mob-barrow" key={s.id}>
-                      <span className="lbl wide">{s.name}</span>
+                      <span className="lbl station">{s.name}</span>
                       <span className="mob-bartrack">
                         <div className={s.pct! < 80 ? 'best' : ''} style={{ width: `${s.pct}%` }} />
                       </span>
@@ -1028,33 +1151,28 @@ function PerformanceTab({
           </div>
         </div>
 
-        <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Station performance — tap to open records</div>
-        {stations.length === 0 && (
-          <p className="muted small">No stations for your tags yet — set station tags in Settings.</p>
-        )}
-        {stations.map((s) => {
-          const st = statFor(s.id)
-          return (
-            <button className="mob-station perf" key={s.id} onClick={() => setStation(s)}>
-              <span className="perf-top">
-                <span>{s.name}</span>
-                <span className="mob-station-meta">
-                  {st.workers > 0 ? `${st.workers} worker${st.workers === 1 ? '' : 's'} · ` : ''}
-                  {fmtQty(st.output)} output ›
+        {/* Month-to-date per station, below the day's picture. */}
+        <div className="mob-card">
+          <div className="mob-card-label">Station output · this month</div>
+          {stations.map((s) => {
+            const st = statFor(s.id)
+            return (
+              <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
+                <span>
+                  <span className="mob-entry-name">{s.name}</span>
+                  <span className="mob-station-meta" style={{ display: 'block' }}>
+                    {st.workers > 0 ? `${st.workers} worker${st.workers === 1 ? '' : 's'} · ` : ''}
+                    {st.pct == null ? 'no records' : `${st.pct}% approved`}
+                  </span>
                 </span>
-              </span>
-              <span className="perf-bar-row">
-                <span className="mob-bartrack">
-                  <div
-                    className={st.pct != null && st.pct < 80 ? 'best' : ''}
-                    style={{ width: `${st.pct ?? 0}%` }}
-                  />
+                <span className="mob-entry-side">
+                  <span className="mob-entry-amt">{fmtQty(st.output)}</span>
+                  <span className="mob-caret">›</span>
                 </span>
-                <span className="val">{st.pct == null ? '—' : `${st.pct}%`}</span>
-              </span>
-            </button>
-          )
-        })}
+              </button>
+            )
+          })}
+        </div>
       </div>
     </>
   )
@@ -3219,9 +3337,18 @@ function TeamTab({
   const chartTop = grades
     .filter((g) => g.sort_order > ADMIN_TIER_ORDER)
     .sort((a, b) => a.sort_order - b.sort_order)[0] ?? null
+  // Below you — the rungs your own people sit on, and the only ones that
+  // can take a drop.
+  const lowerTiers = tier
+    ? grades.filter((g) => g.sort_order > tier.sort_order).sort((a, b) => a.sort_order - b.sort_order)
+    : []
 
   const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
-  const isLeader = tier !== null && grades.length > 0 && tier.sort_order < bottomTier
+  // Who may work a team is a SETTING, not a position on the ladder. Sitting
+  // above the bottom tier no longer implies it — the tag has to grant
+  // "Claim Sign Ups & Set Tier" (Settings → Tags management). Everyone
+  // still sees the chart; only the two working sections are gated.
+  const canManageTeam = effectiveCapabilities(tier).includes('team-assign')
 
   // The highest tier this leader may hand out — exactly one rung below their
   // own. Everything at or above their own tier is off limits.
@@ -3312,12 +3439,29 @@ function TeamTab({
     grade,
     label,
     me,
+    onDropHere,
   }: {
     grade: Grade | null
     label: string
     me?: boolean
+    // A rung at or above your own can still be dropped on — it just
+    // answers with the ceiling instead of moving anyone.
+    onDropHere?: () => void
   }) => (
-    <div className={`mob-org-node ${me ? 'me' : ''}`}>
+    <div
+      className={`mob-org-node ${me ? 'me' : ''} ${overGrade === grade?.id ? 'over' : ''}`}
+      onDragOver={(e) => {
+        if (!onDropHere) return
+        e.preventDefault()
+        setOverGrade(grade?.id ?? null)
+      }}
+      onDragLeave={() => setOverGrade((cur) => (cur === grade?.id ? null : cur))}
+      onDrop={(e) => {
+        if (!onDropHere) return
+        e.preventDefault()
+        onDropHere()
+      }}
+    >
       <span className={`tag-dot dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
       <span className="mob-org-text">
         <span className="mob-person-name">{label}</span>
@@ -3344,7 +3488,7 @@ function TeamTab({
         {/* 1 — Pending Allocation: the name, and one icon to claim them.
             The section label is deliberately a small caps rule so it never
             reads as one of the names underneath it. */}
-        {isLeader && (
+        {canManageTeam && (
           <div className="mob-card">
             <div className="mob-card-label">
               Pending Allocation{' '}
@@ -3378,104 +3522,111 @@ function TeamTab({
           </div>
         )}
 
-        {/* 2 — the chart: Manager down to you, for your own station. */}
+        {/* 2 — ONE chart. The line above you, then you, then your own
+            people arranged on the tiers below — the rungs above are not
+            repeated as empty lanes, they are already drawn above you. */}
         <div className="mob-card">
-          <div className="mob-card-label">My Team</div>
+          <div className="mob-card-label">
+            My Team{' '}
+            {myTeam.length > 0 && <span className="mob-chip">{myTeam.length}</span>}
+          </div>
           <div className="mob-chart-where">
             <span className="mob-chart-station">{myStationName}</span>
             <span className="mob-station-meta">{myTeamName}</span>
           </div>
+
           {loading ? (
             <div className="mob-sub">Loading…</div>
           ) : (
-            <div className="mob-org">
-              {[...upperTiers].reverse().map((g) => {
-                const person = holderOf(g)
-                return (
-                  <Node
-                    key={g.id}
-                    grade={g}
-                    label={person ? profileName(person) : 'Not assigned yet'}
-                  />
-                )
-              })}
-              <Node grade={tier} label={profileName(profile)} me />
-            </div>
-          )}
-          {!loading && upperTiers.length === 0 && (
-            <div className="mob-sub">
-              {tier
-                ? `The ${tier.name} tier sits at or above ${chartTop?.name ?? 'the top of the chart'} — nothing above it here.`
-                : 'No tier selected.'}
-            </div>
-          )}
-        </div>
-
-        {/* 3 — the tier lanes: drag each member to what they actually do. */}
-        {isLeader ? (
-          <div className="mob-card">
-            <div className="mob-card-label">
-              Team members <span className="mob-chip">{myTeam.length}</span>
-            </div>
-            <div className="mob-sub">
-              Drag a member onto their real tier
-              {nextBelow ? ` — you can set them as high as ${nextBelow.name}` : ''}.
-            </div>
-
-            {loading ? (
-              <div className="mob-sub">Loading…</div>
-            ) : (
-              grades
-                .slice()
-                .sort((a, b) => a.sort_order - b.sort_order)
-                .map((g) => {
-                  const locked = !mayAssign(g)
-                  const members = myTeam.filter((p) => p.grade_id === g.id)
+            <>
+              {/* Above you, and you. These accept a drop only to explain
+                  why they cannot take one. */}
+              <div className="mob-org">
+                {[...upperTiers].reverse().map((g) => {
+                  const person = holderOf(g)
                   return (
-                    <div
+                    <Node
                       key={g.id}
-                      className={`mob-lane ${locked ? 'locked' : ''} ${overGrade === g.id ? 'over' : ''}`}
-                      onDragOver={(e) => {
-                        e.preventDefault()
-                        setOverGrade(g.id)
-                      }}
-                      onDragLeave={() => setOverGrade((cur) => (cur === g.id ? null : cur))}
-                      onDrop={(e) => {
-                        e.preventDefault()
-                        dropOn(g)
-                      }}
-                    >
-                      <div className="mob-lane-head">
-                        <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
-                        <span className="mob-lane-name">{g.name}</span>
-                        {locked && <span className="mob-lane-lock" aria-label="locked">🔒</span>}
-                      </div>
-                      {members.length === 0 ? (
-                        <div className="mob-lane-empty">
-                          {locked ? 'Not yours to set' : 'Drop here'}
-                        </div>
-                      ) : (
-                        members.map((p) => (
-                          <div
-                            className={`mob-member ${dragId === p.id ? 'dragging' : ''}`}
-                            key={p.id}
-                            draggable={!busy}
-                            onDragStart={(e) => {
-                              setDragId(p.id)
-                              e.dataTransfer.effectAllowed = 'move'
-                              e.dataTransfer.setData('text/plain', p.id)
-                            }}
-                            onDragEnd={() => {
-                              setDragId(null)
-                              setOverGrade(null)
-                            }}
-                          >
+                      grade={g}
+                      label={person ? profileName(person) : 'Not assigned yet'}
+                      onDropHere={() => dropOn(g)}
+                    />
+                  )
+                })}
+                {tier && (
+                  <Node
+                    grade={tier}
+                    label={profileName(profile)}
+                    me
+                    onDropHere={() => dropOn(tier)}
+                  />
+                )}
+              </div>
+
+              {upperTiers.length === 0 && (
+                <div className="mob-sub">
+                  {tier
+                    ? `The ${tier.name} tier sits at or above ${chartTop?.name ?? 'the top of the chart'} — nothing above it here.`
+                    : 'No tier selected.'}
+                </div>
+              )}
+
+              {canManageTeam && lowerTiers.length > 0 && (
+                <div className="mob-sub">
+                  Drag a member onto their real tier
+                  {nextBelow ? ` — you can set them as high as ${nextBelow.name}` : ''}.
+                </div>
+              )}
+
+              {/* Below you: a lane per tier, holding your people. */}
+              {lowerTiers.map((g) => {
+                const members = myTeam.filter((p) => p.grade_id === g.id)
+                if (!canManageTeam && members.length === 0) return null
+                return (
+                  <div
+                    key={g.id}
+                    className={`mob-lane ${overGrade === g.id ? 'over' : ''}`}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setOverGrade(g.id)
+                    }}
+                    onDragLeave={() => setOverGrade((cur) => (cur === g.id ? null : cur))}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      dropOn(g)
+                    }}
+                  >
+                    <div className="mob-lane-head">
+                      <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
+                      <span className="mob-lane-name">{g.name}</span>
+                    </div>
+                    {members.length === 0 ? (
+                      <div className="mob-lane-empty">Drop here</div>
+                    ) : (
+                      members.map((p) => (
+                        <div
+                          className={`mob-member ${dragId === p.id ? 'dragging' : ''}`}
+                          key={p.id}
+                          draggable={canManageTeam && !busy}
+                          onDragStart={(e) => {
+                            setDragId(p.id)
+                            e.dataTransfer.effectAllowed = 'move'
+                            e.dataTransfer.setData('text/plain', p.id)
+                          }}
+                          onDragEnd={() => {
+                            setDragId(null)
+                            setOverGrade(null)
+                          }}
+                        >
+                          {canManageTeam && (
                             <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>
-                            <span className="mob-org-text">
-                              <span className="mob-entry-name">{profileName(p)}</span>
-                              <span className="mob-station-meta">{stationLabel(p)}</span>
-                            </span>
-                            {/* Same rule, without a mouse: pick the tier directly. */}
+                          )}
+                          <span className="mob-org-text">
+                            <span className="mob-person-name">{profileName(p)}</span>
+                            <span className="mob-station-meta">{stationLabel(p)}</span>
+                          </span>
+                          {/* Same rule, without a mouse: pick the tier directly. */}
+                          {canManageTeam && (
                             <select
                               className="mob-member-pick"
                               value={g.id}
@@ -3492,24 +3643,22 @@ function TeamTab({
                                   <option key={x.id} value={x.id}>{x.name}</option>
                                 ))}
                             </select>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )
-                })
-            )}
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )
+              })}
 
-            {!loading && myTeam.length === 0 && (
-              <div className="mob-sub">Nobody in your team yet — claim someone from Pending Allocation.</div>
-            )}
-          </div>
-        ) : (
-          <div className="mob-card">
-            <div className="mob-card-label">Team members</div>
-            <div className="mob-sub">Nobody reports to you.</div>
-          </div>
-        )}
+              {canManageTeam && myTeam.length === 0 && (
+                <div className="mob-sub">
+                  Nobody in your team yet — claim someone from Pending Allocation.
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* The ceiling pop-out — says exactly how high this leader may go. */}

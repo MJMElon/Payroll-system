@@ -660,6 +660,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-org-node.me {
   background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent);
 }
+/* Dragging over a rung at or above your own: it highlights, then answers
+   with the ceiling rather than taking the drop. */
+.mob-org-node.over { box-shadow: inset 0 0 0 1.5px #ef4444; background: #fdf0f0; }
 .mob-org-node .tag-dot { width: 11px; height: 11px; border-radius: 4px; flex: none; }
 .mob-org-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mob-org-text .mob-entry-name { font-size: 0.85rem; }
@@ -699,6 +702,65 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font-size: 0.76rem; font-weight: 800; letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--accent-strong);
 }
+
+/* Performance — a bar row you can tap through to the station behind it.
+   Font size is restated because a <button> would otherwise reset it and
+   swamp the row. */
+.mob-barrow.tappable {
+  appearance: none; background: none; border: none; cursor: pointer;
+  padding: 0.15rem 0.1rem; width: 100%; border-radius: 8px;
+  font-family: inherit; font-size: 0.7rem; color: var(--muted);
+  text-align: left;
+}
+.mob-barrow.tappable:hover { background: #f6f8fa; }
+/* Station names need the room; the tally beside them is short. */
+.mob-barrow .lbl.station { width: 104px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mob-barrow .val.qty { width: 38px; }
+
+/* The 100%-target scorecard: one track, filled by what was approved and
+   then by what came back rejected. Whatever is left is still in the
+   queue, so the empty remainder is the "waiting" slice by construction. */
+.mob-scorebar {
+  display: flex; height: 12px; border-radius: 999px; overflow: hidden;
+  background: #eef0f4; margin: 0.15rem 0 0.1rem;
+}
+.mob-scorebar > .done { background: linear-gradient(90deg, #15803d, #22c55e); }
+.mob-scorebar > .bad { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+/* One period of the target, stacked like a usage meter. */
+.mob-meter { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.35rem; }
+.mob-meter-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.mob-meter-label {
+  font-size: 0.7rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.mob-meter-pct {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 1.05rem; font-weight: 800; letter-spacing: -0.01em;
+}
+.mob-meter-foot { font-size: 0.68rem; color: var(--muted); }
+
+.mob-scorekey {
+  display: flex; flex-wrap: wrap; gap: 0.15rem 0.7rem;
+  font-size: 0.7rem; color: var(--muted);
+  margin-top: 0.3rem; padding-top: 0.4rem; border-top: 1px solid #eef0f4;
+}
+.mob-scorekey span { display: flex; align-items: center; gap: 0.3rem; }
+.mob-scorekey strong { color: var(--text); font-weight: 800; }
+.mob-scorekey .dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
+.mob-scorekey .dot.done { background: #22c55e; }
+.mob-scorekey .dot.bad { background: #ef4444; }
+.mob-scorekey .dot.wait { background: #cbd2da; }
+
+/* A tappable row inside a card — name on the left, value and chevron
+   on the right. */
+.mob-lineitem {
+  appearance: none; background: none; border: none; cursor: pointer;
+  font: inherit; color: inherit; text-align: left; width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.4rem 0.2rem; border-top: 1px solid #eef0f4; border-radius: 8px;
+}
+.mob-lineitem:first-of-type { border-top: none; }
+.mob-lineitem:hover { background: #f6f8fa; }
 
 /* Profile — the selfie. The whole circle is the button, with a camera
    badge so it reads as replaceable rather than decorative. */
