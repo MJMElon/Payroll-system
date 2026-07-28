@@ -54,7 +54,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
-import { effectiveCapabilities, tagClass } from '../../lib/tags'
+import { effectiveCapabilities, roleForTier, tagClass } from '../../lib/tags'
 import { useWideShell } from '../../lib/useWideShell'
 import {
   supabase,
@@ -63,23 +63,11 @@ import {
   type Job,
   type PieceRate,
   type Profile,
-  type Role,
   type Station,
   type Team,
 } from '../../lib/supabase'
 
 const RM = (n: number) => `RM ${n.toFixed(2)}`
-
-// Route access follows the tier tag: placing someone in the chain also
-// settles which pages they may open. Carried over from the old Settings
-// "User access" tab, which was the only other place that kept the two in
-// step.
-function roleForTier(tier: number | null, name?: string): Role {
-  if (tier === null) return 'operator'
-  if (tier <= 2) return 'manager'
-  if (tier === 3 || (name ?? '').toLowerCase().includes('engineer')) return 'engineer'
-  return 'operator'
-}
 
 /** Has this account been given a real name, or is it still the email? */
 function hasName(p: Profile | undefined | null): boolean {
@@ -302,20 +290,29 @@ export default function WorkerManagement() {
 
   /* ---------------- team actions ---------------- */
 
-  async function createTeam(leader: Profile) {
-    const grade = gradeOf(leader)
-    if (!grade) return setError('That leader has no tier tag yet — place them in the chain first.')
-    const station = stationsOf(leader)[0] ?? null
-    const siblings = teams.filter((t) => t.created_by === leader.id)
+  /**
+   * Add a team to a station. It belongs to the station-head tier and to
+   * the station it was added in; its name is the first "Team A", "Team B",
+   * … not already used AT THAT STATION, since two teams at one station
+   * reading the same is exactly what makes a chart useless.
+   */
+  async function createTeam(station: Station | null) {
+    if (!headGrade) return
+    const head = visible.find(
+      (p) =>
+        p.grade_id === headGrade.id &&
+        (station ? stationsOf(p).includes(station.id) : stationsOf(p).length === 0),
+    )
+    const siblings = teams.filter((t) => (t.station_id ?? null) === (station?.id ?? null))
     const name = nextTeamName(siblings.map((t) => t.name))
     setError(null)
     const { data, error } = await supabase
       .from('teams')
       .insert({
         name,
-        grade_id: grade.id,
-        station_id: station,
-        created_by: leader.id,
+        grade_id: headGrade.id,
+        station_id: station?.id ?? null,
+        created_by: head?.id ?? profile?.id ?? null,
         sort_order: siblings.length,
       })
       .select()
@@ -326,8 +323,8 @@ export default function WorkerManagement() {
       // instead of passing the raw database message through.
       return setError(
         /row-level security/i.test(error.message)
-          ? `The database refused a team at ${grade.name}. That needs a tier tag of ` +
-            `${grade.name} or above — yours is ${myGrade?.name ?? 'not set'}. If it already is, ` +
+          ? `The database refused a team at ${headGrade.name}. That needs a tier tag of ` +
+            `${headGrade.name} or above — yours is ${myGrade?.name ?? 'not set'}. If it already is, ` +
             'the teams table has no write policy: run supabase/fix-team-policies.sql.'
           : error.message,
       )
@@ -341,8 +338,18 @@ export default function WorkerManagement() {
 
   async function saveTeamName(team: Team) {
     const name = renameDraft.trim()
+    if (!name || name === team.name) return setRenamingId(null)
+    // Two teams at one station may not read the same.
+    const clash = teams.some(
+      (t) =>
+        t.id !== team.id &&
+        (t.station_id ?? null) === (team.station_id ?? null) &&
+        t.name.trim().toLowerCase() === name.toLowerCase(),
+    )
+    if (clash) {
+      return setError(`This station already has a team called "${name}".`)
+    }
     setRenamingId(null)
-    if (!name || name === team.name) return
     const { error } = await supabase.from('teams').update({ name }).eq('id', team.id)
     if (error) return setError(error.message)
     setError(null)
@@ -717,6 +724,16 @@ export default function WorkerManagement() {
 
   if (loading) return <p className="muted">Loading…</p>
 
+  /** The dashed slot that says a name may be dropped here. */
+  function addSlot(canDrop: boolean) {
+    if (!canDrop) return null
+    return (
+      <span className="wm-add-person" title="Drag a name here">
+        + Add person
+      </span>
+    )
+  }
+
   /** One person's block. `mini` is the compact one used deep in a team. */
   function block(p: Profile, mini = false, inContext = false) {
     const grade = gradeOf(p)
@@ -725,15 +742,9 @@ export default function WorkerManagement() {
     const isMe = p.id === profile?.id
     const key = `block:${p.id}`
     const allowed = canPlaceUnder(p)
-    // Teams are a station-floor thing, and so is the station line: the
-    // tiers above run the whole mill, so their block is just a name.
+    // The station line only means something on the floor: the tiers above
+    // run the whole mill, so their block is just a name.
     const onTheFloor = worksAtAStation(tier)
-    const canAddTeam =
-      Boolean(grade) &&
-      tier !== null &&
-      onTheFloor &&
-      tier < bottomTier &&
-      canOwnTeamsAt(tier, stationsOf(p)[0] ?? null)
     return (
       <article
         key={p.id}
@@ -750,7 +761,7 @@ export default function WorkerManagement() {
         {...dropProps(key, p, team, allowed)}
       >
         <span className={`wm-block-bar dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
-        <span className="wm-block-name">
+        <span className="wm-block-name" title={displayName(p)}>
           {displayName(p)}
           {isMe && <span className="you-chip">you</span>}
         </span>
@@ -760,23 +771,6 @@ export default function WorkerManagement() {
           <span className="wm-block-meta">
             {stationLabel(p)}
             {team ? ` · ${team.name}` : ''}
-          </span>
-        )}
-        {canAddTeam && (
-          <span className="wm-block-foot">
-            {
-              <button
-                type="button"
-                className="wm-add"
-                title={`Add a team under ${displayName(p)}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  createTeam(p)
-                }}
-              >
-                + Team
-              </button>
-            }
           </span>
         )}
       </article>
@@ -850,24 +844,41 @@ export default function WorkerManagement() {
               if (dragged) placeOnTier(dragged, headGrade, station)
             }}
           >
-            {heads.length === 0 ? (
-              <span className="wm-cluster-empty">Drop a name here</span>
-            ) : (
-              heads.map((one) => block(one, true, true))
-            )}
+            {heads.map((one) => block(one, true, true))}
+            {addSlot(belowMe(headGrade.sort_order))}
           </div>
         </div>
 
         {columns.length === 0 ? (
-          <p className="wm-cluster-empty" style={{ paddingLeft: '0.2rem' }}>
-            No team yet — use "+ Team" on a {headGrade.name} block.
-          </p>
+          <div className="wm-srow">
+            <span className="wm-srow-label" />
+            <div className="wm-srow-body">
+              <span className="wm-cluster-empty">No team yet.</span>
+              {canOwnTeamsAt(headGrade.sort_order, station?.id ?? null) && (
+                <button
+                  type="button"
+                  className="wm-add-icon"
+                  title={`Add a team at ${station?.name ?? 'this station'}`}
+                  aria-label="Add team"
+                  onClick={() => createTeam(station)}
+                >
+                  +
+                </button>
+              )}
+            </div>
+          </div>
         ) : (
           <div
             className="wm-grid"
-            style={{ gridTemplateColumns: `9rem repeat(${columns.length}, minmax(150px, 1fr))` }}
+            style={{
+              // Two blocks wide, so a team column is never a single-file
+              // queue of names and every station reads at the same rhythm.
+              gridTemplateColumns: `9rem repeat(${columns.length}, 300px) auto`,
+            }}
           >
-            {/* Row of team names — the column headings, said once. */}
+            {/* Row of team names — the column headings, said once — with
+                the add button at its right end, since a new team is a new
+                column. */}
             <span />
             {columns.map((t) => (
               <div className="wm-grid-head" key={`h:${key}:${t?.id ?? 'none'}`}>
@@ -911,6 +922,19 @@ export default function WorkerManagement() {
                 )}
               </div>
             ))}
+            <div className="wm-grid-head add">
+              {canOwnTeamsAt(headGrade.sort_order, station?.id ?? null) && (
+                <button
+                  type="button"
+                  className="wm-add-icon"
+                  title={`Add a team at ${station?.name ?? 'this station'}`}
+                  aria-label="Add team"
+                  onClick={() => createTeam(station)}
+                >
+                  +
+                </button>
+              )}
+            </div>
 
             {/* One row per tier below the head. */}
             {lowerGrades.map((g) => (
@@ -946,9 +970,11 @@ export default function WorkerManagement() {
                       }}
                     >
                       {people.map((one) => block(one, true, true))}
+                      {addSlot(belowMe(g.sort_order))}
                     </div>
                   )
                 })}
+                <span />
               </Fragment>
             ))}
           </div>
@@ -979,12 +1005,9 @@ export default function WorkerManagement() {
           onDragLeave={() => setDropKey((cur) => (cur === rowKey ? null : cur))}
           onDrop={(e) => grade && handleTierDrop(grade, e)}
         >
-          {people.length === 0 ? (
-            <span className="wm-cluster-empty">
-              {canDropHere ? 'Drop a name here' : 'Nobody on this tier yet'}
-            </span>
-          ) : (
-            people.map((one) => block(one, true, true))
+          {people.map((one) => block(one, true, true))}
+          {canDropHere ? addSlot(true) : people.length === 0 && (
+            <span className="wm-cluster-empty">Nobody on this tier yet</span>
           )}
         </div>
       </div>

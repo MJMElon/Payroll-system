@@ -1465,6 +1465,33 @@ update public.grades set capabilities =
   where sort_order = 1;
 
 -- ---------------------------------------------------------------------------
+-- One team name per station. Two teams at one station reading the same is
+-- exactly what makes the chart useless, and the app can only check what it
+-- has loaded — so the database holds the line. Existing duplicates are
+-- numbered apart first, since a unique index will not build over them.
+-- ---------------------------------------------------------------------------
+with dupes as (
+  select id,
+         row_number() over (
+           partition by station_id, lower(btrim(name))
+           order by sort_order, created_at
+         ) as n
+    from public.teams
+)
+update public.teams t
+   set name = t.name || ' ' || d.n
+  from dupes d
+ where d.id = t.id and d.n > 1;
+
+create unique index if not exists teams_name_per_station_idx
+  on public.teams (station_id, lower(btrim(name)))
+  where station_id is not null;
+
+create unique index if not exists teams_name_no_station_idx
+  on public.teams (lower(btrim(name)))
+  where station_id is null;
+
+-- ---------------------------------------------------------------------------
 -- Making a team is its own grant. On the mobile Team tab a leader's people
 -- are shown as one column per team, and a team is created ONLY by the "Add
 -- new team" button — never as a side effect of dragging someone onto the

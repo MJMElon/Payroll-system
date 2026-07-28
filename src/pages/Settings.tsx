@@ -11,7 +11,11 @@ import {
   MANAGEMENT_ONLY_GROUPS,
   MODULE_GROUP,
   MODULE_OPTIONS,
+  canGiveTier,
   nextTagColor,
+  roleForTier,
+  runsWholeMill,
+  stationTierOf,
   sortCapabilities,
   tagClass,
 } from '../lib/tags'
@@ -104,16 +108,6 @@ const EyeIcon = () => (
 const PencilIcon = () => (
   <svg {...iconProps}>
     <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-  </svg>
-)
-const CheckIcon = () => (
-  <svg {...iconProps}>
-    <path d="M20 6 9 17l-5-5" />
-  </svg>
-)
-const CrossIcon = () => (
-  <svg {...iconProps}>
-    <path d="M18 6 6 18M6 6l12 12" />
   </svg>
 )
 const TrashIcon = () => (
@@ -213,6 +207,9 @@ function TagsTab() {
   // The tier-1 tag itself is the super admin and is never edited away.
   const rowEditable = (g: Grade) => g.sort_order !== 1 && isSuperUser
   const canManageStations = isSuperUser
+  // Where the mill splits: from this tier down people work at ONE station
+  // and are drawn per station in Team Manage.
+  const stationTier = stationTierOf(grades)
 
   // Drop a dragged tag onto another: reorder locally, then renumber every
   // tier 1..n so tier numbers always run top-down with no gaps.
@@ -522,21 +519,11 @@ function TagsTab() {
                     <span className="row-actions">
                       {editing ? (
                         <>
-                          <button
-                            className="icon-btn sm"
-                            title="Save"
-                            aria-label={`Save ${st.name}`}
-                            onClick={saveStationName}
-                          >
-                            <CheckIcon />
+                          <button className="btn ghost row-btn" onClick={cancelStationEdit}>
+                            Cancel
                           </button>
-                          <button
-                            className="icon-btn sm"
-                            title="Cancel"
-                            aria-label="Cancel"
-                            onClick={cancelStationEdit}
-                          >
-                            <CrossIcon />
+                          <button className="btn row-btn" onClick={saveStationName}>
+                            Save
                           </button>
                         </>
                       ) : (
@@ -585,11 +572,11 @@ function TagsTab() {
                 </td>
                 <td className="right">
                   <span className="row-actions">
-                    <button className="icon-btn sm" title="Save" aria-label="Save new station" onClick={addStation}>
-                      <CheckIcon />
+                    <button className="btn ghost row-btn" onClick={cancelAddStation}>
+                      Cancel
                     </button>
-                    <button className="icon-btn sm" title="Cancel" aria-label="Cancel" onClick={cancelAddStation}>
-                      <CrossIcon />
+                    <button className="btn row-btn" onClick={addStation}>
+                      Save
                     </button>
                   </span>
                 </td>
@@ -610,6 +597,8 @@ function TagsTab() {
               : true
           }
           nextTier={Math.max(0, ...grades.map((g) => g.sort_order)) + 1}
+          stationTier={stationTier}
+          viewerTier={isSuperUser && myTier === null ? 1 : myTier}
           usedColors={grades.map((g) => g.color)}
           takenNames={grades.filter((g) => g.id !== tagModal.grade?.id).map((g) => g.name)}
           onMode={(mode) => setTagModal((s) => (s ? { ...s, mode } : s))}
@@ -698,38 +687,106 @@ function ModuleTable({
 /* down, so the top tier's people are listed here instead — under the   */
 /* module sheet of the tag itself.                                      */
 /* ------------------------------------------------------------------ */
-function TierPeople({ gradeId }: { gradeId: string }) {
-  const [people, setPeople] = useState<{ id: string; full_name: string | null; email: string | null }[]>([])
+function TierPeople({
+  grade,
+  canFill,
+}: {
+  grade: Grade
+  /** May the viewer put someone on this tier? */
+  canFill: boolean
+}) {
+  type Person = { id: string; full_name: string | null; email: string | null }
+  const [people, setPeople] = useState<Person[]>([])
+  const [query, setQuery] = useState('')
+  const [hits, setHits] = useState<Person[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    let live = true
-    supabase
+  async function loadPeople() {
+    const { data } = await supabase
       .from('access_profiles')
       .select('id, full_name, email')
-      .eq('grade_id', gradeId)
+      .eq('grade_id', grade.id)
       .order('full_name')
-      .then(({ data }) => {
-        if (!live) return
-        setPeople(data ?? [])
-        setLoading(false)
-      })
-    return () => {
-      live = false
+    setPeople((data ?? []) as Person[])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    setLoading(true)
+    loadPeople()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grade.id])
+
+  // Search sign-ups by name or email rather than listing every one of
+  // them: the list is only ever a few matches long, and it costs nothing
+  // until something is typed. Held back briefly so a query goes out per
+  // pause, not per keystroke.
+  useEffect(() => {
+    const term = query.trim()
+    if (!canFill || term === '') {
+      setHits(null)
+      return
     }
-  }, [gradeId])
+    setSearching(true)
+    const timer = setTimeout(async () => {
+      // Commas and brackets are the or() filter's own punctuation, so a
+      // search containing them would be read as more conditions.
+      const safe = term.replace(/[,()%]/g, ' ').trim()
+      if (safe === '') {
+        setHits([])
+        setSearching(false)
+        return
+      }
+      const { data } = await supabase
+        .from('access_profiles')
+        .select('id, full_name, email')
+        .is('grade_id', null)
+        .or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%`)
+        .order('email')
+        .limit(8)
+      setHits((data ?? []) as Person[])
+      setSearching(false)
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [query, canFill])
 
   // A name if the account has one, otherwise the part before the @ — an
   // email address is not a name.
-  const label = (p: { full_name: string | null; email: string | null }) => {
+  const label = (p: Person) => {
     const n = p.full_name?.trim()
     if (n && n.toLowerCase() !== (p.email ?? '').trim().toLowerCase()) return n
     return (p.email ?? '').split('@')[0] || '—'
   }
 
+  async function addPerson(id: string) {
+    setBusy(true)
+    setError(null)
+    const { data, error } = await supabase
+      .from('access_profiles')
+      .update({
+        grade_id: grade.id,
+        tags_confirmed: true,
+        role: roleForTier(grade.sort_order, grade.name),
+      })
+      .eq('id', id)
+      .select('id')
+    setBusy(false)
+    if (error) return setError(error.message)
+    if (!data || data.length === 0) {
+      return setError('The database would not let you put anyone on this tier.')
+    }
+    setQuery('')
+    setHits(null)
+    loadPeople()
+  }
+
   return (
     <div className="tag-section">
       <div className="tag-section-title">People on this tier ({people.length})</div>
+      {error && <div className="error">{error}</div>}
       {loading ? (
         <span className="small muted">Loading…</span>
       ) : people.length === 0 ? (
@@ -743,6 +800,42 @@ function TierPeople({ gradeId }: { gradeId: string }) {
           ))}
         </div>
       )}
+
+      {/* The top tier has nothing above it, so a sign-up joins it from
+          here — there is no upper tier to drag them in from. */}
+      {canFill && !loading && (
+        <div className="tier-add">
+          <input
+            className="row-input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Add a sign-up — search name or email"
+            aria-label="Search sign-ups by name or email"
+          />
+          {hits !== null && (
+            <div className="tier-hits">
+              {searching ? (
+                <span className="small muted">Searching…</span>
+              ) : hits.length === 0 ? (
+                <span className="small muted">No sign-up without a tier matches that.</span>
+              ) : (
+                hits.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="tier-hit"
+                    disabled={busy}
+                    onClick={() => addPerson(p.id)}
+                  >
+                    <span className="tier-hit-name">{label(p)}</span>
+                    <span className="muted small">{p.email}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -752,6 +845,8 @@ function TagModal({
   mode,
   canEdit,
   nextTier,
+  stationTier,
+  viewerTier,
   usedColors,
   takenNames,
   onMode,
@@ -762,6 +857,10 @@ function TagModal({
   mode: Mode
   canEdit: boolean
   nextTier: number
+  /** The first tier that works at ONE station; above it runs the mill. */
+  stationTier: number | null
+  /** The viewer's own tier — what they may hand out is measured from it. */
+  viewerTier: number | null
   usedColors: string[]
   /** Every OTHER tier's name — no two may read the same. */
   takenNames: string[]
@@ -893,7 +992,12 @@ function TagModal({
             />
           </div>
 
-          <TierPeople gradeId={grade.id} />
+          {/* Only the tiers that run the whole mill are listed here.
+              From the station-head tier down there are far too many names
+              for a sheet — Team Manage draws those, station by station. */}
+          {runsWholeMill(grade.sort_order, stationTier) && (
+            <TierPeople grade={grade} canFill={canGiveTier(viewerTier, grade.sort_order)} />
+          )}
 
           {canEdit && (
             <div className="row-form" style={{ justifyContent: 'flex-end' }}>
@@ -951,7 +1055,9 @@ function TagModal({
           />
         </div>
 
-        {grade && <TierPeople gradeId={grade.id} />}
+        {grade && runsWholeMill(grade.sort_order, stationTier) && (
+          <TierPeople grade={grade} canFill={canGiveTier(viewerTier, grade.sort_order)} />
+        )}
 
         {/* Anything that governs no single module keeps its own block. */}
         {looseGroups.map((group) => (
