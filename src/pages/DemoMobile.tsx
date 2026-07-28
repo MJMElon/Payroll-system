@@ -980,6 +980,16 @@ function PerformanceTab({
   // it sits in. Today is mostly "waiting" by nature — work recorded this
   // morning has not been through approval yet — which is exactly what the
   // waiting slice is there to show.
+  // My own work still in the queue, and what came back this week.
+  const myWaiting = myEntries.filter((e) =>
+    ['pending', 'verified'].includes(e.approval_status ?? ''),
+  ).length
+  const myRejectedWk = myEntries.filter(
+    (e) => (e.approval_status ?? '') === 'rejected' && e.work_date >= weekStart,
+  ).length
+  // Whether this tier reviews anyone else's work at all.
+  const reviews = canVerify || canFinal ? 1 : 0
+
   const myToday = scoreOver(myEntries.filter((e) => e.work_date === todayISO()))
   const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
   const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
@@ -1132,7 +1142,28 @@ function PerformanceTab({
           </>
         )}
 
-        {(canVerify || canFinal) && (
+        {/* 3 — what is still out, and what came back. At station level the
+            tab ends here: this is the day's own work, not the mill's. */}
+        {!millWide && (
+          <div className="mob-grid2">
+            <button className="mob-card tapcard" onClick={() => (reviews > 0 ? setShowApprovals(true) : onMyWork())}>
+              <span className="mob-field-label">Pending verify</span>
+              <span className="mob-stat">{reviews > 0 ? awaiting.length : myWaiting}</span>
+              <span className="mob-station-meta">
+                {reviews > 0 ? 'waiting on you' : 'waiting on your upper'}
+              </span>
+            </button>
+            <button className="mob-card tapcard" onClick={onMyWork}>
+              <span className="mob-field-label">Rejected this wk</span>
+              <span className="mob-stat">{reviews > 0 ? rejectedWk.length : myRejectedWk}</span>
+              <span className="mob-station-meta">
+                {reviews > 0 ? 'at your station' : 'to fix & resubmit'}
+              </span>
+            </button>
+          </div>
+        )}
+
+        {(canVerify || canFinal) && millWide && (
           <>
             <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Management dashboard</div>
 
@@ -1232,22 +1263,24 @@ function PerformanceTab({
           </>
         )}
 
-        <div className="mob-grid2">
-          <div className="mob-card">
-            <div className="mob-field-label">Output this month</div>
-            <div className="mob-stat">{fmtQty(totalOutput)}</div>
+        {millWide && (
+          <div className="mob-grid2">
+            <div className="mob-card">
+              <div className="mob-field-label">Output this month</div>
+              <div className="mob-stat">{fmtQty(totalOutput)}</div>
+            </div>
+            <div className="mob-card">
+              <div className="mob-field-label">Approval %</div>
+              <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
+            </div>
           </div>
-          <div className="mob-card">
-            <div className="mob-field-label">Approval %</div>
-            <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
-          </div>
-        </div>
+        )}
 
-        {/* Month-to-date per station, below the day's picture. Above the
-            station tiers this is the Mill performance card at the top. */}
-        {!millWide && (
+        {/* The way into a station's own records. Above the station tiers
+            the Mill performance card at the top already lists them. */}
+        {!millWide && stations.length > 0 && (
         <div className="mob-card">
-          <div className="mob-card-label">Station output · this month</div>
+          <div className="mob-card-label">Station records</div>
           {stations.map((s) => {
             const st = statFor(s.id)
             return (

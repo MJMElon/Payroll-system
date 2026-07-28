@@ -896,6 +896,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-scorekey .dot.bad { background: #ef4444; }
 .mob-scorekey .dot.wait { background: #cbd2da; }
 
+/* A stat card that goes somewhere when tapped. */
+.mob-card.tapcard {
+  appearance: none; border: none; cursor: pointer;
+  font: inherit; color: inherit; text-align: left; align-items: flex-start;
+}
+.mob-card.tapcard:hover { background: #f8fafb; }
+
 /* A tappable row inside a card — name on the left, value and chevron
    on the right. */
 .mob-lineitem {
