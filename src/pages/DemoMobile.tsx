@@ -2197,6 +2197,8 @@ function EntryDetail({
     path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
 
   const workerTag = workerTier === undefined ? tier : workerTier
+  // No decide prop means one of two things, and they read differently.
+  const ownRecord = decide == null && workerTier === undefined
   const submittedAt = new Date(entry.created_at)
   const verified = Boolean(entry.verified_by) || status === 'approved'
   const approved = status === 'approved'
@@ -2264,9 +2266,10 @@ function EntryDetail({
               day: 'numeric', month: 'long', year: 'numeric',
             })}
           </div>
-          <div className="mob-review-tags" style={{ marginTop: '0.2rem' }}>
-            {workerTag && <span className={tagClass(workerTag.color)}>{workerTag.name}</span>}
-            <span className="mob-entry-name">{myName}</span>
+          <div className="mob-field-label" style={{ marginTop: '0.35rem' }}>Work by</div>
+          <div className="mob-workby">
+            <span className="mob-person-name">{myName}</span>
+            {workerTag && <span className={`${tagClass(workerTag.color)} sm`}>{workerTag.name}</span>}
           </div>
           <div className="mob-row" style={{ marginTop: '0.2rem' }}>
             <span>{job?.name ?? 'Work'}</span>
@@ -2280,7 +2283,7 @@ function EntryDetail({
             beside the row it belongs to rather than in a gallery of its
             own. */}
         <div className="mob-card">
-          <div className="mob-title">Submitted parameter</div>
+          <div className="mob-title">Submitted Work Record</div>
           <div className="mob-paramrows">
             {rows.map((r, i) => (
               <div className="mob-paramrow" key={r.key}>
@@ -2308,21 +2311,47 @@ function EntryDetail({
             scrolling away from them to act made the two feel unrelated.
             Which button shows follows the viewer's tag and the step this
             record is actually at, never both at once. */}
-        {decide && (decide.canVerify || decide.canApprove) && (
-          <div className="row-form" style={{ gap: '0.5rem' }}>
-            {decide.canVerify && status === 'pending' && (
-              <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
-                onClick={() => decide.act('verified')}>✓ Verify</button>
-            )}
-            {decide.canApprove && status === 'verified' && (
-              <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
-                onClick={() => decide.act('approved')}>✓ Approve</button>
-            )}
-            {['pending', 'verified'].includes(status) && (
-              <button className="mob-btn reject" style={{ flex: 1 }} disabled={decide.busy}
-                onClick={() => decide.act('rejected')}>✗ Reject</button>
-            )}
+        {/* An absent button is indistinguishable from a broken one, so the
+            reason is stated: your own work, a tag without the permission,
+            or a record already past the step you hold. */}
+        {decide == null && ['pending', 'verified'].includes(status) && (
+          <div className="mob-card">
+            <div className="mob-sub">
+              {ownRecord
+                ? 'This is your own record — somebody above you reviews it.'
+                : 'Your tier tag has no verify or approve permission. Tick one in Settings → Tags management.'}
+            </div>
           </div>
+        )}
+        {decide && !decide.canVerify && !decide.canApprove && (
+          <div className="mob-card">
+            <div className="mob-sub">
+              Your tier tag has no verify or approve permission.
+            </div>
+          </div>
+        )}
+        {decide && (decide.canVerify || decide.canApprove) && (
+          <>
+            <div className="row-form" style={{ gap: '0.5rem' }}>
+              {decide.canVerify && status === 'pending' && (
+                <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
+                  onClick={() => decide.act('verified')}>✓ Verify</button>
+              )}
+              {decide.canApprove && status === 'verified' && (
+                <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
+                  onClick={() => decide.act('approved')}>✓ Approve</button>
+              )}
+              {['pending', 'verified'].includes(status) && (
+                <button className="mob-btn reject" style={{ flex: 1 }} disabled={decide.busy}
+                  onClick={() => decide.act('rejected')}>✗ Reject</button>
+              )}
+            </div>
+            {decide.canVerify && !decide.canApprove && status === 'verified' && (
+              <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
+                Already verified — a final approver takes it from here.
+              </div>
+            )}
+          </>
         )}
 
         <div className="mob-card">

@@ -1051,6 +1051,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Step between teams. */
 .mob-teamnav { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; margin-top: 0.15rem; }
 .mob-teamnav .mob-mini { padding: 0.3rem 0.8rem; font-size: 0.9rem; line-height: 1; }
+/* Who did the work: the name leads, the tier tag follows at a size that
+   says it is a label rather than the answer. */
+.mob-workby { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.mob-workby .mob-person-name { font-size: 0.95rem; }
+.tagbadge.sm { font-size: 0.6rem; padding: 0.08rem 0.4rem; }
+
 /* A confirm pair: Cancel then Save, sharing the block's width equally so
    the commit is where a thumb ends up. */
 .mob-actions { display: flex; gap: 0.4rem; margin-top: 0.15rem; }
