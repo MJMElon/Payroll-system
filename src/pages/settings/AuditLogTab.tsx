@@ -24,6 +24,9 @@ const TARGET_LABEL: Record<string, string> = {
   payroll_adjustments: 'Payroll adjustment',
   access_profiles: 'User access',
   grades: 'Tier tag',
+  stations: 'Station tag',
+  workers: 'Worker',
+  photo_records: 'Photo record',
 }
 
 const ACTION_LABEL: Record<string, string> = {

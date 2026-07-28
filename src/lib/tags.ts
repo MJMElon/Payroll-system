@@ -1,3 +1,5 @@
+import type { Role } from './supabase'
+
 // Shared tag colour helpers — used by Settings and the Piece Rate module.
 // Colours are ISSUED automatically (no picker): a new tag takes the first
 // colour not already used by another tier, in this order.
@@ -65,9 +67,12 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   { key: 'tag-edit', label: "Edit tags' settings", group: 'Tag management setting' },
   // Users & stations
   { key: 'user-access', label: "Change other users' settings", group: 'User setting' },
-  // Team manage — dragging someone into a team needs no capability, any
-  // leader may do it. Profile and salary are separate grants, so a lower
-  // tier can keep details tidy without ever seeing pay.
+  // Team manage. "team-assign" is the mobile Team tab: claim new sign ups
+  // into your own team and set their tier — always DOWN the tiers, never
+  // at or above your own. Profile and salary are separate grants, so a
+  // lower tier can keep details tidy without ever seeing pay.
+  { key: 'team-assign', label: 'Claim Sign Ups & Set Tier', group: 'Team manage setting' },
+  { key: 'team-create', label: 'Add New Team', group: 'Team manage setting' },
   { key: 'worker-edit', label: 'Edit Profile Details', group: 'Team manage setting' },
   { key: 'worker-salary', label: 'Edit Basic Salary', group: 'Team manage setting' },
   { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
@@ -101,6 +106,50 @@ export const MODULE_GROUP: Record<string, string> = Object.fromEntries(
  * checkbox in the tag editor any more.
  */
 export const MANAGEMENT_ONLY_GROUPS = ['User setting', 'Tag management setting', 'Station setting']
+
+/**
+ * The first tier that belongs to ONE station. Everything from there down
+ * works at a station and is drawn per station in Team Manage; the tiers
+ * ABOVE it run the whole mill, so they sit on every station.
+ *
+ * Read from the tag names — "Station Head", "Assistant Station Head".
+ * Null when no tag names a station, which means the split cannot be told
+ * and every tier counts as running the mill.
+ */
+export function stationTierOf(grades: { name: string; sort_order: number }[]): number | null {
+  const named = grades
+    .filter((g) => /station/i.test(g.name))
+    .sort((a, b) => a.sort_order - b.sort_order)[0]
+  return named ? named.sort_order : null
+}
+
+/** Do the tiers above the station tier hold this one — mill-wide, not per station? */
+export function runsWholeMill(sortOrder: number, stationTier: number | null): boolean {
+  return stationTier === null || sortOrder < stationTier
+}
+
+/**
+ * Which tiers a viewer may hand out. Everyone reaches strictly downward —
+ * except the top tier, which has nothing above it, so it is the one tier
+ * that may also fill its own rank.
+ */
+export function canGiveTier(myTier: number | null, target: number): boolean {
+  if (myTier === null) return false
+  if (myTier === 1) return target >= 1
+  return target > myTier
+}
+
+/**
+ * Route access follows the tier tag, so handing out a tier also settles
+ * which pages that person may open. Admin accounts are never demoted by a
+ * tag. Shared by Team Manage and Settings so the two cannot disagree.
+ */
+export function roleForTier(tier: number | null, name?: string): Role {
+  if (tier === null) return 'operator'
+  if (tier <= 2) return 'manager'
+  if (tier === 3 || (name ?? '').toLowerCase().includes('engineer')) return 'engineer'
+  return 'operator'
+}
 
 export function capabilityLabel(key: string) {
   return CAPABILITY_OPTIONS.find((c) => c.key === key)?.label ?? key

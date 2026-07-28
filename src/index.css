@@ -567,6 +567,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Icon action buttons sitting together in a table's right-hand cell */
 .row-actions { display: inline-flex; gap: 0.35rem; justify-content: flex-end; }
 
+/* Editing in place: the cell becomes the field, sized to sit in the row
+   without pushing it taller than its neighbours. */
+.row-input {
+  width: 100%; max-width: 320px;
+  padding: 0.3rem 0.5rem; font-size: 0.9rem;
+}
+
 /* Square module tiles on the main page */
 .module-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
 /* The mark and the name are ONE centred group rather than a pair pushed
@@ -627,15 +634,35 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: rgba(8, 24, 17, 0.45);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 6vh 1rem 2rem;
-  overflow-y: auto;
+  /* The backdrop itself never scrolls: a tall window used to push its own
+     top off the screen, taking the × with it. The window is capped to what
+     the viewport can hold and scrolls INSIDE instead, so it is always
+     wholly on screen with the page behind it still. dvh, not vh, so a
+     phone's collapsing address bar does not cut the bottom off. */
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem 1rem;
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 .modal {
   width: 100%; max-width: 460px;
   background: var(--surface); border-radius: 20px; padding: 1.5rem;
   box-shadow: 0 30px 80px rgba(5, 30, 18, 0.35);
   display: flex; flex-direction: column; gap: 0.9rem;
+  max-height: calc(100vh - 3rem);
+  max-height: calc(100dvh - 3rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The title row stays put while the window scrolls under it, so the ×
+   is reachable from anywhere in a long sheet. Negative margins let it
+   span the window's padding; the matching padding puts it back. */
+.modal > .row-form.spread:first-child {
+  /* Sticky offsets apply to the MARGIN box, so the pull-up has to be
+     matched here or the row parks 1.5rem down and content shows above it. */
+  position: sticky; top: -1.5rem; z-index: 2;
+  margin: -1.5rem -1.5rem 0; padding: 1.5rem 1.5rem 0.7rem;
+  background: var(--surface); border-radius: 20px 20px 0 0;
 }
 .modal h2 { margin: 0; font-size: 1.15rem; }
 .modal-close {
@@ -745,12 +772,210 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-org-node.me {
   background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent);
 }
+/* Dragging over a rung at or above your own: it highlights, then answers
+   with the ceiling rather than taking the drop. */
+.mob-org-node.over { box-shadow: inset 0 0 0 1.5px #ef4444; background: #fdf0f0; }
 .mob-org-node .tag-dot { width: 11px; height: 11px; border-radius: 4px; flex: none; }
 .mob-org-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mob-org-text .mob-entry-name { font-size: 0.85rem; }
 
+/* A card's section label. Deliberately unlike a person's name: small,
+   uppercase, tracked out and muted, so a list of names underneath never
+   reads as a continuation of the heading. */
+.mob-card-label {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.64rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.1em;
+}
+/* …and the names themselves: the display face, bigger, sentence case. */
+.mob-person-name {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 0.92rem; font-weight: 700; letter-spacing: -0.01em;
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A card label's trailing action sits hard against the right edge. */
+.mob-card-label .mob-icon-btn.corner {
+  margin-left: auto; width: 26px; height: 26px;
+  font-size: 1.05rem; font-weight: 800; line-height: 1;
+}
+
+/* Round icon-only action — the whole button is the affordance, so it
+   takes the width of the glyph and no more. */
+.mob-icon-btn {
+  appearance: none; border: none; cursor: pointer; flex: none;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent-strong);
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+.mob-icon-btn:hover:not(:disabled) { background: var(--accent-strong); color: #fff; }
+.mob-icon-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Which station and team the chart below is drawn for. */
+.mob-chart-where {
+  display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap;
+  padding-bottom: 0.3rem;
+}
+.mob-chart-station {
+  font-size: 0.76rem; font-weight: 800; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--accent-strong);
+}
+
+/* Performance — a bar row you can tap through to the station behind it.
+   Font size is restated because a <button> would otherwise reset it and
+   swamp the row. */
+.mob-barrow.tappable {
+  appearance: none; background: none; border: none; cursor: pointer;
+  padding: 0.15rem 0.1rem; width: 100%; border-radius: 8px;
+  font-family: inherit; font-size: 0.7rem; color: var(--muted);
+  text-align: left;
+}
+.mob-barrow.tappable:hover { background: #f6f8fa; }
+/* Station names need the room; the tally beside them is short. */
+.mob-barrow .lbl.station { width: 104px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mob-barrow .val.qty { width: 38px; }
+
+/* The 100%-target scorecard: one track, filled by what was approved and
+   then by what came back rejected. Whatever is left is still in the
+   queue, so the empty remainder is the "waiting" slice by construction. */
+.mob-scorebar {
+  display: flex; height: 12px; border-radius: 999px; overflow: hidden;
+  background: #eef0f4; margin: 0.15rem 0 0.1rem;
+}
+.mob-scorebar > .done { background: linear-gradient(90deg, #15803d, #22c55e); }
+.mob-scorebar > .bad { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+/* One period of the target, stacked like a usage meter. */
+.mob-meter { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.35rem; }
+.mob-meter-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.mob-meter-label {
+  font-size: 0.7rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.mob-meter-pct {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 1.05rem; font-weight: 800; letter-spacing: -0.01em;
+}
+.mob-meter-foot { font-size: 0.68rem; color: var(--muted); }
+
+.mob-scorekey {
+  display: flex; flex-wrap: wrap; gap: 0.15rem 0.7rem;
+  font-size: 0.7rem; color: var(--muted);
+  margin-top: 0.3rem; padding-top: 0.4rem; border-top: 1px solid #eef0f4;
+}
+.mob-scorekey span { display: flex; align-items: center; gap: 0.3rem; }
+.mob-scorekey strong { color: var(--text); font-weight: 800; }
+.mob-scorekey .dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
+.mob-scorekey .dot.done { background: #22c55e; }
+.mob-scorekey .dot.bad { background: #ef4444; }
+.mob-scorekey .dot.wait { background: #cbd2da; }
+
+/* A tappable row inside a card — name on the left, value and chevron
+   on the right. */
+.mob-lineitem {
+  appearance: none; background: none; border: none; cursor: pointer;
+  font: inherit; color: inherit; text-align: left; width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.4rem 0.2rem; border-top: 1px solid #eef0f4; border-radius: 8px;
+}
+.mob-lineitem:first-of-type { border-top: none; }
+.mob-lineitem:hover { background: #f6f8fa; }
+
+/* Profile — the selfie. The whole circle is the button, with a camera
+   badge so it reads as replaceable rather than decorative. */
+.mob-avatar-btn {
+  appearance: none; border: none; padding: 0; cursor: pointer;
+  position: relative; width: 76px; height: 76px; border-radius: 50%;
+  background: linear-gradient(160deg, #566270, #333c47);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 16px rgba(35, 45, 58, 0.28);
+}
+.mob-avatar-btn:disabled { opacity: 0.6; cursor: default; }
+.mob-avatar-img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+.mob-avatar-initials {
+  color: #fff; font-family: 'Montserrat', sans-serif;
+  font-size: 1.5rem; font-weight: 800; letter-spacing: 0.02em;
+}
+.mob-avatar-cam {
+  position: absolute; right: -2px; bottom: -2px;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-strong); color: #fff; border: 2.5px solid #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* A card header that opens and closes what is under it. */
+.mob-disclosure {
+  appearance: none; background: none; border: none; padding: 0; margin: 0;
+  cursor: pointer; color: inherit; font: inherit; width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  text-align: left;
+}
+.mob-caret {
+  color: var(--muted); font-size: 1rem; line-height: 1; flex: none;
+  transition: transform 0.15s; display: inline-block;
+}
+.mob-caret.open { transform: rotate(90deg); }
+.mob-detail-rule { height: 1px; background: #eef0f4; margin: 0.25rem 0; }
+.mob-payslip { border-top: 1px solid #eef0f4; padding-top: 0.5rem; }
+.mob-payslip:first-of-type { border-top: none; padding-top: 0; }
+
+/* Piece-rate contract — the tier a group of jobs belongs to. */
+.mob-contract-tier {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin-top: 0.5rem; padding-bottom: 0.25rem;
+  border-bottom: 1px solid #eef0f4;
+  font-size: 0.68rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.07em; color: var(--accent-strong);
+}
+.mob-contract-tier .tag-dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.mob-contract-tier .mob-chip { margin-left: auto; text-transform: none; letter-spacing: 0; }
+
 /* Team tab — one drop lane per tier. A lane the leader may not hand out
    (their own tier and anything above it) is locked and reads as inert. */
+/* A leader's teams, side by side — swipe for the next one. Each column is
+   as wide as the phone minus a peek of the next, so it is obvious there is
+   more to the right. */
+.mob-teamscroll {
+  display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.3rem;
+  scroll-snap-type: x mandatory; margin: 0 -0.2rem;
+}
+.mob-teamcol {
+  flex: none; width: 84%; scroll-snap-align: start;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  border: 1px solid #e4e8ed; border-radius: 12px; padding: 0.5rem;
+  background: #fbfcfd;
+}
+.mob-teamcol.loose, .mob-teamcol.draft { border-style: dashed; background: #fff; }
+/* The team's leader heads its column — shown, never a drop target. */
+.mob-teamlead {
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.4rem 0.5rem; border-radius: 10px;
+  background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent);
+}
+.mob-teamlead .tag-dot { width: 10px; height: 10px; border-radius: 4px; flex: none; }
+/* Step between teams. */
+.mob-teamnav { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; margin-top: 0.15rem; }
+.mob-teamnav .mob-mini { padding: 0.3rem 0.8rem; font-size: 0.9rem; line-height: 1; }
+/* Naming a new team, before it is written. */
+.mob-newteam { display: flex; flex-direction: column; gap: 0.4rem; }
+/* An empty rung asks to be filled instead of just sitting there. */
+.mob-lane-add {
+  appearance: none; border: none; cursor: pointer; width: 100%;
+  background: var(--accent-soft); color: var(--accent-strong);
+  border-radius: 9px; padding: 0.35rem; font-size: 0.72rem; font-weight: 700;
+}
+.mob-lane-add:hover { background: var(--accent); color: #fff; }
+.mob-teamcol-name {
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--accent-strong);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mob-teamcol .mob-lane { background: #fff; }
+/* A column is narrow, so the tier picker drops onto its own full-width
+   line rather than squeezing the name into an ellipsis. */
+.mob-teamcol .mob-member { flex-wrap: wrap; }
+.mob-teamcol .mob-member .mob-org-text { min-width: 0; flex: 1; }
+.mob-teamcol .mob-member-pick { max-width: none; width: 100%; }
+
 .mob-lane {
   border: 1px dashed #dfe4ea; border-radius: 12px;
   padding: 0.45rem 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;
@@ -769,6 +994,21 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   box-shadow: 0 1px 2px rgba(10, 40, 28, 0.06); cursor: grab;
 }
 .mob-member.dragging { opacity: 0.45; cursor: grabbing; }
+/* Held long enough to be moved. The wobble is the whole signal — until a
+   name does this, nothing on the board can be dragged. */
+@keyframes mob-wobble {
+  0%, 100% { transform: rotate(-1.1deg); }
+  50% { transform: rotate(1.1deg); }
+}
+.mob-member.armed {
+  animation: mob-wobble 0.22s ease-in-out infinite;
+  box-shadow: 0 0 0 1.5px var(--accent-strong), 0 3px 8px rgba(10, 40, 28, 0.14);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mob-member.armed { animation: none; }
+}
+/* A press-and-hold must not turn into a text selection or a magnifier. */
+.mob-member { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
 .mob-member-grip { color: #c3cad2; font-size: 0.75rem; letter-spacing: -2px; flex: none; }
 .mob-member-pick {
   flex: none; max-width: 42%; border: 1px solid #dfe4ea; border-radius: 8px;
@@ -785,7 +1025,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: #fff; border-radius: 16px; padding: 1rem;
   display: flex; flex-direction: column; gap: 0.5rem; width: 100%;
   box-shadow: 0 18px 40px rgba(10, 30, 20, 0.35);
+  /* A long list must scroll INSIDE the sheet — the phone frame clips
+     anything taller, so the buttons would otherwise be unreachable. */
+  max-height: 100%; overflow-y: auto;
 }
+.mob-modal .mob-row { flex: none; }
+/* A lane that only reports, never takes a drop. */
+.mob-lane.static { border-style: solid; border-color: #eceff3; background: #f8fafb; }
 
 /* An entry row inside a My work card that is itself tappable. */
 .mob-plainbtn {
@@ -1341,18 +1587,23 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-side { position: sticky; top: 4.25rem; align-self: start; }
 .wm-side-inner {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  padding: 0.8rem 0.9rem 0.9rem; display: flex; flex-direction: column; gap: 0.55rem;
+  transition: border-color 0.12s, background 0.12s;
+  padding: 0.85rem 0.95rem; display: flex; flex-direction: column; gap: 0.55rem;
   max-height: calc(100vh - 5.5rem); overflow-y: auto;
 }
-.wm-side-title {
-  appearance: none; background: none; border: none; cursor: pointer;
-  padding: 0 0 0.5rem; border-bottom: 1px solid var(--border);
+/* The three columns share one title style, so they read as one page. */
+.wm-side-title, .wm-section-title {
+  appearance: none; background: none; border: none;
+  margin: 0; padding: 0 0 0.55rem; border-bottom: 1px solid var(--border);
   font-family: 'Montserrat', system-ui, sans-serif; color: var(--text);
   display: flex; align-items: center; gap: 0.4rem;
-  font-size: 1rem; font-weight: 600; letter-spacing: -0.01em;
+  font-size: 0.95rem; font-weight: 700; letter-spacing: -0.01em;
 }
-.wm-side-caret { color: var(--muted); font-size: 0.7rem; }
+.wm-side-title { cursor: pointer; }
+.wm-side-caret { color: var(--muted); font-size: 0.7rem; flex: none; }
+.wm-side-label { flex: 1; text-align: left; }
 .wm-side-title .count-badge.static { margin-left: 0.15rem; }
+.wm-side-inner.over { border-color: var(--accent-strong); border-style: dashed; background: var(--accent-soft); }
 .wm-signup-list { display: flex; flex-direction: column; gap: 0.45rem; }
 .wm-block.wm-signup { width: 100%; }
 .wm-block-bar.new { background: linear-gradient(90deg, #f97316, #dc2626); }
@@ -1360,14 +1611,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Middle column — the formation. */
 .wm-formation {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; padding: 0.8rem 0.9rem 1rem;
-  display: flex; flex-direction: column; gap: 0.15rem;
+  border-radius: 12px; padding: 0.85rem 0.95rem;
+  display: flex; flex-direction: column; gap: 0.55rem;
 }
-.wm-formation-head {
-  display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
-  padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); margin-bottom: 0.4rem;
-}
-.wm-section-title { margin: 0; font-size: 1rem; letter-spacing: -0.01em; }
+/* The sideways scrollbar must not eat into the panel's own spacing. */
+.wm-stations { scrollbar-gutter: stable; }
+.wm-formation-head { display: flex; }
+.wm-formation-head .wm-section-title { flex: 1; }
 
 /* One row per tier. */
 .wm-tier-row { padding: 0.55rem 0 0.15rem; }
@@ -1421,22 +1671,116 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .wm-block-foot {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;
-  margin-top: 0.25rem; min-height: 18px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem;
+  margin-top: 0.25rem;
 }
-.wm-under {
-  background: var(--accent-soft); color: var(--accent-strong);
-  border-radius: 999px; padding: 0 0.45rem; font-size: 0.67rem; font-weight: 700;
-  white-space: nowrap;
+
+/* Who holds a tier, listed in its pop-out. */
+.tier-people { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.tier-person {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.15rem 0.6rem; font-size: 0.8rem; font-weight: 600;
 }
-.wm-add {
+
+/* Station boxes: the floor from the station-head tier down. Every station
+   is the SAME tier, so they stand side by side — stacked, they read as a
+   hierarchy that is not there. */
+.wm-stations { display: flex; gap: 0.7rem; align-items: flex-start; overflow-x: auto; }
+.wm-all-stations { max-width: none; }
+.wm-station-box {
+  flex: 0 0 auto; width: max-content; min-width: 360px; max-width: none;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: #fafbfc; padding: 0.6rem 0.7rem 0.7rem;
+}
+.wm-station-box .wm-srow:first-of-type { padding-top: 0.5rem; }
+.wm-station-head {
+  appearance: none; background: none; border: none; cursor: pointer;
+  width: 100%; text-align: left; display: flex; align-items: center; gap: 0.45rem;
+  padding: 0 0 0.45rem; border-bottom: 1px solid var(--border);
+  font-family: inherit;
+}
+.wm-station-box.shut .wm-station-head { padding-bottom: 0; border-bottom: none; }
+.wm-station-box.shut { width: auto; min-width: 0; }
+.wm-station-caret { color: var(--muted); font-size: 0.7rem; }
+.wm-station-head:hover .wm-station-name { color: var(--text); }
+.wm-station-name {
+  font-size: 0.82rem; font-weight: 800; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--accent-strong);
+}
+
+/* One labelled row per tier inside a station: name on the left, people on
+   the right. */
+.wm-srow { display: flex; gap: 0.6rem; padding: 0.35rem 0; align-items: flex-start; }
+.wm-srow + .wm-srow { border-top: 1px dashed #e6e9ee; }
+.wm-srow-label {
+  flex: none; width: 9rem; padding-top: 0.3rem;
+  color: var(--muted); font-size: 0.72rem; font-weight: 700;
+}
+.wm-srow-body {
+  flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+  border: 1px dashed transparent; border-radius: 9px; padding: 0.15rem;
+}
+.wm-srow-body.col { flex-direction: column; align-items: stretch; gap: 0.3rem; }
+.wm-srow-body.over { border-color: var(--accent-strong); background: var(--accent-soft); }
+
+/* Teams are the COLUMNS, tiers the ROWS: a name never repeats what its
+   column and row already say. */
+.wm-grid { display: grid; gap: 0.3rem 0.9rem; align-items: start; margin-top: 0.15rem; }
+/* The add button closes the row of column headings on the right. */
+.wm-grid-head.add { border-bottom: none; padding-left: 0.15rem; justify-content: center; }
+.wm-add-icon {
   appearance: none; cursor: pointer; font-family: inherit;
+  width: 1.5rem; height: 1.5rem; line-height: 1; flex: none;
   background: var(--surface); border: 1px dashed #b8c0ca; color: var(--accent-strong);
-  border-radius: 7px; padding: 0.05rem 0.4rem; font-size: 0.68rem; font-weight: 700;
-  white-space: nowrap; visibility: hidden;
+  border-radius: 50%; font-size: 0.95rem; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
 }
-.wm-block:hover .wm-add, .wm-block.selected .wm-add { visibility: visible; }
-.wm-add:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
+.wm-add-icon:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
+/* One team must not blur into the next: its heading sits on a solid rule,
+   every other column carries a light tint, and a divider runs down the
+   left of each column after the first. */
+.wm-grid-head {
+  display: flex; align-items: center; gap: 0.25rem;
+  padding: 0.2rem 0.45rem 0.35rem; border-bottom: 2px solid #ccd3db;
+  border-radius: 8px 8px 0 0;
+}
+.wm-grid-head.alt, .wm-cell.alt { background: #f2f4f7; }
+.wm-grid-head.divided, .wm-cell.divided { border-left: 1px solid var(--border); }
+.wm-grid-head.add { border-bottom: none; background: none; border-left: none; }
+.wm-grid-head:hover .wm-icon { visibility: visible; }
+.wm-cell {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; align-content: flex-start;
+  min-height: 2rem; padding: 0.25rem 0.45rem;
+  border: 1px dashed transparent; border-radius: 0 0 8px 8px;
+}
+.wm-cell.over { border-color: var(--accent-strong); background: var(--accent-soft); }
+.wm-tline-name {
+  font-size: 0.76rem; font-weight: 800; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--accent-strong);
+}
+.wm-tline-name.none { color: var(--muted); font-weight: 600; }
+.wm-tline-tools { display: flex; gap: 0.1rem; margin-left: auto; }
+
+/* Every name on the chart is the same block: one size, so a row of them
+   reads as a row and nothing looks more important than its neighbour. */
+.wm-block.mini {
+  width: 142px; padding: 0.3rem 0.5rem;
+}
+.wm-block.mini .wm-block-name { display: block; overflow: hidden; text-overflow: ellipsis; }
+/* The slot names are dropped into, sized like a block so the row keeps
+   its rhythm. It sits after the names, never between them. */
+.wm-add-person {
+  width: 142px; min-height: 1.9rem; order: 99;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px dashed #cdd4dc; border-radius: 10px; padding: 0.3rem 0.5rem;
+  color: #9aa3ae; font-size: 0.72rem; font-weight: 600; white-space: nowrap;
+}
+.wm-cell.over .wm-add-person, .wm-srow-body.over .wm-add-person {
+  border-color: var(--accent-strong); color: var(--accent-strong);
+}
+.wm-block.mini .wm-block-bar { height: 2px; }
+.wm-block.mini .wm-block-name { margin-top: 0.1rem; font-size: 0.76rem; }
+.wm-block.mini .wm-block-foot { margin-top: 0; min-height: 0; }
 
 /* A team cluster inside a row. */
 .wm-cluster {
@@ -1457,7 +1801,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-cluster-of { color: var(--muted); font-weight: 600; text-transform: none; letter-spacing: 0; }
 .wm-cluster-n { color: var(--muted); font-size: 0.66rem; font-variant-numeric: tabular-nums; }
 .wm-cluster-input { font: inherit; font-size: 0.72rem; font-weight: 700; padding: 0.05rem 0.3rem; width: 8rem; }
-.wm-cluster-blocks { display: flex; gap: 0.45rem; }
+.wm-cluster-blocks { display: flex; gap: 0.45rem; min-height: 2.2rem; align-items: center; }
+.wm-cluster-empty {
+  color: #9aa3ae; font-size: 0.72rem; font-style: italic; padding: 0 0.35rem;
+  white-space: nowrap;
+}
 .wm-icon {
   appearance: none; background: none; border: none; cursor: pointer;
   color: var(--muted); font-size: 0.72rem; line-height: 1; padding: 0.05rem 0.2rem;
@@ -1470,20 +1818,23 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Right column — the person you opened. */
 .wm-panel {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 0.7rem;
+  padding: 0.85rem 0.95rem; display: flex; flex-direction: column; gap: 0.55rem;
   position: sticky; top: 4.25rem; max-height: calc(100vh - 5.5rem); overflow-y: auto;
 }
-.wm-panel-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);
-}
+.wm-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.wm-panel-head .wm-section-title { flex: 1; border-bottom: none; padding-bottom: 0; }
+.wm-panel-head { padding-bottom: 0.55rem; border-bottom: 1px solid var(--border); }
 /* Profile details: a "Label : value" sheet that turns into a form. */
 .wm-panel-tools { display: flex; align-items: center; gap: 0.2rem; }
 .wm-panel-tools .wm-icon { visibility: visible; font-size: 0.9rem; padding: 0.2rem 0.35rem; }
 .wm-fields { display: flex; flex-direction: column; gap: 0.3rem; }
-.wm-field { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.82rem; }
+.wm-field {
+  display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem;
+  min-height: 1.85rem;
+}
 .wm-field-label {
   flex: none; width: 5.6rem; color: var(--muted); font-size: 0.75rem;
+  align-self: center;
 }
 .wm-field-label::after { content: ' :'; }
 .wm-field-value { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
@@ -1522,8 +1873,36 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 @media (max-width: 820px) {
   .wm-side { position: static; }
   .wm-side-inner { max-height: 240px; }
-  .wm-add { visibility: visible; }
 }
+
+/* Save / Cancel sitting inside a table row — small enough not to stretch it. */
+.row-btn { padding: 0.3rem 0.7rem; font-size: 0.8rem; white-space: nowrap; }
+
+/* Adding someone to a tier: search, then pick from what matches. */
+.tier-add { position: relative; margin-top: 0.5rem; max-width: 460px; }
+.tier-add .row-input { max-width: none; }
+.tier-hits {
+  display: flex; flex-direction: column; gap: 0.15rem;
+  margin-top: 0.3rem; padding: 0.35rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(20, 30, 45, 0.14);
+}
+.tier-hit {
+  appearance: none; border: none; background: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.05rem;
+  padding: 0.35rem 0.5rem; border-radius: 8px; text-align: left; width: 100%;
+}
+.tier-hit:hover:not(:disabled) { background: var(--accent-soft); }
+.tier-hit:disabled { opacity: 0.5; cursor: default; }
+.tier-hit-name { font-size: 0.88rem; font-weight: 600; }
+
+/* Picked from the search, waiting on Add. */
+.tier-chosen {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  margin-top: 0.4rem; padding: 0.45rem 0.6rem;
+  background: var(--accent-soft); border-radius: 10px;
+}
+.tier-chosen-who { display: flex; flex-direction: column; gap: 0.05rem; margin-right: auto; min-width: 0; }
 
 /* ------------------------------------------------------------------ */
 /* PIECE RATE — the multi-row create window. The pop-out is widened to  */

@@ -1307,3 +1307,207 @@ update public.access_profiles
   set full_name = null
   where full_name is not null and email is not null
     and lower(btrim(full_name)) = lower(btrim(email));
+
+-- ---------------------------------------------------------------------------
+-- Profile photo. The path points into the existing public `records` bucket
+-- (avatars/<user id>-<stamp>.jpg), so no new bucket or storage policy is
+-- needed — that bucket is already "authenticated may upload, anyone may
+-- read".
+--
+-- Writing it needs its own door: access_profiles has no "update your own
+-- row" policy, and adding one would let anyone rewrite their own tier or
+-- salary, since a row policy cannot be narrowed to a single column. This
+-- function is that narrow door — it touches avatar_path and nothing else,
+-- always for the caller's own row.
+-- ---------------------------------------------------------------------------
+alter table public.access_profiles add column if not exists avatar_path text;
+
+create or replace function public.set_my_avatar(path text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.access_profiles set avatar_path = path where id = auth.uid();
+$$;
+
+revoke all on function public.set_my_avatar(text) from public;
+grant execute on function public.set_my_avatar(text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Audit trail: the tag tables were the visible gap. Settings calls itself
+-- "Tier & Station Tags Setting" and logged only half of that — grades had a
+-- trigger, stations had none, so adding, renaming or deleting a station tag
+-- left no trace at all. Workers and photo records were unwatched too.
+--
+-- payroll_lines is deliberately NOT audited: a payroll run writes one line
+-- per worker per job, so a single run would bury every other event in the
+-- log. The run itself is audited, and the lines are its detail.
+-- ---------------------------------------------------------------------------
+
+drop trigger if exists trg_audit_stations on public.stations;
+create trigger trg_audit_stations
+  after insert or update or delete on public.stations
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_workers on public.workers;
+create trigger trg_audit_workers
+  after insert or update or delete on public.workers
+  for each row execute function public.log_audit();
+
+drop trigger if exists trg_audit_photo_records on public.photo_records;
+create trigger trg_audit_photo_records
+  after insert or update or delete on public.photo_records
+  for each row execute function public.log_audit();
+
+-- ---------------------------------------------------------------------------
+-- No two tags may read the same, and no two people may share an email or a
+-- phone number. Compared with case and surrounding space ignored; phone
+-- numbers by their digits alone, so "012-345 6789" and "0123456789" are one
+-- number.
+--
+-- Each index is created only when the table is already clean. Existing
+-- duplicates raise a NOTICE naming them instead of failing this whole
+-- script — clear them, then re-run and the index is added.
+-- ---------------------------------------------------------------------------
+
+do $$
+declare dups text;
+begin
+  select string_agg(distinct name, ', ') into dups
+    from public.stations
+    where lower(btrim(name)) in (
+      select lower(btrim(name)) from public.stations
+      group by lower(btrim(name)) having count(*) > 1
+    );
+  if dups is null then
+    create unique index if not exists stations_name_unique
+      on public.stations (lower(btrim(name)));
+  else
+    raise notice 'stations: duplicate names, uniqueness not enforced yet -> %', dups;
+  end if;
+end $$;
+
+do $$
+declare dups text;
+begin
+  select string_agg(distinct name, ', ') into dups
+    from public.grades
+    where lower(btrim(name)) in (
+      select lower(btrim(name)) from public.grades
+      group by lower(btrim(name)) having count(*) > 1
+    );
+  if dups is null then
+    create unique index if not exists grades_name_unique
+      on public.grades (lower(btrim(name)));
+  else
+    raise notice 'grades: duplicate names, uniqueness not enforced yet -> %', dups;
+  end if;
+end $$;
+
+do $$
+declare dups text;
+begin
+  select string_agg(distinct email, ', ') into dups
+    from public.access_profiles
+    where email is not null and lower(btrim(email)) in (
+      select lower(btrim(email)) from public.access_profiles
+      where email is not null
+      group by lower(btrim(email)) having count(*) > 1
+    );
+  if dups is null then
+    create unique index if not exists access_profiles_email_unique
+      on public.access_profiles (lower(btrim(email)))
+      where email is not null and btrim(email) <> '';
+  else
+    raise notice 'access_profiles: duplicate emails, uniqueness not enforced yet -> %', dups;
+  end if;
+end $$;
+
+do $$
+declare dups text;
+begin
+  select string_agg(distinct phone, ', ') into dups
+    from public.access_profiles
+    where phone is not null
+      and regexp_replace(phone, '\D', '', 'g') <> ''
+      and regexp_replace(phone, '\D', '', 'g') in (
+        select regexp_replace(phone, '\D', '', 'g') from public.access_profiles
+        where phone is not null and regexp_replace(phone, '\D', '', 'g') <> ''
+        group by regexp_replace(phone, '\D', '', 'g') having count(*) > 1
+      );
+  if dups is null then
+    create unique index if not exists access_profiles_phone_unique
+      on public.access_profiles ((regexp_replace(phone, '\D', '', 'g')))
+      where phone is not null and regexp_replace(phone, '\D', '', 'g') <> '';
+  else
+    raise notice 'access_profiles: duplicate phone numbers, uniqueness not enforced yet -> %', dups;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Working a team is a GRANT, not a rung. Until now the mobile Team tab
+-- offered Pending Allocation and the tier board to anyone sitting above the
+-- bottom tier, which handed an Operator the same controls as a Station Head.
+-- "team-assign" makes it something you tick per tag instead.
+--
+-- Backfilled onto every tier that is above the bottom rung, so behaviour is
+-- unchanged on the first run and the tags can then be trimmed to whoever
+-- should really hold it.
+-- ---------------------------------------------------------------------------
+update public.grades set capabilities = capabilities || '{team-assign}'
+  where sort_order < (select max(sort_order) from public.grades)
+    and not 'team-assign' = any(capabilities);
+
+-- Re-assert the super admin's full set, now including team-assign.
+update public.grades set capabilities =
+  '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,worker-edit,worker-salary,station-create}'
+  where sort_order = 1;
+
+-- ---------------------------------------------------------------------------
+-- One team name per station. Two teams at one station reading the same is
+-- exactly what makes the chart useless, and the app can only check what it
+-- has loaded — so the database holds the line. Existing duplicates are
+-- numbered apart first, since a unique index will not build over them.
+-- ---------------------------------------------------------------------------
+with dupes as (
+  select id,
+         row_number() over (
+           partition by station_id, lower(btrim(name))
+           order by sort_order, created_at
+         ) as n
+    from public.teams
+)
+update public.teams t
+   set name = t.name || ' ' || d.n
+  from dupes d
+ where d.id = t.id and d.n > 1;
+
+create unique index if not exists teams_name_per_station_idx
+  on public.teams (station_id, lower(btrim(name)))
+  where station_id is not null;
+
+create unique index if not exists teams_name_no_station_idx
+  on public.teams (lower(btrim(name)))
+  where station_id is null;
+
+-- ---------------------------------------------------------------------------
+-- Making a team is its own grant. On the mobile Team tab a leader's people
+-- are shown as one column per team, and a team is created ONLY by the "Add
+-- new team" button — never as a side effect of dragging someone onto the
+-- team-leader rung, which is what used to happen.
+--
+-- Backfilled onto every tier with at least two rungs beneath it, since a
+-- tier needs someone to lead a team and someone to be in it. That includes
+-- the assistant-station-head rung; untick it in Settings -> Tags management
+-- if only station heads and above should create teams.
+-- ---------------------------------------------------------------------------
+update public.grades g set capabilities = g.capabilities || '{team-create}'
+  where (
+      select count(*) from public.grades x where x.sort_order > g.sort_order
+    ) >= 2
+    and not 'team-create' = any(g.capabilities);
+
+update public.grades set capabilities =
+  '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,team-create,worker-edit,worker-salary,station-create}'
+  where sort_order = 1;

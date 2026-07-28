@@ -11,7 +11,11 @@ import {
   MANAGEMENT_ONLY_GROUPS,
   MODULE_GROUP,
   MODULE_OPTIONS,
+  canGiveTier,
   nextTagColor,
+  roleForTier,
+  runsWholeMill,
+  stationTierOf,
   sortCapabilities,
   tagClass,
 } from '../lib/tags'
@@ -49,6 +53,34 @@ function deleteError(err: { code?: string; message: string }, what: string): str
   const table = /on table "([^"]+)"\s*$/.exec(err.message)?.[1]
   const holder = (table && HELD_BY[table]) ?? (table ? `records in ${table}` : 'other records')
   return `${what} is still used by ${holder}, so it cannot be deleted. Remove or move those first, then delete it here.`
+}
+
+/**
+ * Names are compared with case and surrounding space ignored: "Operator"
+ * and " operator " are the same tag to a person reading a dropdown, so
+ * they must not both exist.
+ */
+/** Enter commits an inline row, Escape abandons it. */
+function rowKeys(e: React.KeyboardEvent, save: () => void, cancel: () => void) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    save()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    cancel()
+  }
+}
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/**
+ * The database has the last word on uniqueness — two people saving the
+ * same name at once would slip past a check made against the list on
+ * screen. Say it in the same words as that check.
+ */
+function saveError(err: { code?: string; message: string }, what: string, name: string): string {
+  if (err.code !== '23505') return err.message
+  return `A ${what} called "${name.trim()}" already exists.`
 }
 
 /** What tier 1 is for, shown under its name on both faces. */
@@ -138,7 +170,10 @@ function TagsTab() {
   const [addingStation, setAddingStation] = useState(false)
   const [stationName, setStationName] = useState('')
   const [dragStation, setDragStation] = useState<string | null>(null)
-  const [stationModal, setStationModal] = useState<{ station: Station; mode: Mode } | null>(null)
+  // A station is one field, so it is edited in the row rather than in a
+  // pop-out: this is the row being edited, and the name being typed.
+  const [editStationId, setEditStationId] = useState<string | null>(null)
+  const [stationDraft, setStationDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -172,6 +207,9 @@ function TagsTab() {
   // The tier-1 tag itself is the super admin and is never edited away.
   const rowEditable = (g: Grade) => g.sort_order !== 1 && isSuperUser
   const canManageStations = isSuperUser
+  // Where the mill splits: from this tier down people work at ONE station
+  // and are drawn per station in Team Manage.
+  const stationTier = stationTierOf(grades)
 
   // Drop a dragged tag onto another: reorder locally, then renumber every
   // tier 1..n so tier numbers always run top-down with no gaps.
@@ -191,30 +229,47 @@ function TagsTab() {
     next.splice(next.findIndex((g) => g.id === targetId) + (movingDown ? 1 : 0), 0, dragged)
     setDragId(null)
     setGrades(next.map((g, i) => ({ ...g, sort_order: i + 1 })))
-    const results = await Promise.all(
-      next.map((g, i) => supabase.from('grades').update({ sort_order: i + 1 }).eq('id', g.id)),
-    )
-    const err = results.find((r) => r.error)
-    if (err?.error) setError(err.error.message)
+    const err = await renumberTiers(next)
+    if (err) setError(err.message)
     load()
+  }
+
+  // Renumber every tag 1..n, top down. Tier numbers are not labels — the
+  // system reads them (which tier is above which, what route access a tag
+  // carries), so they must never carry a gap.
+  async function renumberTiers(list: Grade[]) {
+    const results = await Promise.all(
+      list.map((g, i) =>
+        g.sort_order === i + 1
+          ? null
+          : supabase.from('grades').update({ sort_order: i + 1 }).eq('id', g.id),
+      ),
+    )
+    return results.find((r) => r?.error)?.error ?? null
   }
 
   async function removeTag(g: Grade) {
     if (!window.confirm(`Delete tier tag "${g.name}"?`)) return
     const { error } = await supabase.from('grades').delete().eq('id', g.id)
     if (error) return setError(deleteError(error, `Tier tag "${g.name}"`))
-    setError(null)
+    // Closing the gap the delete left: tier 4 of 7 going means 5, 6, 7
+    // move up, not that the list runs 1, 2, 3, 5, 6, 7.
+    const gapErr = await renumberTiers(grades.filter((x) => x.id !== g.id))
+    setError(gapErr ? gapErr.message : null)
     load()
   }
 
-  async function addStation(e: FormEvent) {
-    e.preventDefault()
+  async function addStation() {
     setError(null)
+    if (stationName.trim() === '') return setError('A station tag needs a name.')
+    if (stations.some((x) => sameName(x.name, stationName))) {
+      return setError(`A station tag called "${stationName.trim()}" already exists.`)
+    }
     const sort = Math.max(0, ...stations.map((x) => x.sort_order)) + 1
     const { error } = await supabase
       .from('stations')
       .insert({ name: stationName.trim(), sort_order: sort })
-    if (error) return setError(error.message)
+    if (error) return setError(saveError(error, 'station tag', stationName))
     setStationName('')
     setAddingStation(false)
     load()
@@ -235,6 +290,47 @@ function TagsTab() {
     )
     const err = results.find((r) => r.error)
     if (err?.error) setError(err.error.message)
+    load()
+  }
+
+  function startAddStation() {
+    setError(null)
+    setEditStationId(null)
+    setStationName('')
+    setAddingStation(true)
+  }
+
+  function cancelAddStation() {
+    setStationName('')
+    setAddingStation(false)
+    setError(null)
+  }
+
+  function startEditStation(st: Station) {
+    setError(null)
+    setAddingStation(false)
+    setEditStationId(st.id)
+    setStationDraft(st.name)
+  }
+
+  function cancelStationEdit() {
+    setEditStationId(null)
+    setStationDraft('')
+    setError(null)
+  }
+
+  async function saveStationName() {
+    const st = stations.find((x) => x.id === editStationId)
+    if (!st) return
+    const next = stationDraft.trim()
+    if (next === '') return setError('A station tag needs a name.')
+    if (next === st.name) return cancelStationEdit()
+    if (stations.some((x) => x.id !== st.id && sameName(x.name, next))) {
+      return setError(`A station tag called "${next}" already exists.`)
+    }
+    const { error } = await supabase.from('stations').update({ name: next }).eq('id', st.id)
+    if (error) return setError(saveError(error, 'station tag', next))
+    cancelStationEdit()
     load()
   }
 
@@ -355,32 +451,18 @@ function TagsTab() {
         </table>
       </div>
 
-      {/* Section 2 — station tags */}
+      {/* Section 2 — station tags. A station is one field, so it is edited
+          in place: the row itself becomes the form, and adding one opens a
+          blank row at the end rather than a pop-out for a single name. */}
       <div className="card stack">
         <div className="row-form spread">
           <h3>Station tags</h3>
           {canManageStations && (
-            <button
-              className="btn"
-              onClick={() => {
-                setStationName('')
-                setAddingStation((v) => !v)
-              }}
-            >
-              {addingStation ? 'Cancel' : '+ Add station'}
+            <button className="btn" onClick={startAddStation} disabled={addingStation}>
+              + Add station
             </button>
           )}
         </div>
-
-        {addingStation && (
-          <form className="row-form" onSubmit={addStation}>
-            <label className="field inline grow">
-              <span>New station name</span>
-              <input value={stationName} onChange={(e) => setStationName(e.target.value)} autoFocus required />
-            </label>
-            <button className="btn" type="submit">Save station</button>
-          </form>
-        )}
 
         <table className="table">
           <thead>
@@ -388,86 +470,121 @@ function TagsTab() {
               {canManageStations && <th></th>}
               <th>#</th>
               <th>Station</th>
-              <th>Requirement</th>
               <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {stations.map((st, i) => (
-              <tr
-                key={st.id}
-                className={`${canManageStations ? 'drag-row' : ''} ${dragStation === st.id ? 'dragging' : ''}`}
-                draggable={canManageStations}
-                onDragStart={() => canManageStations && setDragStation(st.id)}
-                onDragEnd={() => setDragStation(null)}
-                onDragOver={(e) => canManageStations && e.preventDefault()}
-                onDrop={(e) => {
-                  if (!canManageStations) return
-                  e.preventDefault()
-                  dropOnStation(st.id)
-                }}
-                title={canManageStations ? 'Drag to reorder' : undefined}
-              >
-                {canManageStations && <td className="drag-handle" aria-hidden="true">⠿</td>}
-                <td className="muted">{i + 1}</td>
-                <td>{st.name}</td>
-                <td className="muted small">
-                  {st.hourly_count
-                    ? `Hourly · min ${st.hourly_min_prev ?? 0} prev hr · max ${st.hourly_target ?? 6}/hr`
-                    : '—'}
+            {stations.length === 0 && !addingStation && (
+              <tr><td colSpan={4} className="muted">No station tags yet.</td></tr>
+            )}
+            {stations.map((st, i) => {
+              const editing = editStationId === st.id
+              return (
+                <tr
+                  key={st.id}
+                  className={`${canManageStations && !editing ? 'drag-row' : ''} ${
+                    dragStation === st.id ? 'dragging' : ''
+                  }`}
+                  /* Not while editing — dragging would fight selecting text. */
+                  draggable={canManageStations && !editing}
+                  onDragStart={() => canManageStations && !editing && setDragStation(st.id)}
+                  onDragEnd={() => setDragStation(null)}
+                  onDragOver={(e) => canManageStations && !editing && e.preventDefault()}
+                  onDrop={(e) => {
+                    if (!canManageStations || editing) return
+                    e.preventDefault()
+                    dropOnStation(st.id)
+                  }}
+                  title={canManageStations && !editing ? 'Drag to reorder' : undefined}
+                >
+                  {canManageStations && (
+                    <td className="drag-handle" aria-hidden="true">{editing ? '' : '⠿'}</td>
+                  )}
+                  <td className="muted">{i + 1}</td>
+                  <td>
+                    {editing ? (
+                      <input
+                        className="row-input"
+                        value={stationDraft}
+                        onChange={(e) => setStationDraft(e.target.value)}
+                        onKeyDown={(e) => rowKeys(e, saveStationName, cancelStationEdit)}
+                        aria-label="Station name"
+                        autoFocus
+                      />
+                    ) : (
+                      st.name
+                    )}
+                  </td>
+                  <td className="right">
+                    <span className="row-actions">
+                      {editing ? (
+                        <>
+                          <button className="btn ghost row-btn" onClick={cancelStationEdit}>
+                            Cancel
+                          </button>
+                          <button className="btn row-btn" onClick={saveStationName}>
+                            Save
+                          </button>
+                        </>
+                      ) : (
+                        canManageStations && (
+                          <>
+                            <button
+                              className="icon-btn sm"
+                              title="Edit station"
+                              aria-label={`Edit ${st.name}`}
+                              onClick={() => startEditStation(st)}
+                            >
+                              <PencilIcon />
+                            </button>
+                            <button
+                              className="icon-btn sm danger"
+                              title="Delete station"
+                              aria-label={`Delete ${st.name}`}
+                              onClick={() => removeStation(st)}
+                            >
+                              <TrashIcon />
+                            </button>
+                          </>
+                        )
+                      )}
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
+
+            {/* The new station, typed straight into the list it joins. */}
+            {addingStation && (
+              <tr>
+                {canManageStations && <td className="drag-handle" aria-hidden="true"></td>}
+                <td className="muted">{stations.length + 1}</td>
+                <td>
+                  <input
+                    className="row-input"
+                    value={stationName}
+                    onChange={(e) => setStationName(e.target.value)}
+                    onKeyDown={(e) => rowKeys(e, addStation, cancelAddStation)}
+                    placeholder="New station name"
+                    aria-label="New station name"
+                    autoFocus
+                  />
                 </td>
                 <td className="right">
                   <span className="row-actions">
-                    <button
-                      className="icon-btn sm"
-                      title="View this station's settings"
-                      aria-label={`View ${st.name}`}
-                      onClick={() => setStationModal({ station: st, mode: 'view' })}
-                    >
-                      <EyeIcon />
+                    <button className="btn ghost row-btn" onClick={cancelAddStation}>
+                      Cancel
                     </button>
-                    {canManageStations && (
-                      <>
-                        <button
-                          className="icon-btn sm"
-                          title="Edit station"
-                          aria-label={`Edit ${st.name}`}
-                          onClick={() => setStationModal({ station: st, mode: 'edit' })}
-                        >
-                          <PencilIcon />
-                        </button>
-                        <button
-                          className="icon-btn sm danger"
-                          title="Delete station"
-                          aria-label={`Delete ${st.name}`}
-                          onClick={() => removeStation(st)}
-                        >
-                          <TrashIcon />
-                        </button>
-                      </>
-                    )}
+                    <button className="btn row-btn" onClick={addStation}>
+                      Save
+                    </button>
                   </span>
                 </td>
               </tr>
-            ))}
+            )}
           </tbody>
         </table>
       </div>
-
-      {stationModal && (
-        <StationModal
-          station={stationModal.station}
-          mode={stationModal.mode}
-          canEdit={canManageStations}
-          usedBy={jobsAt(stationModal.station.id)}
-          onMode={(mode) => setStationModal((s) => (s ? { ...s, mode } : s))}
-          onClose={() => setStationModal(null)}
-          onSaved={() => {
-            setStationModal(null)
-            load()
-          }}
-        />
-      )}
 
       {tagModal && (
         <TagModal
@@ -480,7 +597,11 @@ function TagsTab() {
               : true
           }
           nextTier={Math.max(0, ...grades.map((g) => g.sort_order)) + 1}
+          stationTier={stationTier}
+          viewerTier={isSuperUser && myTier === null ? 1 : myTier}
+          allGrades={grades}
           usedColors={grades.map((g) => g.color)}
+          takenNames={grades.filter((g) => g.id !== tagModal.grade?.id).map((g) => g.name)}
           onMode={(mode) => setTagModal((s) => (s ? { ...s, mode } : s))}
           onClose={() => setTagModal(null)}
           onSaved={() => {
@@ -558,199 +679,219 @@ function ModuleTable({
 }
 
 /* ------------------------------------------------------------------ */
-/* Station pop-out. View shows the settings read-only and closes with */
-/* the × alone; Edit adds the form, with Cancel dropping back to view */
-/* rather than shutting the window.                                   */
-/* ------------------------------------------------------------------ */
-
-function StationModal({
-  station,
-  mode,
-  canEdit,
-  usedBy,
-  onMode,
-  onClose,
-  onSaved,
-}: {
-  station: Station
-  mode: Mode
-  canEdit: boolean
-  /** Piece Rate work types pointing here — what stops a delete. */
-  usedBy: StationJob[]
-  onMode: (mode: Mode) => void
-  onClose: () => void
-  onSaved: () => void
-}) {
-  const overlay = useOverlayClose(onClose)
-  const [name, setName] = useState(station.name)
-  const [hourly, setHourly] = useState(Boolean(station.hourly_count))
-  const [minPrevInput, setMinPrevInput] = useState(String(station.hourly_min_prev ?? 0))
-  const [targetInput, setTargetInput] = useState(String(station.hourly_target ?? 6))
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  async function save(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    const target = Number(targetInput)
-    const minPrev = Number(minPrevInput)
-    if (hourly && (!Number.isInteger(target) || target < 1 || target > 60)) {
-      return setError('Max work done this hour must be a whole number between 1 and 60.')
-    }
-    if (hourly && (!Number.isInteger(minPrev) || minPrev < 0 || minPrev > 60)) {
-      return setError('Min work done from previous hour must be a whole number between 0 and 60.')
-    }
-    setSaving(true)
-    const { error } = await supabase
-      .from('stations')
-      .update({
-        name: name.trim(),
-        hourly_count: hourly,
-        hourly_target: hourly ? target : station.hourly_target ?? 6,
-        hourly_min_prev: hourly ? minPrev : station.hourly_min_prev ?? 0,
-      })
-      .eq('id', station.id)
-    setSaving(false)
-    if (error) return setError(error.message)
-    onSaved()
-  }
-
-  // Cancelling an edit puts the untouched values back, so reopening the
-  // form does not show what was typed and then abandoned.
-  function cancel() {
-    setName(station.name)
-    setHourly(Boolean(station.hourly_count))
-    setMinPrevInput(String(station.hourly_min_prev ?? 0))
-    setTargetInput(String(station.hourly_target ?? 6))
-    setError(null)
-    onMode('view')
-  }
-
-  return (
-    <div className="modal-overlay" {...overlay}>
-      <div className="modal modal-view" onClick={(e) => e.stopPropagation()}>
-        <div className="row-form spread">
-          <h2>{mode === 'view' ? 'Station' : 'Edit station'}</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-
-        {error && <div className="error">{error}</div>}
-
-        {mode === 'view' ? (
-          <>
-            <div className="tag-section">
-              <div className="tag-section-title">Station name</div>
-              <span>{station.name}</span>
-            </div>
-
-            <div className="tag-section">
-              <div className="tag-section-title">Work requirement (mobile view)</div>
-              {station.hourly_count ? (
-                <>
-                  <span className="small">· Hourly count — records are counted per hour</span>
-                  <span className="small">
-                    · Min {station.hourly_min_prev ?? 0} done in the previous hour
-                  </span>
-                  <span className="small">· Max {station.hourly_target ?? 6} in this hour</span>
-                </>
-              ) : (
-                <span className="small muted">None</span>
-              )}
-            </div>
-
-            {/* What is holding this station down, named — a station tag
-                cannot be deleted while Piece Rate work types point at it,
-                so this is the list to clear first. */}
-            <div className="tag-section">
-              <div className="tag-section-title">Used by</div>
-              {usedBy.length === 0 ? (
-                <span className="small muted">Nothing — this station can be deleted.</span>
-              ) : (
-                <>
-                  {usedBy.map((j) => (
-                    <span key={j.id} className="small">
-                      · {j.name}
-                      {!j.active && <span className="muted"> (inactive)</span>}
-                    </span>
-                  ))}
-                  <p className="tag-section-hint">
-                    Clear these in <Link to="/piece-rate">Piece Rate</Link> to free the station.
-                  </p>
-                </>
-              )}
-            </div>
-
-            {canEdit && (
-              <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-                <button type="button" className="btn" onClick={() => onMode('edit')}>
-                  Edit station
-                </button>
-              </div>
-            )}
-          </>
-        ) : (
-          <form className="stack" style={{ gap: '0.9rem' }} onSubmit={save}>
-            <label className="field">
-              <span>Station name</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-            </label>
-
-            <div className="field">
-              <span>Work requirement (shown in the mobile view)</span>
-              <label className="checkbox small" style={{ margin: 0 }}>
-                <input type="checkbox" checked={hourly} onChange={(e) => setHourly(e.target.checked)} />{' '}
-                Hourly count — records are counted per hour (stamp card)
-              </label>
-            </div>
-
-            {hourly && (
-              <div className="row-form">
-                <label className="field inline grow">
-                  <span>1. Min work done from previous hour</span>
-                  <input
-                    inputMode="numeric"
-                    value={minPrevInput}
-                    onChange={(e) => setMinPrevInput(e.target.value)}
-                    placeholder="0"
-                    required
-                  />
-                </label>
-                <label className="field inline grow">
-                  <span>2. Work done in this hour (max)</span>
-                  <input
-                    inputMode="numeric"
-                    value={targetInput}
-                    onChange={(e) => setTargetInput(e.target.value)}
-                    placeholder="6"
-                    required
-                  />
-                </label>
-              </div>
-            )}
-            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-              <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>
-              <button className="btn" type="submit" disabled={saving}>
-                {saving ? 'Saving…' : 'Save station'}
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
 /* Tag edit pop-out: name, colour plate, what it can see, what it can */
 /* do.                                                                */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* Who holds a tier. Team Manage draws the mill from the Manager tier   */
+/* down, so the top tier's people are listed here instead — under the   */
+/* module sheet of the tag itself.                                      */
+/* ------------------------------------------------------------------ */
+function TierPeople({
+  grade,
+  grades,
+  viewerTier,
+}: {
+  grade: Grade
+  /** Every tier, so a search result can say where its person stands now. */
+  grades: Grade[]
+  /** The viewer's own tier — what they may hand out is measured from it. */
+  viewerTier: number | null
+}) {
+  type Person = { id: string; full_name: string | null; email: string | null; grade_id: string | null }
+  const [people, setPeople] = useState<Person[]>([])
+  const [query, setQuery] = useState('')
+  const [hits, setHits] = useState<Person[] | null>(null)
+  const [chosen, setChosen] = useState<Person | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const canFill = canGiveTier(viewerTier, grade.sort_order)
+  const tierOf = (p: Person) => grades.find((g) => g.id === p.grade_id) ?? null
+
+  async function loadPeople() {
+    const { data } = await supabase
+      .from('access_profiles')
+      .select('id, full_name, email, grade_id')
+      .eq('grade_id', grade.id)
+      .order('full_name')
+    setPeople((data ?? []) as Person[])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    setLoading(true)
+    loadPeople()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grade.id])
+
+  // Search every account, not only the ones waiting for a tier: moving
+  // somebody up from a lower tier is the same act as placing a new
+  // sign-up. Held back briefly so a query goes out per pause, not per
+  // keystroke, and nothing is fetched until something is typed.
+  useEffect(() => {
+    const term = query.trim()
+    if (!canFill || term === '') {
+      setHits(null)
+      return
+    }
+    setSearching(true)
+    const timer = setTimeout(async () => {
+      // Commas and brackets are the or() filter's own punctuation, so a
+      // search containing them would be read as more conditions.
+      const safe = term.replace(/[,()%]/g, ' ').trim()
+      if (safe === '') {
+        setHits([])
+        setSearching(false)
+        return
+      }
+      const { data } = await supabase
+        .from('access_profiles')
+        .select('id, full_name, email, grade_id')
+        .or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%`)
+        .order('email')
+        .limit(10)
+      // Somebody already on this tier has nowhere to move to.
+      setHits(((data ?? []) as Person[]).filter((p) => p.grade_id !== grade.id).slice(0, 8))
+      setSearching(false)
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [query, canFill, grade.id])
+
+  // A name if the account has one, otherwise the part before the @ — an
+  // email address is not a name.
+  const label = (p: Person) => {
+    const n = p.full_name?.trim()
+    if (n && n.toLowerCase() !== (p.email ?? '').trim().toLowerCase()) return n
+    return (p.email ?? '').split('@')[0] || '—'
+  }
+
+  function choose(p: Person) {
+    setChosen(p)
+    setHits(null)
+    setQuery('')
+    setError(null)
+  }
+
+  async function addChosen() {
+    if (!chosen) return
+    // Taking somebody off a tier needs the same reach as putting them on
+    // one: nobody may pull a person down from a tier they do not outrank.
+    const from = tierOf(chosen)
+    if (from && !canGiveTier(viewerTier, from.sort_order)) {
+      return setError(`${label(chosen)} holds ${from.name}, which is not yours to change.`)
+    }
+    setBusy(true)
+    setError(null)
+    const { data, error } = await supabase
+      .from('access_profiles')
+      .update({
+        grade_id: grade.id,
+        tags_confirmed: true,
+        role: roleForTier(grade.sort_order, grade.name),
+      })
+      .eq('id', chosen.id)
+      .select('id')
+    setBusy(false)
+    if (error) return setError(error.message)
+    if (!data || data.length === 0) {
+      return setError('The database would not let you put anyone on this tier.')
+    }
+    setChosen(null)
+    loadPeople()
+  }
+
+  return (
+    <div className="tag-section">
+      <div className="tag-section-title">People on this tier ({people.length})</div>
+      {error && <div className="error">{error}</div>}
+      {loading ? (
+        <span className="small muted">Loading…</span>
+      ) : people.length === 0 ? (
+        <span className="small muted">Nobody holds this tier yet.</span>
+      ) : (
+        <div className="tier-people">
+          {people.map((p) => (
+            <span className="tier-person" key={p.id} title={p.email ?? ''}>
+              {label(p)}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* The top tier has nothing above it, so somebody joins it from
+          here — there is no upper tier to drag them in from. */}
+      {canFill && !loading && (
+        <div className="tier-add">
+          <input
+            className="row-input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search any name or email"
+            aria-label="Search people by name or email"
+          />
+
+          {hits !== null && (
+            <div className="tier-hits">
+              {searching ? (
+                <span className="small muted">Searching…</span>
+              ) : hits.length === 0 ? (
+                <span className="small muted">Nobody matches that.</span>
+              ) : (
+                hits.map((p) => {
+                  const from = tierOf(p)
+                  return (
+                    <button key={p.id} type="button" className="tier-hit" onClick={() => choose(p)}>
+                      <span className="tier-hit-name">{label(p)}</span>
+                      <span className="muted small">
+                        {p.email}
+                        {from ? ` · ${from.name}` : ' · no tier yet'}
+                      </span>
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          )}
+
+          {/* Picked, but not placed until Add is pressed — so the tier a
+              person is being taken off is read before it changes. */}
+          {chosen && (
+            <div className="tier-chosen">
+              <span className="tier-chosen-who">
+                <span className="tier-hit-name">{label(chosen)}</span>
+                <span className="muted small">
+                  {chosen.email}
+                  {tierOf(chosen) ? ` · now ${tierOf(chosen)!.name}` : ' · no tier yet'}
+                </span>
+              </span>
+              <button type="button" className="btn ghost row-btn" onClick={() => setChosen(null)}>
+                Clear
+              </button>
+              <button type="button" className="btn row-btn" onClick={addChosen} disabled={busy}>
+                {busy ? 'Adding…' : 'Add'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function TagModal({
   grade,
   mode,
   canEdit,
   nextTier,
+  stationTier,
+  viewerTier,
+  allGrades,
   usedColors,
+  takenNames,
   onMode,
   onClose,
   onSaved,
@@ -759,7 +900,15 @@ function TagModal({
   mode: Mode
   canEdit: boolean
   nextTier: number
+  /** The first tier that works at ONE station; above it runs the mill. */
+  stationTier: number | null
+  /** The viewer's own tier — what they may hand out is measured from it. */
+  viewerTier: number | null
+  /** Every tier, so a search result can say where its person stands now. */
+  allGrades: Grade[]
   usedColors: string[]
+  /** Every OTHER tier's name — no two may read the same. */
+  takenNames: string[]
   onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
@@ -805,6 +954,9 @@ function TagModal({
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    if (takenNames.some((n) => sameName(n, name))) {
+      return setError(`A tier tag called "${name.trim()}" already exists.`)
+    }
     setSaving(true)
     // Saved in the standardized order so "Can do" always reads the same,
     // no matter what sequence the boxes were ticked in.
@@ -817,7 +969,7 @@ function TagModal({
       ? await supabase.from('grades').update(fields).eq('id', grade.id)
       : await supabase.from('grades').insert({ ...fields, sort_order: nextTier })
     setSaving(false)
-    if (error) return setError(error.message)
+    if (error) return setError(saveError(error, 'tier tag', name))
     onSaved()
   }
 
@@ -885,6 +1037,13 @@ function TagModal({
             />
           </div>
 
+          {/* Only the tiers that run the whole mill are listed here.
+              From the station-head tier down there are far too many names
+              for a sheet — Team Manage draws those, station by station. */}
+          {runsWholeMill(grade.sort_order, stationTier) && (
+            <TierPeople grade={grade} grades={allGrades} viewerTier={viewerTier} />
+          )}
+
           {canEdit && (
             <div className="row-form" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="btn" onClick={() => onMode('edit')}>
@@ -940,6 +1099,10 @@ function TagModal({
             onToggleCapability={toggleCapability}
           />
         </div>
+
+        {grade && runsWholeMill(grade.sort_order, stationTier) && (
+          <TierPeople grade={grade} grades={allGrades} viewerTier={viewerTier} />
+        )}
 
         {/* Anything that governs no single module keeps its own block. */}
         {looseGroups.map((group) => (
