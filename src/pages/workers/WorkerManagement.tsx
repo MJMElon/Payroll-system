@@ -724,6 +724,16 @@ export default function WorkerManagement() {
 
   if (loading) return <p className="muted">Loading…</p>
 
+  /** The dashed slot that says a name may be dropped here. */
+  function addSlot(canDrop: boolean) {
+    if (!canDrop) return null
+    return (
+      <span className="wm-add-person" title="Drag a name here">
+        + Add person
+      </span>
+    )
+  }
+
   /** One person's block. `mini` is the compact one used deep in a team. */
   function block(p: Profile, mini = false, inContext = false) {
     const grade = gradeOf(p)
@@ -751,7 +761,7 @@ export default function WorkerManagement() {
         {...dropProps(key, p, team, allowed)}
       >
         <span className={`wm-block-bar dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
-        <span className="wm-block-name">
+        <span className="wm-block-name" title={displayName(p)}>
           {displayName(p)}
           {isMe && <span className="you-chip">you</span>}
         </span>
@@ -834,11 +844,8 @@ export default function WorkerManagement() {
               if (dragged) placeOnTier(dragged, headGrade, station)
             }}
           >
-            {heads.length === 0 ? (
-              <span className="wm-cluster-empty">Drop a name here</span>
-            ) : (
-              heads.map((one) => block(one, true, true))
-            )}
+            {heads.map((one) => block(one, true, true))}
+            {addSlot(belowMe(headGrade.sort_order))}
           </div>
         </div>
 
@@ -864,7 +871,9 @@ export default function WorkerManagement() {
           <div
             className="wm-grid"
             style={{
-              gridTemplateColumns: `9rem repeat(${columns.length}, minmax(150px, 1fr)) auto`,
+              // Two blocks wide, so a team column is never a single-file
+              // queue of names and every station reads at the same rhythm.
+              gridTemplateColumns: `9rem repeat(${columns.length}, 300px) auto`,
             }}
           >
             {/* Row of team names — the column headings, said once — with
@@ -961,6 +970,7 @@ export default function WorkerManagement() {
                       }}
                     >
                       {people.map((one) => block(one, true, true))}
+                      {addSlot(belowMe(g.sort_order))}
                     </div>
                   )
                 })}
@@ -995,12 +1005,9 @@ export default function WorkerManagement() {
           onDragLeave={() => setDropKey((cur) => (cur === rowKey ? null : cur))}
           onDrop={(e) => grade && handleTierDrop(grade, e)}
         >
-          {people.length === 0 ? (
-            <span className="wm-cluster-empty">
-              {canDropHere ? 'Drop a name here' : 'Nobody on this tier yet'}
-            </span>
-          ) : (
-            people.map((one) => block(one, true, true))
+          {people.map((one) => block(one, true, true))}
+          {canDropHere ? addSlot(true) : people.length === 0 && (
+            <span className="wm-cluster-empty">Nobody on this tier yet</span>
           )}
         </div>
       </div>

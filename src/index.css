@@ -1533,7 +1533,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-stations { display: flex; gap: 0.7rem; align-items: flex-start; overflow-x: auto; }
 .wm-all-stations { max-width: none; }
 .wm-station-box {
-  flex: 0 0 auto; min-width: 360px; max-width: 720px;
+  flex: 0 0 auto; width: max-content; min-width: 360px; max-width: none;
   border: 1px solid var(--border); border-radius: 12px;
   background: #fafbfc; padding: 0.6rem 0.7rem 0.7rem;
 }
@@ -1591,10 +1591,22 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-tline-name.none { color: var(--muted); font-weight: 600; }
 .wm-tline-tools { display: flex; gap: 0.1rem; margin-left: auto; }
 
-/* The compact block used for the deepest tier. */
+/* Every name on the chart is the same block: one size, so a row of them
+   reads as a row and nothing looks more important than its neighbour. */
 .wm-block.mini {
-  width: auto; min-width: 96px; max-width: 168px;
-  padding: 0.3rem 0.5rem;
+  width: 142px; padding: 0.3rem 0.5rem;
+}
+.wm-block.mini .wm-block-name { display: block; overflow: hidden; text-overflow: ellipsis; }
+/* The slot names are dropped into, sized like a block so the row keeps
+   its rhythm. It sits after the names, never between them. */
+.wm-add-person {
+  width: 142px; min-height: 1.9rem; order: 99;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px dashed #cdd4dc; border-radius: 10px; padding: 0.3rem 0.5rem;
+  color: #9aa3ae; font-size: 0.72rem; font-weight: 600; white-space: nowrap;
+}
+.wm-cell.over .wm-add-person, .wm-srow-body.over .wm-add-person {
+  border-color: var(--accent-strong); color: var(--accent-strong);
 }
 .wm-block.mini .wm-block-bar { height: 2px; }
 .wm-block.mini .wm-block-name { margin-top: 0.1rem; font-size: 0.76rem; }
