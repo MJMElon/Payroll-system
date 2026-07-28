@@ -18,6 +18,7 @@ import {
   effectiveModules,
   runsWholeMill,
   stationTierOf,
+  tagClass,
 } from '../lib/tags'
 import {
   profileName,
@@ -410,7 +411,6 @@ export default function DemoMobile() {
                     profileId={profile?.id ?? null}
                     myEmail={profile?.email ?? 'unknown'}
                     jobColumnReady={jobColumnReady}
-                    onRecord={() => setTab('record')}
                     onMyWork={() => setTab('mywork')}
                     onError={setError}
                   />
@@ -768,7 +768,6 @@ function PerformanceTab({
   profileId,
   myEmail,
   jobColumnReady,
-  onRecord,
   onMyWork,
   onError,
 }: {
@@ -783,7 +782,6 @@ function PerformanceTab({
   profileId: string | null
   myEmail: string
   jobColumnReady: boolean
-  onRecord: () => void
   onMyWork: () => void
   onError: (m: string | null) => void
 }) {
@@ -865,6 +863,19 @@ function PerformanceTab({
   }
   const myMaxQty = Math.max(1, ...myWeek.map((w) => w.qty))
   const myBestIso = myWeek.reduce((a, b) => (b.qty > a.qty ? b : a), myWeek[0])?.iso
+
+  // The same week, but the whole mill's approved output rather than one
+  // person's — an Admin reading the mill dashboard has few records of
+  // their own, so their personal chart would sit empty.
+  const millWeek = myWeek.map((w) => ({ ...w, qty: 0 }))
+  for (const e of entries) {
+    if ((e.approval_status ?? 'approved') !== 'approved') continue
+    if (!stations.some((st) => st.id === e.station_id)) continue
+    const slot = millWeek.find((w) => w.iso === e.work_date)
+    if (slot) slot.qty += e.quantity
+  }
+  const millMaxQty = Math.max(1, ...millWeek.map((w) => w.qty))
+  const todayIso = todayISO()
 
   const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
   const status = (e: ProductionEntry) => e.approval_status ?? 'approved'
@@ -951,32 +962,34 @@ function PerformanceTab({
     const rows = mtd.filter((e) => e.station_id === sid)
     const workers = new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
     const output = rows.reduce((s, e) => s + e.quantity, 0)
+    // What the mill actually produced: only records that cleared approval.
+    // Pending work may still be rejected and rejected work never counted,
+    // so neither belongs in a figure read as output.
+    const approved = rows
+      .filter((e) => (e.approval_status ?? 'approved') === 'approved')
+      .reduce((s, e) => s + e.quantity, 0)
     const done = rows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
     const pct = rows.length > 0 ? Math.round((done / rows.length) * 100) : null
-    return { workers, output, pct }
+    return { workers, output, approved, pct }
   }
   const totalOutput = stations.reduce((s, st) => s + statFor(st.id).output, 0)
-
-  // TODAY, per station. There is no daily target to measure against (a
-  // station's target is per hour, and how many hours it ran is not known
-  // here), so the bar compares the stations with each other and the number
-  // beside it is the real output.
-  const todayStatFor = (sid: string) => {
-    const rows = entries.filter((e) => e.station_id === sid && e.work_date === todayISO())
-    return {
-      workers: new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size,
-      output: rows.reduce((s, e) => s + e.quantity, 0),
-    }
-  }
-  const todayByStation = stations.map((s) => ({ station: s, ...todayStatFor(s.id) }))
-  const busiestToday = Math.max(1, ...todayByStation.map((s) => s.output))
-  const outputToday = todayByStation.reduce((s, x) => s + x.output, 0)
+  const totalApproved = stations.reduce((s, st) => s + statFor(st.id).approved, 0)
 
   // My own scorecard, against a target of everything I submit ending up
   // approved. Read as a meter over two windows: today first, then the week
   // it sits in. Today is mostly "waiting" by nature — work recorded this
   // morning has not been through approval yet — which is exactly what the
   // waiting slice is there to show.
+  // My own work still in the queue, and what came back this week.
+  const myWaiting = myEntries.filter((e) =>
+    ['pending', 'verified'].includes(e.approval_status ?? ''),
+  ).length
+  const myRejectedWk = myEntries.filter(
+    (e) => (e.approval_status ?? '') === 'rejected' && e.work_date >= weekStart,
+  ).length
+  // Whether this tier reviews anyone else's work at all.
+  const reviews = canVerify || canFinal ? 1 : 0
+
   const myToday = scoreOver(myEntries.filter((e) => e.work_date === todayISO()))
   const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
   const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
@@ -1010,6 +1023,7 @@ function PerformanceTab({
           <>
             <div className="mob-card">
               <div className="mob-card-label">Mill performance · {monthLabel}</div>
+              <div className="mob-sub">Approved work records only</div>
               {stations.length === 0 ? (
                 <div className="mob-sub">No stations for your tags yet.</div>
               ) : (
@@ -1018,14 +1032,14 @@ function PerformanceTab({
                     <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
                       <span className="mob-entry-name">{s.name}</span>
                       <span className="mob-entry-side">
-                        <span className="mob-entry-amt">{fmtQty(statFor(s.id).output)}</span>
+                        <span className="mob-entry-amt">{fmtQty(statFor(s.id).approved)}</span>
                         <span className="mob-caret">›</span>
                       </span>
                     </button>
                   ))}
                   <div className="mob-breakrow total">
-                    <span>Total output</span>
-                    <span className="mob-entry-amt">{fmtQty(totalOutput)}</span>
+                    <span>Total approved output</span>
+                    <span className="mob-entry-amt">{fmtQty(totalApproved)}</span>
                   </div>
                 </>
               )}
@@ -1034,16 +1048,13 @@ function PerformanceTab({
             <div className="mob-card">
               <div className="mob-title">Daily quantity — this week</div>
               <div className="mob-bars">
-                {myWeek.map((w) => (
-                  <div className="mob-barrow" key={w.iso}>
-                    <span className="lbl">{w.label}</span>
+                {millWeek.map((w) => (
+                  <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
+                    <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
                     <span className="mob-bartrack">
-                      <div
-                        className={w.iso === myBestIso && w.qty > 0 ? 'best' : ''}
-                        style={{ width: `${(w.qty / myMaxQty) * 100}%` }}
-                      />
+                      <div style={{ width: `${(w.qty / millMaxQty) * 100}%` }} />
                     </span>
-                    <span className="val">{w.qty > 0 ? w.qty : '·'}</span>
+                    <span className="val">{w.qty > 0 ? fmtQty(w.qty) : '·'}</span>
                   </div>
                 ))}
               </div>
@@ -1082,36 +1093,6 @@ function PerformanceTab({
           </>
         )}
 
-        {/* 1 — how the floor is running TODAY. Tap a station for its records. */}
-        <div className="mob-card">
-          <div className="mob-card-label">Station performance · today</div>
-          <div className="mob-sub">
-            {fmtQty(outputToday)} output across {todayByStation.filter((s) => s.output > 0).length} of{' '}
-            {stations.length} station{stations.length === 1 ? '' : 's'}
-          </div>
-          {stations.length === 0 && (
-            <div className="mob-sub">No stations for your tags yet — set station tags in Settings.</div>
-          )}
-          <div className="mob-bars">
-            {todayByStation.map(({ station: s, output }) => (
-              <button className="mob-barrow tappable" key={s.id} onClick={() => setStation(s)}>
-                <span className="lbl station">{s.name}</span>
-                <span className="mob-bartrack">
-                  <div
-                    className={output > 0 && output === busiestToday ? 'best' : ''}
-                    style={{ width: `${(output / busiestToday) * 100}%` }}
-                  />
-                </span>
-                <span className="val qty">{output > 0 ? fmtQty(output) : '·'}</span>
-              </button>
-            ))}
-          </div>
-          {todayByStation.some((s) => s.workers > 0) && (
-            <div className="mob-sub">
-              {todayByStation.reduce((n, s) => n + s.workers, 0)} working today
-            </div>
-          )}
-        </div>
 
         {/* 2 — my own scorecard: everything I submit should end up approved.
             Above the station tiers this reads as review, not as my own
@@ -1138,15 +1119,13 @@ function PerformanceTab({
               </button>
             )}
 
-            <button className="mob-btn" onClick={onRecord}>+ Add new work entry</button>
-
             {!millWide && (
               <div className="mob-card">
                 <div className="mob-title">Daily quantity — this week</div>
                 <div className="mob-bars">
                   {myWeek.map((w) => (
-                    <div className="mob-barrow" key={w.iso}>
-                      <span className="lbl">{w.label}</span>
+                    <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
+                      <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
                       <span className="mob-bartrack">
                         <div
                           className={w.iso === myBestIso && w.qty > 0 ? 'best' : ''}
@@ -1160,13 +1139,31 @@ function PerformanceTab({
               </div>
             )}
 
-            <button className="mob-btn ghost" onClick={onMyWork}>
-              Every record & its status → My work
-            </button>
           </>
         )}
 
-        {(canVerify || canFinal) && (
+        {/* 3 — what is still out, and what came back. At station level the
+            tab ends here: this is the day's own work, not the mill's. */}
+        {!millWide && (
+          <div className="mob-grid2">
+            <button className="mob-card tapcard" onClick={() => (reviews > 0 ? setShowApprovals(true) : onMyWork())}>
+              <span className="mob-field-label">Pending verify</span>
+              <span className="mob-stat">{reviews > 0 ? awaiting.length : myWaiting}</span>
+              <span className="mob-station-meta">
+                {reviews > 0 ? 'waiting on you' : 'waiting on your upper'}
+              </span>
+            </button>
+            <button className="mob-card tapcard" onClick={onMyWork}>
+              <span className="mob-field-label">Rejected this wk</span>
+              <span className="mob-stat">{reviews > 0 ? rejectedWk.length : myRejectedWk}</span>
+              <span className="mob-station-meta">
+                {reviews > 0 ? 'at your station' : 'to fix & resubmit'}
+              </span>
+            </button>
+          </div>
+        )}
+
+        {(canVerify || canFinal) && millWide && (
           <>
             <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Management dashboard</div>
 
@@ -1198,12 +1195,6 @@ function PerformanceTab({
                 <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
               </div>
             </div>
-
-            {awaiting.length > 0 && (
-              <button className="mob-alert" onClick={() => setShowApprovals(true)}>
-                ⚠ {awaiting.length} record{awaiting.length === 1 ? '' : 's'} awaiting {canFinal ? 'final approval' : 'verification'} — tap to review →
-              </button>
-            )}
 
             {stationPct.length > 0 && !millWide && (
               <div className="mob-card">
@@ -1272,22 +1263,24 @@ function PerformanceTab({
           </>
         )}
 
-        <div className="mob-grid2">
-          <div className="mob-card">
-            <div className="mob-field-label">Output this month</div>
-            <div className="mob-stat">{fmtQty(totalOutput)}</div>
+        {millWide && (
+          <div className="mob-grid2">
+            <div className="mob-card">
+              <div className="mob-field-label">Output this month</div>
+              <div className="mob-stat">{fmtQty(totalOutput)}</div>
+            </div>
+            <div className="mob-card">
+              <div className="mob-field-label">Approval %</div>
+              <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
+            </div>
           </div>
-          <div className="mob-card">
-            <div className="mob-field-label">Approval %</div>
-            <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
-          </div>
-        </div>
+        )}
 
-        {/* Month-to-date per station, below the day's picture. Above the
-            station tiers this is the Mill performance card at the top. */}
-        {!millWide && (
+        {/* The way into a station's own records. Above the station tiers
+            the Mill performance card at the top already lists them. */}
+        {!millWide && stations.length > 0 && (
         <div className="mob-card">
-          <div className="mob-card-label">Station output · this month</div>
+          <div className="mob-card-label">Station records</div>
           {stations.map((s) => {
             const st = statFor(s.id)
             return (
@@ -2223,6 +2216,8 @@ function EntryDetail({
   amountFor,
   tier2RateFor,
   onBack,
+  workerTier,
+  decide,
 }: {
   entry: ProductionEntry
   myName: string
@@ -2233,6 +2228,10 @@ function EntryDetail({
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
   onBack: () => void
+  /** The tier tag of whoever submitted it — the viewer's own by default. */
+  workerTier?: Grade | null
+  /** Shown only when the viewer's tag grants the step this record is at. */
+  decide?: { canVerify: boolean; canApprove: boolean; busy: boolean; act: (next: 'verified' | 'approved' | 'rejected') => void }
 }) {
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
@@ -2250,9 +2249,52 @@ function EntryDetail({
   const photoUrl = (path: string | null) =>
     path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
 
+  const workerTag = workerTier === undefined ? tier : workerTier
   const submittedAt = new Date(entry.created_at)
   const verified = Boolean(entry.verified_by) || status === 'approved'
   const approved = status === 'approved'
+  const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
+  const hhmm = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const rate1 = rateFor(entry.job_id)
+  const rate2 = tier2RateFor(entry.job_id)
+
+  // One row per photo where the work was stamped hour by hour, otherwise
+  // the entry is the single row. The rate on a row is the tier that unit
+  // actually earned.
+  const rateAt = (index: number) =>
+    rate2 != null && index >= TIER1_UNIT_CAP ? rate2 : rate1
+  const rows =
+    photos.length > 0
+      ? photos
+          .slice()
+          .sort((a, b) => a.taken_at.localeCompare(b.taken_at))
+          .map((ph, i) => ({
+            key: ph.id,
+            time: hhmm(new Date(ph.taken_at)),
+            qty: 1,
+            rate: rateAt(i),
+            url: photoUrl(ph.photo_path),
+          }))
+      : [{
+          key: entry.id,
+          time: hhmm(submittedAt),
+          qty: entry.quantity,
+          rate: rate1,
+          url: null as string | null,
+        }]
+
+  // The sum, said the way it was worked out: each rate against the units
+  // that earned it.
+  const calcLines =
+    rate2 == null || entry.quantity <= TIER1_UNIT_CAP
+      ? [{ label: `${fmtQty(entry.quantity)} × ${RM(rate1)}`, value: entry.quantity * rate1 }]
+      : [
+          { label: `${TIER1_UNIT_CAP} × ${RM(rate1)}`, value: TIER1_UNIT_CAP * rate1 },
+          {
+            label: `${fmtQty(entry.quantity - TIER1_UNIT_CAP)} × ${RM(rate2)}`,
+            value: (entry.quantity - TIER1_UNIT_CAP) * rate2,
+          },
+        ]
 
   return (
     <>
@@ -2263,68 +2305,67 @@ function EntryDetail({
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Entry detail</div>
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Submitted work record</div>
 
+        {/* Whose record this is and what it is for. No money here — the
+            rate belongs with the parameters it was applied to, and the
+            total with the sum that produced it. */}
         <div className="mob-card">
-          <div className="mob-row">
-            <span>
-              <div className="mob-entry-name">{job?.name ?? 'Work'} · {station?.name ?? '?'}</div>
-              <div className="mob-station-meta">
-                {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-                  day: 'numeric', month: 'long', year: 'numeric',
-                })} · {myName}
-              </div>
-            </span>
-            <span className="mob-detail-amt">{RM(total)}</span>
-          </div>
-          {statusChip(status)}
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">Submitted parameters</div>
-          <div className="mob-grid2">
-            <div>
-              <div className="mob-field-label">Quantity</div>
-              <div className="mob-param">{entry.quantity} {job ? job.unit.replace('/', '') : ''}</div>
-            </div>
-            <div>
-              <div className="mob-field-label">Rate</div>
-              <div className="mob-param">{rateLabelFor(rateFor, tier2RateFor, entry.job_id)}{job?.unit ?? ''}</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">
-            Photo evidence{' '}
-            <span className="mob-chip">{photos.length} photo{photos.length === 1 ? '' : 's'}</span>
-          </div>
-          {photos.length === 0 && <div className="mob-sub">No photos attached.</div>}
-          <div className="mob-photo-grid">
-            {photos.map((p) => {
-              const url = photoUrl(p.photo_path)
-              return url ? (
-                <a key={p.id} href={url} target="_blank" rel="noreferrer">
-                  <img className="mob-photo" src={url} alt="evidence" />
-                </a>
-              ) : (
-                <span key={p.id} className="mob-chip">no photo</span>
-              )
+          <div className="mob-entry-name">{station?.name ?? '?'}</div>
+          <div className="mob-station-meta">
+            {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+              day: 'numeric', month: 'long', year: 'numeric',
             })}
           </div>
+          <div className="mob-review-tags" style={{ marginTop: '0.2rem' }}>
+            {workerTag && <span className={tagClass(workerTag.color)}>{workerTag.name}</span>}
+            <span className="mob-entry-name">{myName}</span>
+          </div>
+          <div className="mob-row" style={{ marginTop: '0.2rem' }}>
+            <span>{job?.name ?? 'Work'}</span>
+            {statusChip(status)}
+          </div>
+        </div>
+
+        {/* What was actually submitted. Hourly work arrives a photo at a
+            time, so each stamp is its own row with the rate it earned —
+            the first few in an hour pay the higher tier. The evidence sits
+            beside the row it belongs to rather than in a gallery of its
+            own. */}
+        <div className="mob-card">
+          <div className="mob-title">Submitted parameter</div>
+          <div className="mob-paramrows">
+            {rows.map((r, i) => (
+              <div className="mob-paramrow" key={r.key}>
+                <span className="mob-paramrow-time">{r.time}</span>
+                <span className="mob-paramrow-qty">
+                  {fmtQty(r.qty)} {job ? job.unit.replace('/', '') : ''}
+                </span>
+                <span className="mob-paramrow-rate">{RM(r.rate)}{job?.unit ?? ''}</span>
+                <span className="mob-paramrow-photo">
+                  {r.url ? (
+                    <a href={r.url} target="_blank" rel="noreferrer">
+                      <img className="mob-photo sm" src={r.url} alt={`evidence ${i + 1}`} />
+                    </a>
+                  ) : (
+                    <span className="mob-chip">no photo</span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="mob-card">
-          <div className="mob-title">Earnings breakdown</div>
-          <div className="mob-breakrow">
-            <span>
-              Base ({breakdownFor(rateFor, tier2RateFor, entry.job_id, entry.quantity)}
-              {job?.unit ?? ''})
-            </span>
-            <span>{total.toFixed(2)}</span>
-          </div>
+          <div className="mob-title">Calculation</div>
+          {calcLines.map((l) => (
+            <div className="mob-breakrow" key={l.label}>
+              <span>{l.label}</span>
+              <span>{l.value.toFixed(2)}</span>
+            </div>
+          ))}
           <div className="mob-breakrow total">
-            <span>Total</span>
+            <span>Total amount</span>
             <span>{RM(total)}</span>
           </div>
         </div>
@@ -2347,7 +2388,7 @@ function EntryDetail({
               <span>
                 <div className="mob-step-name">Verification</div>
                 <div className="mob-station-meta">
-                  {entry.verified_by ? entry.verified_by : status === 'rejected' ? 'Rejected' : verified ? 'Done' : 'Pending · verify tier'}
+                  {entry.verified_by ? entry.verified_by : status === 'rejected' ? 'Rejected' : verified ? 'Done' : 'Pending'}
                 </div>
               </span>
             </div>
@@ -2356,12 +2397,32 @@ function EntryDetail({
               <span>
                 <div className="mob-step-name">Final approval</div>
                 <div className="mob-station-meta">
-                  {entry.approved_by ? entry.approved_by : approved ? 'Done' : 'Waiting · approve tier'}
+                  {entry.approved_by ? entry.approved_by : approved ? 'Done' : 'Waiting'}
                 </div>
               </span>
             </div>
           </div>
         </div>
+
+        {/* The decision sits at the bottom, under everything it is made
+            on. Which button shows follows the viewer's tag and the step
+            this record is actually at — never both at once. */}
+        {decide && (decide.canVerify || decide.canApprove) && (
+          <div className="row-form" style={{ gap: '0.5rem' }}>
+            {decide.canVerify && status === 'pending' && (
+              <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
+                onClick={() => decide.act('verified')}>✓ Verify</button>
+            )}
+            {decide.canApprove && status === 'verified' && (
+              <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
+                onClick={() => decide.act('approved')}>✓ Approve</button>
+            )}
+            {['pending', 'verified'].includes(status) && (
+              <button className="mob-btn reject" style={{ flex: 1 }} disabled={decide.busy}
+                onClick={() => decide.act('rejected')}>✗ Reject</button>
+            )}
+          </div>
+        )}
       </div>
     </>
   )
@@ -2569,8 +2630,9 @@ function MyWorkTab({
   // tag grants verify or approve.
   const [queue, setQueue] = useState<ProductionEntry[]>([])
   const [names, setNames] = useState<Map<string, string>>(new Map())
+  // The submitter's own row, for the tier and station tags on a waiting card.
+  const [submitters, setSubmitters] = useState<Map<string, Profile>>(new Map())
   const [photoCount, setPhotoCount] = useState<Map<string, number>>(new Map())
-  const [todayPhotos, setTodayPhotos] = useState(0)
   const [viewPhotos, setViewPhotos] = useState<ProductionEntry | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -2618,9 +2680,11 @@ function MyWorkTab({
       if (ids.length > 0) {
         const { data: p } = await supabase
           .from('access_profiles')
-          .select('id, full_name, email')
+          .select('id, full_name, email, grade_id, station_id, station_ids')
           .in('id', ids)
-        setNames(new Map(((p ?? []) as Profile[]).map((x) => [x.id, profileName(x)])))
+        const rows = (p ?? []) as Profile[]
+        setNames(new Map(rows.map((x) => [x.id, profileName(x)])))
+        setSubmitters(new Map(rows.map((x) => [x.id, x])))
       }
     }
 
@@ -2641,12 +2705,6 @@ function MyWorkTab({
     // Today's running total of photos this person has taken.
     const start = new Date()
     start.setHours(0, 0, 0, 0)
-    const { data: mineToday } = await supabase
-      .from('photo_records')
-      .select('id')
-      .eq('created_by', profileId)
-      .gte('taken_at', start.toISOString())
-    setTodayPhotos((mineToday ?? []).length)
     setLoading(false)
   }
   useEffect(() => {
@@ -2719,13 +2777,12 @@ function MyWorkTab({
   // Someone else's work only ever sits in the pending view — once acted on
   // it leaves the queue entirely.
   const queueShown = filter === 'pending' ? queue : []
-  const total = shown.reduce((s, e) => s + amountFor(e.job_id, e.quantity), 0)
 
   if (detail) {
     return (
       <EntryDetail
         entry={detail}
-        myName={myName}
+        myName={names.get(detail.user_id ?? '') ?? myName}
         tier={tier}
         stations={stations}
         jobs={jobs}
@@ -2733,6 +2790,25 @@ function MyWorkTab({
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
         onBack={() => setDetail(null)}
+        workerTier={
+          detail.user_id && detail.user_id !== profileId
+            ? grades.find((g) => g.id === submitters.get(detail.user_id!)?.grade_id) ?? null
+            : tier
+        }
+        decide={
+          detail.user_id !== profileId && (canVerify || canApprove)
+            ? {
+                canVerify,
+                canApprove,
+                busy: busy === detail.id,
+                act: (next) => {
+                  const e = detail
+                  setDetail(null)
+                  act(e, next)
+                },
+              }
+            : undefined
+        }
       />
     )
   }
@@ -2776,17 +2852,6 @@ function MyWorkTab({
           <p className="muted small">Loading…</p>
         ) : (
           <>
-            <div className="mob-card">
-              <div className="mob-field-label">
-                {filter === 'pending' ? 'Waiting for approval' : filter === 'approved' ? 'Approved' : 'Rejected'}
-                {' '}· {shown.length} record{shown.length === 1 ? '' : 's'}
-              </div>
-              <div className="mob-stat">{RM(total)}</div>
-              {filter === 'pending' && (
-                <div className="mob-sub">{todayPhotos} photo{todayPhotos === 1 ? '' : 's'} taken today</div>
-              )}
-            </div>
-
             {shown.length === 0 && queueShown.length === 0 && (
               <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
             )}
@@ -2828,45 +2893,40 @@ function MyWorkTab({
               </div>
             ))}
 
-            {/* Other people's work that is waiting on me. Which buttons
-                appear is the tag's doing, not the rung's. */}
-            {queueShown.length > 0 && (
-              <div className="mob-card-label" style={{ padding: '0 0.2rem' }}>
-                Waiting on you <span className="mob-chip warn">{queueShown.length}</span>
-              </div>
-            )}
             {queueShown.map((e) => {
-              const verifyNow = canVerify && (e.approval_status ?? 'pending') === 'pending'
-              const approveNow = canApprove && e.approval_status === 'verified'
+              const who = e.user_id ? submitters.get(e.user_id) : undefined
+              const grade = who?.grade_id ? grades.find((g) => g.id === who.grade_id) : undefined
+              const tags = who
+                ? who.station_ids && who.station_ids.length > 0
+                  ? who.station_ids
+                  : who.station_id
+                    ? [who.station_id]
+                    : []
+                : []
               return (
-                <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
-                  <span className="perf-top">
-                    <span>{jobName(e.job_id)}</span>
-                    <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                <button type="button" className="mob-review" key={e.id} onClick={() => setDetail(e)}>
+                  <span className="mob-review-tags">
+                    {tags.length === 0 ? (
+                      <span className="tagbadge tag-grey">All stations</span>
+                    ) : (
+                      tags.map((id) => (
+                        <span className="tagbadge tag-grey" key={id}>{stationName(id)}</span>
+                      ))
+                    )}
+                    {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
                   </span>
-                  <span className="perf-top">
+                  <span className="mob-review-name">{names.get(e.user_id ?? '') ?? 'Unknown'}</span>
+                  <span className="mob-review-line">
                     <span className="mob-station-meta">
                       {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                      {' · '}{names.get(e.user_id ?? '') ?? 'Unknown'} · {e.quantity}
+                      {' · '}{jobName(e.job_id)} · {e.quantity}
                     </span>
                     {statusChip(e.approval_status)}
                   </span>
-                  <span className="perf-top">
-                    <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
+                  <span className="mob-review-go">
+                    {(e.approval_status ?? 'pending') === 'pending' ? 'To verify' : 'To approve'} ›
                   </span>
-                  <span className="row-form">
-                    {verifyNow && (
-                      <button className="mob-btn approve" style={{ flex: 1 }} disabled={busy === e.id}
-                        onClick={() => act(e, 'verified')}>✓ Verify</button>
-                    )}
-                    {approveNow && (
-                      <button className="mob-btn approve" style={{ flex: 1 }} disabled={busy === e.id}
-                        onClick={() => act(e, 'approved')}>✓ Approve</button>
-                    )}
-                    <button className="mob-btn reject" style={{ flex: 1 }} disabled={busy === e.id}
-                      onClick={() => act(e, 'rejected')}>✗ Reject</button>
-                  </span>
-                </div>
+                </button>
               )
             })}
           </>
@@ -3325,11 +3385,6 @@ function ProfileTab({
       : profile?.station_id
         ? [profile.station_id]
         : []
-  const stationNames =
-    myStationIds.length === 0
-      ? 'All stations'
-      : myStationIds.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
-
   /**
    * Above station level nobody is paid by the piece: no month of piece
    * work, no payslip built from it, no rate contract to read. Those
@@ -3342,12 +3397,11 @@ function ProfileTab({
     : 0
   const isPaidByPiece = tier != null && rungsBelow <= 2
 
-  const Row = ({ label, value }: { label: string; value: string }) => (
-    <div className="mob-row">
-      <span className="mob-field-label">{label}</span>
-      <span>{value}</span>
-    </div>
-  )
+  const stationNames =
+    !isPaidByPiece || myStationIds.length === 0
+      ? 'All Stations'
+      : myStationIds.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
+
 
   return (
     <>
@@ -3367,63 +3421,79 @@ function ProfileTab({
 
         {/* 2 — everything else about you, out of the way until asked for. */}
         <div className="mob-card">
-          <button
-            className="mob-disclosure"
-            aria-expanded={showDetails}
-            onClick={() => setShowDetails((v) => !v)}
-          >
-            <span className="mob-card-label">My details</span>
-            <span className={`mob-caret ${showDetails ? 'open' : ''}`} aria-hidden="true">›</span>
-          </button>
+          <div className="mob-disclosure-row">
+            <button
+              className="mob-disclosure"
+              aria-expanded={showDetails}
+              onClick={() => setShowDetails((v) => !v)}
+            >
+              <span className="mob-card-label">My details</span>
+              <span className={`mob-caret ${showDetails ? 'open' : ''}`} aria-hidden="true">›</span>
+            </button>
+            {showDetails && !editing && (
+              <button
+                className="mob-icon-btn corner"
+                onClick={() => {
+                  setForm({
+                    employee_code: saved?.employee_code ?? profile?.employee_code ?? '',
+                    phone: saved?.phone ?? profile?.phone ?? '',
+                  })
+                  setEditing(true)
+                }}
+                title="Edit my details"
+                aria-label="Edit my details"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {/* Editing keeps the very same rows — label left, value right —
+              so turning it on swaps a value for a field and changes
+              nothing else about the card's shape. */}
           {showDetails && (
-            editing ? (
-              <>
-                <div className="mob-field-label">Worker ID</div>
-                <input
-                  className="mob-input"
-                  value={form.employee_code}
-                  onChange={(e) => setForm({ ...form, employee_code: e.target.value })}
-                />
-                {/* Email is the account itself — changing it here would not
-                    change how you sign in, so it is shown, not edited. */}
-                <div className="mob-field-label">Email</div>
-                <div className="mob-param">{profile?.email ?? '—'}</div>
-                <div className="mob-field-label">Phone number</div>
-                <input
-                  className="mob-input"
-                  type="tel"
-                  value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                />
-                <div className="row-form">
-                  <button className="mob-btn" style={{ flex: 1 }} disabled={saving} onClick={saveDetails}>
+            <>
+              <div className="mob-row">
+                <span className="mob-field-label">Worker ID</span>
+                {editing ? (
+                  <input
+                    className="mob-row-input"
+                    value={form.employee_code}
+                    onChange={(e) => setForm({ ...form, employee_code: e.target.value })}
+                  />
+                ) : (
+                  <span>{saved?.employee_code || profile?.employee_code || '—'}</span>
+                )}
+              </div>
+              <div className="mob-row">
+                <span className="mob-field-label">Email</span>
+                <span>{profile?.email ?? '—'}</span>
+              </div>
+              <div className="mob-row">
+                <span className="mob-field-label">Phone number</span>
+                {editing ? (
+                  <input
+                    className="mob-row-input"
+                    type="tel"
+                    value={form.phone}
+                    onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  />
+                ) : (
+                  <span>{saved?.phone || profile?.phone || '—'}</span>
+                )}
+              </div>
+              {editing && (
+                <div className="mob-actions">
+                  <button className="mob-mini ghost" onClick={() => setEditing(false)}>Cancel</button>
+                  <button className="mob-mini go" disabled={saving} onClick={saveDetails}>
                     {saving ? 'Saving…' : 'Save'}
                   </button>
-                  <button className="mob-btn ghost" style={{ flex: 1 }} onClick={() => setEditing(false)}>
-                    Cancel
-                  </button>
                 </div>
-              </>
-            ) : (
-              <>
-                <Row label="Worker ID" value={saved?.employee_code || profile?.employee_code || '—'} />
-                <Row label="Email" value={profile?.email ?? '—'} />
-                <Row label="Phone number" value={saved?.phone || profile?.phone || '—'} />
-                <button
-                  className="mob-mini"
-                  style={{ alignSelf: 'flex-start' }}
-                  onClick={() => {
-                    setForm({
-                      employee_code: profile?.employee_code ?? '',
-                      phone: profile?.phone ?? '',
-                    })
-                    setEditing(true)
-                  }}
-                >
-                  ✎ Edit
-                </button>
-              </>
-            )
+              )}
+            </>
           )}
         </div>
 
@@ -3662,32 +3732,54 @@ function ContractSection({
   // rung — it gets its own group at the end.
   const untagged = approved.filter((j) => !j.grade_id)
 
+  // Your own rung is always listed, with or without rates on it — "no
+  // contract yet" is an answer, and leaving the heading out entirely made
+  // the rungs below look like yours.
   const groups = shownTiers
     .map((g) => ({ grade: g, rows: approved.filter((j) => j.grade_id === g.id) }))
-    .filter((x) => x.rows.length > 0)
+    .filter((x) => x.rows.length > 0 || x.grade.id === tier?.id)
 
-  const JobRow = ({ job }: { job: Job }) => (
-    <div className="mob-row">
-      <span>
-        <span className="mob-entry-name">{job.name}</span>
-        {manyStations && (
-          <span className="mob-station-meta" style={{ display: 'block' }}>
-            {stationName(job.station_id)}
-          </span>
+  /**
+   * One job's terms, spelled out. A tiered rate is two different prices
+   * depending on how much is done inside the hour, so it is written as the
+   * two conditions it is rather than squeezed into one arrow.
+   */
+  const JobRow = ({ job }: { job: Job }) => {
+    const unit = job.unit.replace('/', '')
+    const tier2 = tier2RateFor(job.id)
+    return (
+      <div className="mob-contract-job">
+        <div className="mob-contract-name">
+          <span className="mob-person-name">{job.name}</span>
+          {manyStations && <span className="mob-station-meta">{stationName(job.station_id)}</span>}
+        </div>
+        {tier2 == null ? (
+          <div className="mob-contract-term">
+            <span>Every {unit}</span>
+            <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
+          </div>
+        ) : (
+          <>
+            <div className="mob-contract-term">
+              <span>First {TIER1_UNIT_CAP} {unit}s in an hour</span>
+              <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
+            </div>
+            <div className="mob-contract-term">
+              <span>{TIER1_UNIT_CAP + 1}th onward, same hour</span>
+              <span className="mob-entry-amt">{RM(tier2)}{job.unit}</span>
+            </div>
+            <div className="mob-contract-note">Counts back to the first rate each new hour.</div>
+          </>
         )}
-      </span>
-      <span className="mob-entry-amt">
-        {rateLabelFor(rateFor, tier2RateFor, job.id)}
-        <span className="mob-station-meta">{job.unit}</span>
-      </span>
-    </div>
-  )
+      </div>
+    )
+  }
 
   return (
     <div className="mob-card">
       <div className="mob-card-label">Piece rate contract</div>
       {groups.length === 0 && untagged.length === 0 && (
-        <div className="mob-sub">No approved piece rate for your tier yet.</div>
+        <div className="mob-sub">No approved piece rate at your station yet.</div>
       )}
       {groups.map(({ grade, rows }) => (
         <div key={grade.id}>
@@ -3696,7 +3788,11 @@ function ContractSection({
             <span>{grade.name}</span>
             {tier?.id === grade.id && <span className="mob-chip ok">You</span>}
           </div>
-          {rows.map((j) => <JobRow key={j.id} job={j} />)}
+          {rows.length === 0 ? (
+            <div className="mob-sub">No piece rate set for this tier yet.</div>
+          ) : (
+            rows.map((j) => <JobRow key={j.id} job={j} />)
+          )}
         </div>
       ))}
       {untagged.length > 0 && (
@@ -4095,9 +4191,20 @@ function TeamTab({
         key: t.id,
         team: t,
         name: t.name || NO_TEAM_NAME,
-        members: people.filter((p) => p.team_id === t.id),
+        members: people.filter((p) => p.team_id === t.id && atStation(p)),
       }))
     : []
+  /**
+   * Everyone at the station in view who sits on a rung below the reader.
+   * This is what "my people" means on a shared floor: the station and the
+   * rung place somebody, not a single supervisor field.
+   */
+  const stationPeople = people.filter((p) => {
+    if (!atStation(p)) return false
+    const order = grades.find((g) => g.id === placedGrade(p))?.sort_order
+    return order != null && tier != null && order > tier.sort_order
+  })
+
   // At this station, under me, and in no team — a freshly claimed sign up,
   // most often.
   const looseMembers = runsTeams
@@ -4414,17 +4521,17 @@ function TeamTab({
               ? 'Drag a name onto another tier'
               : `${staged.size} move${staged.size === 1 ? '' : 's'} ready`}
           </span>
-          <button className="mob-mini" disabled={staged.size === 0 || busy === 'save-moves'} onClick={saveMoves}>
-            Save
-          </button>
           <button
-            className="mob-mini"
+            className="mob-mini ghost"
             onClick={() => {
               setStaged(new Map())
               setMoveMode(false)
             }}
           >
             Cancel
+          </button>
+          <button className="mob-mini go" disabled={staged.size === 0 || busy === 'save-moves'} onClick={saveMoves}>
+            Save
           </button>
         </div>
       )}
@@ -4468,14 +4575,16 @@ function TeamTab({
                     if (e.key === 'Escape') setDraftName(null)
                   }}
                 />
-                <button
-                  className="mob-mini"
-                  disabled={!draftName.trim() || busy === 'new-team'}
-                  onClick={saveTeam}
-                >
-                  Save
-                </button>
-                <button className="mob-mini" onClick={() => setDraftName(null)}>Cancel</button>
+                <div className="mob-actions">
+                  <button className="mob-mini ghost" onClick={() => setDraftName(null)}>Cancel</button>
+                  <button
+                    className="mob-mini go"
+                    disabled={!draftName.trim() || busy === 'new-team'}
+                    onClick={saveTeam}
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
             )}
 
@@ -4512,7 +4621,11 @@ function TeamTab({
         </>
       ) : (
         memberTiers.map((g) => {
-          const members = myTeam.filter((p) => placedGrade(p) === g.id)
+          // The people at this station on this rung — not only those whose
+          // supervisor row happens to point at you. An assistant station
+          // head saw nothing because the operators beside them were tied to
+          // the station and to a team, not to that one field.
+          const members = stationPeople.filter((p) => placedGrade(p) === g.id)
           if (!canManageTeam && members.length === 0) return null
           return <Lane key={g.id} grade={g} team={undefined} members={members} />
         })
