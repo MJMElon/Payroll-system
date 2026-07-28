@@ -866,6 +866,19 @@ function PerformanceTab({
   const myMaxQty = Math.max(1, ...myWeek.map((w) => w.qty))
   const myBestIso = myWeek.reduce((a, b) => (b.qty > a.qty ? b : a), myWeek[0])?.iso
 
+  // The same week, but the whole mill's approved output rather than one
+  // person's — an Admin reading the mill dashboard has few records of
+  // their own, so their personal chart would sit empty.
+  const millWeek = myWeek.map((w) => ({ ...w, qty: 0 }))
+  for (const e of entries) {
+    if ((e.approval_status ?? 'approved') !== 'approved') continue
+    if (!stations.some((st) => st.id === e.station_id)) continue
+    const slot = millWeek.find((w) => w.iso === e.work_date)
+    if (slot) slot.qty += e.quantity
+  }
+  const millMaxQty = Math.max(1, ...millWeek.map((w) => w.qty))
+  const todayIso = todayISO()
+
   const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
   const status = (e: ProductionEntry) => e.approval_status ?? 'approved'
   const weekMonday = new Date()
@@ -951,11 +964,18 @@ function PerformanceTab({
     const rows = mtd.filter((e) => e.station_id === sid)
     const workers = new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
     const output = rows.reduce((s, e) => s + e.quantity, 0)
+    // What the mill actually produced: only records that cleared approval.
+    // Pending work may still be rejected and rejected work never counted,
+    // so neither belongs in a figure read as output.
+    const approved = rows
+      .filter((e) => (e.approval_status ?? 'approved') === 'approved')
+      .reduce((s, e) => s + e.quantity, 0)
     const done = rows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
     const pct = rows.length > 0 ? Math.round((done / rows.length) * 100) : null
-    return { workers, output, pct }
+    return { workers, output, approved, pct }
   }
   const totalOutput = stations.reduce((s, st) => s + statFor(st.id).output, 0)
+  const totalApproved = stations.reduce((s, st) => s + statFor(st.id).approved, 0)
 
   // TODAY, per station. There is no daily target to measure against (a
   // station's target is per hour, and how many hours it ran is not known
@@ -1010,6 +1030,7 @@ function PerformanceTab({
           <>
             <div className="mob-card">
               <div className="mob-card-label">Mill performance · {monthLabel}</div>
+              <div className="mob-sub">Approved work records only</div>
               {stations.length === 0 ? (
                 <div className="mob-sub">No stations for your tags yet.</div>
               ) : (
@@ -1018,14 +1039,14 @@ function PerformanceTab({
                     <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
                       <span className="mob-entry-name">{s.name}</span>
                       <span className="mob-entry-side">
-                        <span className="mob-entry-amt">{fmtQty(statFor(s.id).output)}</span>
+                        <span className="mob-entry-amt">{fmtQty(statFor(s.id).approved)}</span>
                         <span className="mob-caret">›</span>
                       </span>
                     </button>
                   ))}
                   <div className="mob-breakrow total">
-                    <span>Total output</span>
-                    <span className="mob-entry-amt">{fmtQty(totalOutput)}</span>
+                    <span>Total approved output</span>
+                    <span className="mob-entry-amt">{fmtQty(totalApproved)}</span>
                   </div>
                 </>
               )}
@@ -1034,16 +1055,13 @@ function PerformanceTab({
             <div className="mob-card">
               <div className="mob-title">Daily quantity — this week</div>
               <div className="mob-bars">
-                {myWeek.map((w) => (
-                  <div className="mob-barrow" key={w.iso}>
-                    <span className="lbl">{w.label}</span>
+                {millWeek.map((w) => (
+                  <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
+                    <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
                     <span className="mob-bartrack">
-                      <div
-                        className={w.iso === myBestIso && w.qty > 0 ? 'best' : ''}
-                        style={{ width: `${(w.qty / myMaxQty) * 100}%` }}
-                      />
+                      <div style={{ width: `${(w.qty / millMaxQty) * 100}%` }} />
                     </span>
-                    <span className="val">{w.qty > 0 ? w.qty : '·'}</span>
+                    <span className="val">{w.qty > 0 ? fmtQty(w.qty) : '·'}</span>
                   </div>
                 ))}
               </div>
@@ -1145,8 +1163,8 @@ function PerformanceTab({
                 <div className="mob-title">Daily quantity — this week</div>
                 <div className="mob-bars">
                   {myWeek.map((w) => (
-                    <div className="mob-barrow" key={w.iso}>
-                      <span className="lbl">{w.label}</span>
+                    <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
+                      <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
                       <span className="mob-bartrack">
                         <div
                           className={w.iso === myBestIso && w.qty > 0 ? 'best' : ''}

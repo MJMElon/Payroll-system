@@ -2342,3 +2342,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
     border-right: none; border-bottom: 1px solid var(--border); justify-content: flex-start;
   }
 }
+
+/* Today's row in a week chart — the day you are standing on, so the
+   numbers either side of it read as before and after. */
+.mob-barrow.today .lbl { color: var(--accent-strong); font-weight: 800; white-space: nowrap; }
+.mob-barrow.today .val { color: var(--accent-strong); font-weight: 800; }
+.mob-barrow.today .mob-bartrack { box-shadow: 0 0 0 1px var(--accent-strong); }
