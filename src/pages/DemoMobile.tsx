@@ -51,6 +51,14 @@ const ADMIN_TIER_ORDER = 1
  */
 const ADMIN_TIER_NAMES = /^(admin|administrator|management)$/i
 
+/**
+ * How long a name must be held before it can be moved. Nothing on this
+ * board should shift because a thumb brushed it while scrolling, so a move
+ * has to be asked for: hold, the name starts shaking the way an iPhone
+ * home screen does, and only then does it lift.
+ */
+const HOLD_TO_MOVE_MS = 5000
+
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
 // A tiered piece rate (e.g. cage tipping) pays Tier 1 for the first N units
@@ -428,7 +436,7 @@ export default function DemoMobile() {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
-                    onRecord={() => setTab('record')}
+                    myEmail={profile?.email ?? 'unknown'}
                     onError={setError}
                   />
                 ) : tab === 'team' ? (
@@ -1625,7 +1633,9 @@ function RecordTab({
   const [stationId, setStationId] = useState('')
   const [jobId, setJobId] = useState('')
   const [qty, setQty] = useState('')
-  const [photo, setPhoto] = useState<File | null>(null)
+  // Photos ARE the record now: one entry, one photo per unit of work, so
+  // there is nothing to type.
+  const [photos, setPhotos] = useState<File[]>([])
   const [submitting, setSubmitting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -1634,6 +1644,14 @@ function RecordTab({
   // cage count comes straight from the Operators' Daily Job Record entries
   // for that station/date/shift.
   const isASH = tier?.name === 'Assistant Station Head'
+  // At station level and below there is one station — yours — and the work
+  // is counted from the photos, so neither is asked for. Counted off the
+  // rungs beneath the tier rather than named, the same as the Team tab.
+  const rungsBelow = tier
+    ? grades.filter((g) => g.sort_order > tier.sort_order && g.sort_order > 1).length
+    : 0
+  const atStationLevel = tier != null && rungsBelow <= 2
+  const ownStation = myStations[0] ?? null
   const [dutyDate, setDutyDate] = useState(todayISO())
   const [dutyShift, setDutyShift] = useState('')
   const [pulledQty, setPulledQty] = useState(0)
@@ -1654,6 +1672,13 @@ function RecordTab({
     loadEntries()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId])
+
+  // Nothing to choose at station level — the form is already on the right
+  // station before it is opened.
+  useEffect(() => {
+    if (atStationLevel && ownStation && stationId !== ownStation.id) setStationId(ownStation.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atStationLevel, ownStation?.id])
 
   // Jobs at the chosen station this TIER may record — own tier and below
   // (a job with no tag is open to everyone).
@@ -1713,10 +1738,13 @@ function RecordTab({
   async function submit() {
     if (isASH) {
       if (!profileId || !stationId || !jobId || !dutyDate || !dutyShift || !pulledQty) return
+    } else if (atStationLevel) {
+      if (!profileId || !stationId || !jobId || photos.length === 0) return
     } else if (!profileId || !stationId || !jobId || !Number(qty)) {
       return
     }
-    const n = isASH ? pulledQty : Number(qty)
+    // At station level the photos ARE the count — one per unit of work.
+    const n = isASH ? pulledQty : atStationLevel ? photos.length : Number(qty)
     if (n <= 0) return onError('Quantity must be a positive number.')
     // Guard against fat-finger quantities (e.g. 400 instead of 40).
     if (n > 200 && !window.confirm(`Quantity ${n} looks unusually large. Submit anyway?`)) return
@@ -1730,7 +1758,7 @@ function RecordTab({
           station_id: stationId,
           job_id: jobId,
           user_id: profileId,
-          quantity: isASH ? pulledQty : Number(qty),
+          quantity: n,
           shift: isASH ? dutyShift : null,
           created_by: profileId,
           approval_status: 'pending',
@@ -1738,23 +1766,25 @@ function RecordTab({
         .select()
         .single()
       if (error) throw new Error(error.message)
-      if (photo && data) {
-        const compressed = await compressImage(photo)
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-        const path = `${stationId}/entry-${stamp}.jpg`
-        const { error: upErr } = await supabase.storage
-          .from('records')
-          .upload(path, compressed, { contentType: 'image/jpeg' })
-        if (!upErr) {
-          await supabase
-            .from('photo_records')
-            .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
+      if (data) {
+        for (const [i, file] of photos.entries()) {
+          const compressed = await compressImage(file)
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+          const path = `${stationId}/entry-${stamp}-${i}.jpg`
+          const { error: upErr } = await supabase.storage
+            .from('records')
+            .upload(path, compressed, { contentType: 'image/jpeg' })
+          if (!upErr) {
+            await supabase
+              .from('photo_records')
+              .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
+          }
         }
       }
       setJobId('')
       setQty('')
       setDutyShift('')
-      setPhoto(null)
+      setPhotos([])
       await loadEntries()
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
@@ -1867,20 +1897,31 @@ function RecordTab({
           </div>
         ) : (
           <div className="mob-card">
-            <div className="mob-field-label">Station</div>
-            <select
-              className="mob-select"
-              value={stationId}
-              onChange={(e) => {
-                setStationId(e.target.value)
-                setJobId('')
-              }}
-            >
-              <option value="">Choose station…</option>
-              {stations.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
+            {/* At station level you work one station — your own — so it is
+                stated, not asked. */}
+            {atStationLevel && ownStation ? (
+              <>
+                <div className="mob-field-label">Station</div>
+                <div className="mob-param">{ownStation.name}</div>
+              </>
+            ) : (
+              <>
+                <div className="mob-field-label">Station</div>
+                <select
+                  className="mob-select"
+                  value={stationId}
+                  onChange={(e) => {
+                    setStationId(e.target.value)
+                    setJobId('')
+                  }}
+                >
+                  <option value="">Choose station…</option>
+                  {stations.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </>
+            )}
 
             <div className="mob-field-label">Job</div>
             <select
@@ -1936,29 +1977,31 @@ function RecordTab({
                 )}
               </>
             ) : (
-              <>
-                <div className="mob-field-label">Quantity{job ? ` (${job.unit.replace('/', '')})` : ''}</div>
-                <input
-                  className="mob-input"
-                  type="number"
-                  min="0"
-                  step="any"
-                  placeholder="0"
-                  value={qty}
-                  onChange={(e) => setQty(e.target.value)}
-                />
+              !atStationLevel && (
+                <>
+                  <div className="mob-field-label">Quantity{job ? ` (${job.unit.replace('/', '')})` : ''}</div>
+                  <input
+                    className="mob-input"
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="0"
+                    value={qty}
+                    onChange={(e) => setQty(e.target.value)}
+                  />
 
-                {job && Number(qty) > 0 && (
-                  <div className="mob-breakrow total">
-                    <span>
-                      {tier2Rate == null
-                        ? `${qty} × ${RM(rate)}${job.unit}`
-                        : breakdownFor(rateFor, tier2RateFor, jobId, Number(qty))}
-                    </span>
-                    <span>{RM(amount)}</span>
-                  </div>
-                )}
-              </>
+                  {job && Number(qty) > 0 && (
+                    <div className="mob-breakrow total">
+                      <span>
+                        {tier2Rate == null
+                          ? `${qty} × ${RM(rate)}${job.unit}`
+                          : breakdownFor(rateFor, tier2RateFor, jobId, Number(qty))}
+                      </span>
+                      <span>{RM(amount)}</span>
+                    </div>
+                  )}
+                </>
+              )
             )}
 
             <input
@@ -1967,10 +2010,47 @@ function RecordTab({
               accept="image/*"
               capture="environment"
               style={{ display: 'none' }}
-              onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) setPhotos((prev) => [...prev, f])
+                if (fileRef.current) fileRef.current.value = ''
+              }}
             />
+
+            {/* Each photo is one unit of work, so they are shown back before
+                anything is sent — a miscount is obvious here and nowhere
+                later. */}
+            {photos.length > 0 && (
+              <>
+                <div className="mob-field-label">
+                  {photos.length} photo{photos.length === 1 ? '' : 's'}
+                  {atStationLevel && job ? ` · ${photos.length}${job.unit}` : ''}
+                </div>
+                <div className="mob-photo-grid">
+                  {photos.map((f, i) => (
+                    <span className="mob-photo-slot" key={`${f.name}-${i}`}>
+                      <img className="mob-photo" src={URL.createObjectURL(f)} alt={`photo ${i + 1}`} />
+                      <button
+                        className="mob-photo-x"
+                        onClick={() => setPhotos((prev) => prev.filter((_, x) => x !== i))}
+                        aria-label={`Remove photo ${i + 1}`}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                {atStationLevel && job && (
+                  <div className="mob-breakrow total">
+                    <span>{breakdownFor(rateFor, tier2RateFor, jobId, photos.length)}{job.unit}</span>
+                    <span>{RM(amountFor(jobId, photos.length))}</span>
+                  </div>
+                )}
+              </>
+            )}
+
             <button className="mob-btn ghost" onClick={() => fileRef.current?.click()}>
-              {photo ? '✓ Photo attached' : '📷 Attach photo evidence'}
+              {photos.length > 0 ? '📷 Add photo' : '📷 Take photo'}
             </button>
 
             <button
@@ -1979,7 +2059,11 @@ function RecordTab({
                 submitting ||
                 !stationId ||
                 !jobId ||
-                (isASH ? !dutyDate || !dutyShift || !pulledQty : !Number(qty))
+                (isASH
+                  ? !dutyDate || !dutyShift || !pulledQty
+                  : atStationLevel
+                    ? photos.length === 0
+                    : !Number(qty))
               }
               onClick={submit}
             >
@@ -2167,6 +2251,76 @@ function EntryDetail({
   )
 }
 
+/**
+ * How many photos back an entry, and a way to look at them. Zero photos
+ * still says so — an entry with none is worth noticing.
+ */
+function PhotoChip({ n, onOpen }: { n: number; onOpen: () => void }) {
+  return (
+    <button className={`mob-photochip ${n === 0 ? 'none' : ''}`} onClick={onOpen} disabled={n === 0}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 8h3.2l1.6-2.4h8.4L18.8 8H21v11H3z" />
+        <circle cx="12" cy="13" r="3.4" />
+      </svg>
+      <span>{n === 0 ? 'no photo' : n}</span>
+    </button>
+  )
+}
+
+/** The photos behind one entry, fetched when it is opened. */
+function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () => void }) {
+  const [rows, setRows] = useState<PhotoRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    supabase
+      .from('photo_records')
+      .select('*')
+      .eq('entry_id', entry.id)
+      .order('taken_at', { ascending: true })
+      .then(({ data }) => {
+        setRows((data ?? []) as PhotoRecord[])
+        setLoading(false)
+      })
+  }, [entry.id])
+  const url = (path: string | null) =>
+    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
+  return (
+    <div className="mob-modal-wrap" role="dialog" aria-modal="true">
+      <div className="mob-modal">
+        <div className="mob-card-label">
+          <span>Photos</span>
+          <button className="mob-icon-btn corner close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div className="mob-sub">
+          {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+            day: 'numeric', month: 'long',
+          })}
+        </div>
+        {loading ? (
+          <div className="mob-sub">Loading…</div>
+        ) : rows.length === 0 ? (
+          <div className="mob-sub">No photos attached.</div>
+        ) : (
+          <div className="mob-photo-grid">
+            {rows.map((r) => {
+              const u = url(r.photo_path)
+              return u ? (
+                <a key={r.id} href={u} target="_blank" rel="noreferrer">
+                  <img className="mob-photo" src={u} alt="" />
+                </a>
+              ) : (
+                <span key={r.id} className="mob-chip">missing</span>
+              )
+            })}
+          </div>
+        )}
+        <button className="mob-btn ghost" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ */
 /* TAB 2 — MY WORK: the SAME screen for every tier — everything this  */
 /* person recorded, split into what is waiting for approval, what was */
@@ -2186,7 +2340,7 @@ function MyWorkTab({
   rateFor,
   amountFor,
   tier2RateFor,
-  onRecord,
+  myEmail,
   onError,
 }: {
   profileId: string | null
@@ -2197,28 +2351,90 @@ function MyWorkTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
-  onRecord: () => void
+  myEmail: string
   onError: (m: string | null) => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
+  // Other people's work waiting on MY action — only loaded for tiers whose
+  // tag grants verify or approve.
+  const [queue, setQueue] = useState<ProductionEntry[]>([])
+  const [names, setNames] = useState<Map<string, string>>(new Map())
+  const [photoCount, setPhotoCount] = useState<Map<string, number>>(new Map())
+  const [todayPhotos, setTodayPhotos] = useState(0)
+  const [viewPhotos, setViewPhotos] = useState<ProductionEntry | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [filter, setFilter] = useState<WorkFilter>('pending')
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
 
-  function load() {
+  // Which buttons show is decided by the tag, not the rung: tick verify on
+  // a tier and that tier verifies; tick approve and it approves. A tier
+  // holding both sees both.
+  const caps = effectiveCapabilities(tier)
+  const canVerify = caps.includes('verify')
+  const canApprove = caps.includes('approve')
+
+  async function load() {
     if (!profileId) return
-    supabase
+    const mine = await supabase
       .from('production_entries')
       .select('*')
       .eq('user_id', profileId)
       .order('created_at', { ascending: false })
       .limit(120)
-      .then(({ data, error }) => {
-        if (error) onError(error.message)
-        else setEntries(data ?? [])
-        setLoading(false)
-      })
+    if (mine.error) onError(mine.error.message)
+    const own = (mine.data ?? []) as ProductionEntry[]
+    setEntries(own)
+
+    // Never your own work — nobody verifies themselves.
+    let waiting: ProductionEntry[] = []
+    if (canVerify || canApprove) {
+      const { data } = await supabase
+        .from('production_entries')
+        .select('*')
+        .in('approval_status', ['pending', 'verified'])
+        .order('created_at', { ascending: true })
+      waiting = ((data ?? []) as ProductionEntry[]).filter(
+        (e) =>
+          e.user_id !== profileId &&
+          ((canVerify && e.approval_status === 'pending') ||
+            (canApprove && e.approval_status === 'verified')),
+      )
+      setQueue(waiting)
+      const ids = [...new Set(waiting.map((e) => e.user_id).filter(Boolean))] as string[]
+      if (ids.length > 0) {
+        const { data: p } = await supabase
+          .from('access_profiles')
+          .select('id, full_name, email')
+          .in('id', ids)
+        setNames(new Map(((p ?? []) as Profile[]).map((x) => [x.id, profileName(x)])))
+      }
+    }
+
+    // How many photos back each entry, so a row can say so without opening.
+    const entryIds = [...own, ...waiting].map((e) => e.id)
+    if (entryIds.length > 0) {
+      const { data: ph } = await supabase
+        .from('photo_records')
+        .select('id, entry_id')
+        .in('entry_id', entryIds)
+      const m = new Map<string, number>()
+      for (const r of ph ?? []) {
+        if (r.entry_id) m.set(r.entry_id, (m.get(r.entry_id) ?? 0) + 1)
+      }
+      setPhotoCount(m)
+    }
+
+    // Today's running total of photos this person has taken.
+    const start = new Date()
+    start.setHours(0, 0, 0, 0)
+    const { data: mineToday } = await supabase
+      .from('photo_records')
+      .select('id')
+      .eq('created_by', profileId)
+      .gte('taken_at', start.toISOString())
+    setTodayPhotos((mineToday ?? []).length)
+    setLoading(false)
   }
   useEffect(() => {
     load()
@@ -2250,6 +2466,34 @@ function MyWorkTab({
     load()
   }
 
+  /** Move someone else's entry along the flow, or send it back. */
+  async function act(e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') {
+    let reason: string | null = null
+    if (next === 'rejected') {
+      reason = window.prompt('Reason for rejecting (shown to the worker):') ?? null
+      if (reason === null) return
+    }
+    setBusy(e.id)
+    onError(null)
+    const now = new Date().toISOString()
+    const fields: Record<string, unknown> = { approval_status: next }
+    if (next === 'verified') Object.assign(fields, { verified_by: myEmail, verified_at: now })
+    if (next === 'approved') Object.assign(fields, { approved_by: myEmail, approved_at: now })
+    if (next === 'rejected') {
+      Object.assign(fields, {
+        rejected_reason: reason || null,
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      })
+    }
+    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    setBusy(null)
+    if (error) return onError(error.message)
+    load()
+  }
+
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
   const stationName = (id: string) => stations.find((st) => st.id === id)?.name ?? '?'
   const stat = (e: ProductionEntry) => e.approval_status ?? 'approved'
@@ -2259,6 +2503,9 @@ function MyWorkTab({
     k === 'pending' ? ['pending', 'verified'].includes(stat(e)) : stat(e) === k
   const count = (k: WorkFilter) => entries.filter((e) => inBucket(e, k)).length
   const shown = entries.filter((e) => inBucket(e, filter))
+  // Someone else's work only ever sits in the pending view — once acted on
+  // it leaves the queue entirely.
+  const queueShown = filter === 'pending' ? queue : []
   const total = shown.reduce((s, e) => s + amountFor(e.job_id, e.quantity), 0)
 
   if (detail) {
@@ -2310,11 +2557,6 @@ function MyWorkTab({
 
         {loading ? (
           <p className="muted small">Loading…</p>
-        ) : entries.length === 0 ? (
-          <div className="mob-card">
-            <div className="mob-sub">Nothing recorded yet.</div>
-            <button className="mob-btn" onClick={onRecord}>+ Add new entry</button>
-          </div>
         ) : (
           <>
             <div className="mob-card">
@@ -2323,31 +2565,33 @@ function MyWorkTab({
                 {' '}· {shown.length} record{shown.length === 1 ? '' : 's'}
               </div>
               <div className="mob-stat">{RM(total)}</div>
+              {filter === 'pending' && (
+                <div className="mob-sub">{todayPhotos} photo{todayPhotos === 1 ? '' : 's'} taken today</div>
+              )}
             </div>
 
-            {shown.length === 0 && (
+            {shown.length === 0 && queueShown.length === 0 && (
               <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
             )}
 
             {shown.map((e) => (
               <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
-                <button
-                  type="button"
-                  className="mob-plainbtn"
-                  onClick={() => setDetail(e)}
-                >
+                <button type="button" className="mob-plainbtn" onClick={() => setDetail(e)}>
                   <span className="perf-top">
                     <span>{jobName(e.job_id)}</span>
                     <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
                   </span>
                   <span className="perf-top">
                     <span className="mob-station-meta">
-                      {stationName(e.station_id)} · {e.quantity} ·{' '}
                       {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                      {' · '}{stationName(e.station_id)} · {e.quantity}
                     </span>
                     {statusChip(e.approval_status)}
                   </span>
                 </button>
+                <span className="perf-top">
+                  <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
+                </span>
                 {stat(e) === 'rejected' && e.rejected_reason && (
                   <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
                     Rejected: {e.rejected_reason}
@@ -2366,9 +2610,53 @@ function MyWorkTab({
                 )}
               </div>
             ))}
+
+            {/* Other people's work that is waiting on me. Which buttons
+                appear is the tag's doing, not the rung's. */}
+            {queueShown.length > 0 && (
+              <div className="mob-card-label" style={{ padding: '0 0.2rem' }}>
+                Waiting on you <span className="mob-chip warn">{queueShown.length}</span>
+              </div>
+            )}
+            {queueShown.map((e) => {
+              const verifyNow = canVerify && (e.approval_status ?? 'pending') === 'pending'
+              const approveNow = canApprove && e.approval_status === 'verified'
+              return (
+                <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
+                  <span className="perf-top">
+                    <span>{jobName(e.job_id)}</span>
+                    <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                  </span>
+                  <span className="perf-top">
+                    <span className="mob-station-meta">
+                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                      {' · '}{names.get(e.user_id ?? '') ?? 'Unknown'} · {e.quantity}
+                    </span>
+                    {statusChip(e.approval_status)}
+                  </span>
+                  <span className="perf-top">
+                    <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
+                  </span>
+                  <span className="row-form">
+                    {verifyNow && (
+                      <button className="mob-btn approve" style={{ flex: 1 }} disabled={busy === e.id}
+                        onClick={() => act(e, 'verified')}>✓ Verify</button>
+                    )}
+                    {approveNow && (
+                      <button className="mob-btn approve" style={{ flex: 1 }} disabled={busy === e.id}
+                        onClick={() => act(e, 'approved')}>✓ Approve</button>
+                    )}
+                    <button className="mob-btn reject" style={{ flex: 1 }} disabled={busy === e.id}
+                      onClick={() => act(e, 'rejected')}>✗ Reject</button>
+                  </span>
+                </div>
+              )
+            })}
           </>
         )}
       </div>
+
+      {viewPhotos && <PhotoSheet entry={viewPhotos} onClose={() => setViewPhotos(null)} />}
     </>
   )
 }
@@ -3297,6 +3585,10 @@ function TeamTab({
   const [pickedStation, setPickedStation] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
+  // The name that has been held long enough to be moved — it shakes until
+  // it is dropped or let go.
+  const [armedId, setArmedId] = useState<string | null>(null)
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [overGrade, setOverGrade] = useState<string | null>(null)
 
   async function load() {
@@ -3417,16 +3709,43 @@ function TeamTab({
    * With only one rung below (nothing can lead anything) it stays a plain
    * set of lanes. All read off position — no tier is named in code.
    */
-  // With three or more rungs under you, the first belongs to whoever heads
-  // the station and teams are led from the rung under THAT. With two, you
-  // head the station yourself and the rung below leads the teams.
-  const hasHeadRow = lowerTiers.length > 2
-  const headTier = hasHeadRow ? lowerTiers[0] ?? null : null
-  const teamLeaderTier = hasHeadRow ? lowerTiers[1] ?? null : lowerTiers[0] ?? null
+  /**
+   * A station's shape is a property of the STATION, not of whoever happens
+   * to be looking at it: the rung that heads it, the rung that leads its
+   * teams, and the rungs those teams are made of. Reading it off the
+   * viewer's own position was wrong — it put a Manager rung and an
+   * Executive rung inside a station's board when management looked at one.
+   *
+   * The rung that owns a station is the highest operating one with anyone
+   * actually tagged to a station: heads, their leaders and their people
+   * carry station tags; the tiers above cover the floor rather than stand
+   * on it, so they do not. Falling back to two rungs above the bottom
+   * keeps the shape sensible on an empty database.
+   */
+  const taggedOrders = people
+    .filter((p) => (p.station_ids?.length ?? 0) > 0 || p.station_id)
+    .map((p) => grades.find((g) => g.id === p.grade_id)?.sort_order)
+    .filter((n): n is number => n != null && operatingTiers.some((g) => g.sort_order === n))
+  const stationTierOrder =
+    taggedOrders.length > 0
+      ? Math.min(...taggedOrders)
+      : operatingTiers[Math.max(0, operatingTiers.length - 3)]?.sort_order ??
+        operatingTiers[0]?.sort_order ??
+        0
+  const stationTier = operatingTiers.find((g) => g.sort_order === stationTierOrder) ?? null
+  // Above the rung that owns a station you oversee stations rather than
+  // work in one, so the tab is the list of them and a board only opens
+  // when one is picked.
+  const hasHeadRow = tier != null && tier.sort_order < stationTierOrder
+  const headTier = hasHeadRow ? stationTier : null
+  const belowStationTier = operatingTiers.filter((g) => g.sort_order > stationTierOrder)
+  const teamLeaderTier = hasHeadRow ? belowStationTier[0] ?? null : lowerTiers[0] ?? null
   // Running teams is a grant too — the same tag setting that allows making
   // one. Without it the board is the flat set of lanes.
   const canCreateTeam = effectiveCapabilities(tier).includes('team-create')
-  const runsTeams = canCreateTeam && lowerTiers.length > 1 && teamLeaderTier != null
+  // Seeing the team structure is not the same as changing it — only the
+  // + button and the moves are gated.
+  const runsTeams = lowerTiers.length > 1 && teamLeaderTier != null
 
   // The stations this person covers. With exactly one you go straight to
   // its board; with several the tab opens on the list.
@@ -3450,6 +3769,12 @@ function TeamTab({
       ? people.filter((p) => p.grade_id === headTier.id && atStation(p))
       : []
 
+  // Every rung from the team leader down shows in every column, empty or
+  // not, so there is always somewhere to put the next person.
+  const memberTiers = teamLeaderTier
+    ? lowerTiers.filter((g) => g.sort_order >= teamLeaderTier.sort_order)
+    : lowerTiers
+
   // Teams are real rows now, so a team exists the moment it is named —
   // before anybody is in it.
   const myTeams = teams
@@ -3466,20 +3791,16 @@ function TeamTab({
   // At this station, under me, and in no team — a freshly claimed sign up,
   // most often.
   const looseMembers = runsTeams
-    ? people.filter(
-        (p) =>
-          !p.team_id &&
-          atStation(p) &&
-          tier != null &&
-          (grades.find((g) => g.id === p.grade_id)?.sort_order ?? 0) > tier.sort_order,
-      )
+    ? people.filter((p) => {
+        if (p.team_id || !atStation(p)) return false
+        const order = grades.find((g) => g.id === p.grade_id)?.sort_order
+        // Only the rungs a team is actually made of — a station head with
+        // no team is not "loose", they head the station.
+        return order != null && memberTiers.some((g) => g.sort_order === order)
+      })
     : myTeam
   // Every rung from the team leader down shows in every column, empty or
   // not, so there is always somewhere to put the next person.
-  const memberTiers = teamLeaderTier
-    ? lowerTiers.filter((g) => g.sort_order >= teamLeaderTier.sort_order)
-    : lowerTiers
-
   /**
    * Pull a new sign up into my team. They keep the tier they signed up on,
    * which is already the lowest one — the leader then drags them up to what
@@ -3609,8 +3930,10 @@ function TeamTab({
         supervisor_id: profile.id,
         grade_id: target.grade.id,
         team_id: team?.id ?? null,
-        station_ids: profile.station_ids ?? [],
-        station_id: profile.station_ids?.[0] ?? profile.station_id ?? null,
+        // The station being looked at, not the reader's own — above
+        // station level those are not the same place.
+        station_ids: activeStation ? [activeStation.id] : profile.station_ids ?? [],
+        station_id: activeStation?.id ?? profile.station_ids?.[0] ?? profile.station_id ?? null,
         tags_confirmed: true,
       })
       .eq('id', p.id)
@@ -3618,6 +3941,17 @@ function TeamTab({
     if (err) return setError(err.message)
     load()
   }
+
+  function startHold(id: string) {
+    if (!canManageTeam || busy) return
+    if (holdTimer.current) clearTimeout(holdTimer.current)
+    holdTimer.current = setTimeout(() => setArmedId(id), HOLD_TO_MOVE_MS)
+  }
+  function cancelHold() {
+    if (holdTimer.current) clearTimeout(holdTimer.current)
+    holdTimer.current = null
+  }
+  useEffect(() => cancelHold, [])
 
   /** Step the team scroller one column left or right. */
   function stepTeams(dir: -1 | 1) {
@@ -3636,6 +3970,7 @@ function TeamTab({
     )
     const person = reachable.find((p) => p.id === dragId)
     setDragId(null)
+    setArmedId(null)
     setOverGrade(null)
     if (person) moveTo(person, g, team)
   }
@@ -3688,9 +4023,14 @@ function TeamTab({
         ) : (
           members.map((p) => (
             <div
-              className={`mob-member ${dragId === p.id ? 'dragging' : ''}`}
+              className={`mob-member ${dragId === p.id ? 'dragging' : ''} ${armedId === p.id ? 'armed' : ''}`}
               key={p.id}
-              draggable={canManageTeam && !busy}
+              draggable={canManageTeam && !busy && armedId === p.id}
+              onPointerDown={() => startHold(p.id)}
+              onPointerUp={cancelHold}
+              onPointerLeave={cancelHold}
+              onPointerCancel={cancelHold}
+              onContextMenu={(e) => e.preventDefault()}
               onDragStart={(e) => {
                 setDragId(p.id)
                 e.dataTransfer.effectAllowed = 'move'
@@ -3698,6 +4038,7 @@ function TeamTab({
               }}
               onDragEnd={() => {
                 setDragId(null)
+                setArmedId(null)
                 setOverGrade(null)
               }}
             >
@@ -3809,7 +4150,7 @@ function TeamTab({
           <div className="mob-card-label">
             <span>My Team</span>
             {myTeam.length > 0 && <span className="mob-chip">{myTeam.length}</span>}
-            {runsTeams && canManageTeam && (
+            {runsTeams && canCreateTeam && activeStation && (
               <button
                 className="mob-icon-btn corner"
                 onClick={() => setDraftName('')}
@@ -3871,6 +4212,11 @@ function TeamTab({
             <div className="mob-sub">Loading…</div>
           ) : (
             <>
+              {/* Above station level your own line is not the subject —
+                  the stations are — so the chart of yourself is skipped
+                  and the board opens straight onto them. */}
+              {!hasHeadRow && (
+              <>
               {/* Above you, and you. These accept a drop only to explain
                   why they cannot take one. */}
               <div className="mob-org">
@@ -3901,6 +4247,8 @@ function TeamTab({
                     ? `The ${tier.name} tier sits at or above ${chartTop?.name ?? 'the top of the chart'} — nothing above it here.`
                     : 'No tier selected.'}
                 </div>
+              )}
+              </>
               )}
 
               {/* Below you. One column per team — swipe, or step with the
@@ -4023,7 +4371,17 @@ function TeamTab({
       {adding && (
         <div className="mob-modal-wrap" role="dialog" aria-modal="true">
           <div className="mob-modal">
-            <div className="mob-card-label">Pending Allocation</div>
+            <div className="mob-card-label">
+              <span>Pending Allocation</span>
+              <button
+                className="mob-icon-btn corner close"
+                onClick={() => setAdding(null)}
+                title="Close"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
             <div className="mob-sub">Add to {adding.grade.name}</div>
             {pending.length === 0 ? (
               <div className="mob-sub">Nobody is waiting for a team.</div>
