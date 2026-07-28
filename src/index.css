@@ -813,6 +813,32 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 /* Team tab — one drop lane per tier. A lane the leader may not hand out
    (their own tier and anything above it) is locked and reads as inert. */
+/* A leader's teams, side by side — swipe for the next one. Each column is
+   as wide as the phone minus a peek of the next, so it is obvious there is
+   more to the right. */
+.mob-teamscroll {
+  display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.3rem;
+  scroll-snap-type: x mandatory; margin: 0 -0.2rem;
+}
+.mob-teamcol {
+  flex: none; width: 84%; scroll-snap-align: start;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  border: 1px solid #e4e8ed; border-radius: 12px; padding: 0.5rem;
+  background: #fbfcfd;
+}
+.mob-teamcol.loose { border-style: dashed; background: #fff; }
+.mob-teamcol-name {
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--accent-strong);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mob-teamcol .mob-lane { background: #fff; }
+/* A column is narrow, so the tier picker drops onto its own full-width
+   line rather than squeezing the name into an ellipsis. */
+.mob-teamcol .mob-member { flex-wrap: wrap; }
+.mob-teamcol .mob-member .mob-org-text { min-width: 0; flex: 1; }
+.mob-teamcol .mob-member-pick { max-width: none; width: 100%; }
+
 .mob-lane {
   border: 1px dashed #dfe4ea; border-radius: 12px;
   padding: 0.45rem 0.5rem; display: flex; flex-direction: column; gap: 0.35rem;
