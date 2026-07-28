@@ -15,14 +15,21 @@ export default function Layout() {
   // Settings is for admins/managers, plus anyone at least one tier above the
   // bottom (they confirm new signups there).
   const [upperTier, setUpperTier] = useState(false)
+  // The tier tag is what the rest of the app goes by, so it is the tag —
+  // not the account's role — that belongs next to the email.
+  const [tierName, setTierName] = useState<string | null>(null)
   useEffect(() => {
     async function check() {
-      if (!profile?.grade_id) return setUpperTier(false)
+      if (!profile?.grade_id) {
+        setTierName(null)
+        return setUpperTier(false)
+      }
       const [{ data: mine }, { data: all }] = await Promise.all([
-        supabase.from('grades').select('sort_order').eq('id', profile.grade_id).maybeSingle(),
+        supabase.from('grades').select('name, sort_order').eq('id', profile.grade_id).maybeSingle(),
         supabase.from('grades').select('sort_order').order('sort_order', { ascending: false }).limit(1),
       ])
       const bottom = all?.[0]?.sort_order ?? 0
+      setTierName(mine?.name ?? null)
       setUpperTier(mine != null && mine.sort_order < bottom)
     }
     check()
@@ -40,7 +47,7 @@ export default function Layout() {
         <div className="account">
           <span className="muted small">
             {session?.user.email}
-            {role ? ` · ${role}` : ''}
+            {tierName ? ` · ${tierName}` : role ? ` · ${role}` : ''}
           </span>
           {canSettings && (
             <Link to="/settings" className="icon-btn" title="Settings" aria-label="Settings">

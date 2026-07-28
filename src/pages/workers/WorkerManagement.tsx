@@ -26,8 +26,11 @@
 // cluster and they join that team, under whoever made it. A new signup with
 // no tier lands on the tier straight below the block, and takes its station.
 //
-// Access: any leader may build their OWN branch — dragging someone into a
-// team needs no capability at all. Editing details needs "Edit worker
+// Access: THE TIER TAG RULES. Nobody reaches their own tier or the tiers
+// above it, whatever their account role says — an Operator-tagged admin
+// still cannot place anyone. Below that line, any leader may build their
+// OWN branch with no capability at all; reaching into someone else's needs
+// "Change other users' settings". Editing details needs "Edit worker
 // profile" and pay needs "Edit worker salary", each granted on its own per
 // tier in Settings → Tier & Station Tags setting, so a lower tier can keep
 // details tidy without ever seeing what anyone earns.
@@ -142,17 +145,29 @@ export default function WorkerManagement() {
   const myCaps = effectiveCapabilities(myGrade)
   const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
 
-  // Who sees the whole chain vs. only their own branch.
-  const seesAll = isAdmin || myTier === 1 || myCaps.includes('user-access')
-  const isLeader = seesAll || (myTier !== null && myTier < bottomTier)
+  // THE TIER TAG RULES THIS PAGE, not the account's role. An operator
+  // tagged as such cannot reach the tiers above them however they are
+  // flagged elsewhere. The one exception is an account with no tier tag at
+  // all that is flagged admin: somebody has to be able to set the very
+  // first tier, and they sit above everyone until they are tagged.
+  const myTierEff = myTier ?? (isAdmin ? 0 : null)
+  const isTop = myTierEff !== null && myTierEff <= 1
+  /** Is that tier strictly below mine — the only direction I may reach? */
+  const belowMe = (tier: number | null) =>
+    tier !== null && myTierEff !== null && tier > myTierEff
+
+  // Who sees the whole chain vs. only their own branch. Everyone gets to
+  // LOOK at the chart — it is the page we show the team — and what they
+  // may change is settled action by action, by tier.
+  const seesAll = isTop || myCaps.includes('user-access')
   // Granted functions. Building your OWN branch is always allowed.
-  const canEditProfile = isAdmin || myTier === 1 || myCaps.includes('worker-edit')
+  const canEditProfile = isTop || myCaps.includes('worker-edit')
   // Pay is its own grant, so a lower tier can keep details tidy without
   // ever seeing what anyone earns.
-  const canEditSalary = isAdmin || myTier === 1 || myCaps.includes('worker-salary')
-  // Dragging someone into a team needs no capability — every leader does it
-  // for their own branch, and reaching across branches follows tier.
-  const canAssignAnywhere = isAdmin || myTier === 1 || myCaps.includes('user-access')
+  const canEditSalary = isTop || myCaps.includes('worker-salary')
+  // Reaching into someone ELSE's branch. Still tier-bound: this widens
+  // which branch you may touch, never how far up you may reach.
+  const canAssignAnywhere = isTop || myCaps.includes('user-access')
 
   const tierOf = (p: Profile) =>
     p.grade_id ? grades.find((g) => g.id === p.grade_id)?.sort_order ?? null : null
@@ -198,19 +213,27 @@ export default function WorkerManagement() {
         return false
       })
 
-  /** May I rename / remove / add a team at this tier + station? */
+  /**
+   * May I rename / remove / add a team at this tier + station? This mirrors
+   * the teams row-level security policy exactly — a tier tag, at or above
+   * the tier the team belongs to — so the button never offers something
+   * the database will refuse.
+   */
   const canOwnTeamsAt = (tier: number, stationId: string | null) =>
-    canAssignAnywhere || (myTier !== null && myTier <= tier && stationInScope(stationId))
+    myTier !== null &&
+    (myTier === 1 || myCaps.includes('user-access') || myTier <= tier) &&
+    stationInScope(stationId)
   const canManageTeam = (t: Team) => canOwnTeamsAt(teamTier(t), t.station_id)
   /** May I hang someone under this leader? */
   const canPlaceUnder = (leader: Profile) =>
     canAssignAnywhere || leader.id === profile?.id || inMyBranch(leader)
   /** May I move this person out of where they are now? */
   const canMove = (p: Profile) =>
-    p.id !== profile?.id && (canAssignAnywhere || inMyBranch(p) || p.supervisor_id === profile?.id)
+    p.id !== profile?.id &&
+    belowMe(tierOf(p)) &&
+    (canAssignAnywhere || inMyBranch(p) || p.supervisor_id === profile?.id)
   /** May I put someone on this tier without giving them a leader yet? */
-  const canPlaceOnTier = (g: Grade) =>
-    canAssignAnywhere || (myTier !== null && g.sort_order > myTier)
+  const canPlaceOnTier = (g: Grade) => belowMe(g.sort_order)
 
   const selected = selectedId ? profiles.find((p) => p.id === selectedId) ?? null : null
 
@@ -366,6 +389,15 @@ export default function WorkerManagement() {
     const nextGrade =
       pt === null ? grades.filter((g) => g.sort_order > lt).sort((a, b) => a.sort_order - b.sort_order)[0] : null
     if (pt === null && !nextGrade) return setError('There is no tier below this leader to place them on.')
+    // The tier tag rules: nobody reaches their own tier or above it.
+    const landing = nextGrade?.sort_order ?? pt
+    if (!belowMe(landing)) {
+      const name = nextGrade?.name ?? gradeOf(person)?.name ?? 'that tier'
+      return setError(
+        `${name} is not below your own tier, so you cannot put anyone there.` +
+          (myTier === null ? ' Your account has no tier tag yet.' : ''),
+      )
+    }
     setError(null)
 
     const leaderStations = stationsOf(leader)
@@ -504,9 +536,13 @@ export default function WorkerManagement() {
     if (dragged) placeUnder(dragged, leader, team)
   }
 
+  /** Nothing to gain from dragging what cannot be dropped anywhere. */
+  const canDrag = (p: Profile) =>
+    p.tags_confirmed ? canMove(p) : myTierEff !== null && myTierEff < bottomTier
+
   function dragProps(p: Profile) {
     return {
-      draggable: true,
+      draggable: canDrag(p),
       onDragStart: (e: React.DragEvent) => {
         e.stopPropagation()
         e.dataTransfer.setData('text/plain', p.id)
@@ -535,18 +571,6 @@ export default function WorkerManagement() {
   }
 
   if (loading) return <p className="muted">Loading…</p>
-
-  if (!isLeader) {
-    return (
-      <div className="wm-page">
-        <header className="wm-head">
-          <Link to="/" className="btn ghost wm-back">← Back to main page</Link>
-        </header>
-        <h1 className="wm-page-title">Team Manage</h1>
-        <div className="card"><p className="muted">Only team leaders (upper tiers) can manage workers.</p></div>
-      </div>
-    )
-  }
 
   /** One person's block in a tier row. */
   function block(p: Profile) {
@@ -874,10 +898,7 @@ function WorkerPanel({
   const [form, setForm] = useState({
     full_name: person.full_name ?? '',
     employee_code: person.employee_code ?? '',
-    ic_number: person.ic_number ?? '',
     phone: person.phone ?? '',
-    bank_name: person.bank_name ?? '',
-    bank_account: person.bank_account ?? '',
     basic_salary: person.basic_salary != null ? String(person.basic_salary) : '',
   })
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
@@ -886,11 +907,8 @@ function WorkerPanel({
     setForm({
       full_name: person.full_name ?? '',
       employee_code: person.employee_code ?? '',
-      ic_number: person.ic_number ?? '',
-      phone: person.phone ?? '',
-      bank_name: person.bank_name ?? '',
-      bank_account: person.bank_account ?? '',
-        basic_salary: person.basic_salary != null ? String(person.basic_salary) : '',
+        phone: person.phone ?? '',
+            basic_salary: person.basic_salary != null ? String(person.basic_salary) : '',
     })
     setEditing(true)
   }
@@ -900,10 +918,7 @@ function WorkerPanel({
     if (canEditProfile) {
       patch.full_name = form.full_name.trim() || null
       patch.employee_code = form.employee_code.trim() || null
-      patch.ic_number = form.ic_number.trim() || null
       patch.phone = form.phone.trim() || null
-      patch.bank_name = form.bank_name.trim() || null
-      patch.bank_account = form.bank_account.trim() || null
     }
     if (canEditSalary) {
       const v = form.basic_salary.trim()
@@ -942,6 +957,7 @@ function WorkerPanel({
     .sort((a, b) => a.name.localeCompare(b.name))
 
   const canEdit = canEditProfile || canEditSalary
+  const tierChip = grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : null
 
   return (
     <>
@@ -961,19 +977,16 @@ function WorkerPanel({
         <div className="wm-fields">
           {canEditProfile ? (
             <>
-              <Row label="Tier" value={grade?.name} />
+              <Row label="Tier" value={tierChip} />
               <EditRow label="Name" value={form.full_name} onChange={set('full_name')} placeholder="Full name" />
               <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} placeholder="EMP001" />
               <Row label="Station" value={stationText} />
               <Row label="Team" value={team?.name} />
-              <EditRow label="IC / passport" value={form.ic_number} onChange={set('ic_number')} />
               <EditRow label="Phone" value={form.phone} onChange={set('phone')} />
-              <EditRow label="Bank" value={form.bank_name} onChange={set('bank_name')} />
-              <EditRow label="Bank a/c" value={form.bank_account} onChange={set('bank_account')} />
             </>
           ) : (
             <>
-              <Row label="Tier" value={grade?.name} />
+              <Row label="Tier" value={tierChip} />
               <Row label="Name" value={displayName(person)} />
               <Row label="Station" value={stationText} />
             </>
@@ -987,10 +1000,6 @@ function WorkerPanel({
               placeholder="RM per month"
             />
           )}
-          <p className="wm-field-note">
-            Tier, station and team follow where this person sits on the chart — drag their block to
-            change them.
-          </p>
           <div className="wm-edit-actions">
             <button type="button" className="btn ghost sm" onClick={() => setEditing(false)}>
               Cancel
@@ -1002,7 +1011,7 @@ function WorkerPanel({
         </div>
       ) : (
         <div className="wm-fields">
-          <Row label="Tier" value={grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : null} />
+          <Row label="Tier" value={tierChip} />
           <Row label="Name" value={displayName(person)} />
           <Row label="Staff no." value={person.employee_code} />
           <Row label="Station" value={stationText} />
