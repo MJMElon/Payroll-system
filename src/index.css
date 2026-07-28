@@ -1703,3 +1703,21 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 /* Save / Cancel sitting inside a table row — small enough not to stretch it. */
 .row-btn { padding: 0.3rem 0.7rem; font-size: 0.8rem; white-space: nowrap; }
+
+/* Adding someone to a tier: search, then pick from what matches. */
+.tier-add { position: relative; margin-top: 0.5rem; max-width: 360px; }
+.tier-add .row-input { max-width: none; }
+.tier-hits {
+  display: flex; flex-direction: column; gap: 0.15rem;
+  margin-top: 0.3rem; padding: 0.35rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(20, 30, 45, 0.14);
+}
+.tier-hit {
+  appearance: none; border: none; background: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.05rem;
+  padding: 0.35rem 0.5rem; border-radius: 8px; text-align: left; width: 100%;
+}
+.tier-hit:hover:not(:disabled) { background: var(--accent-soft); }
+.tier-hit:disabled { opacity: 0.5; cursor: default; }
+.tier-hit-name { font-size: 0.88rem; font-weight: 600; }
