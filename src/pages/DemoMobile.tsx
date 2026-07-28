@@ -51,6 +51,14 @@ const ADMIN_TIER_ORDER = 1
  */
 const ADMIN_TIER_NAMES = /^(admin|administrator|management)$/i
 
+/**
+ * How long a name must be held before it can be moved. Nothing on this
+ * board should shift because a thumb brushed it while scrolling, so a move
+ * has to be asked for: hold, the name starts shaking the way an iPhone
+ * home screen does, and only then does it lift.
+ */
+const HOLD_TO_MOVE_MS = 5000
+
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
 // A tiered piece rate (e.g. cage tipping) pays Tier 1 for the first N units
@@ -3297,6 +3305,10 @@ function TeamTab({
   const [pickedStation, setPickedStation] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
+  // The name that has been held long enough to be moved — it shakes until
+  // it is dropped or let go.
+  const [armedId, setArmedId] = useState<string | null>(null)
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [overGrade, setOverGrade] = useState<string | null>(null)
 
   async function load() {
@@ -3426,7 +3438,9 @@ function TeamTab({
   // Running teams is a grant too — the same tag setting that allows making
   // one. Without it the board is the flat set of lanes.
   const canCreateTeam = effectiveCapabilities(tier).includes('team-create')
-  const runsTeams = canCreateTeam && lowerTiers.length > 1 && teamLeaderTier != null
+  // Seeing the team structure is not the same as changing it — only the
+  // + button and the moves are gated.
+  const runsTeams = lowerTiers.length > 1 && teamLeaderTier != null
 
   // The stations this person covers. With exactly one you go straight to
   // its board; with several the tab opens on the list.
@@ -3619,6 +3633,17 @@ function TeamTab({
     load()
   }
 
+  function startHold(id: string) {
+    if (!canManageTeam || busy) return
+    if (holdTimer.current) clearTimeout(holdTimer.current)
+    holdTimer.current = setTimeout(() => setArmedId(id), HOLD_TO_MOVE_MS)
+  }
+  function cancelHold() {
+    if (holdTimer.current) clearTimeout(holdTimer.current)
+    holdTimer.current = null
+  }
+  useEffect(() => cancelHold, [])
+
   /** Step the team scroller one column left or right. */
   function stepTeams(dir: -1 | 1) {
     const el = scrollRef.current
@@ -3636,6 +3661,7 @@ function TeamTab({
     )
     const person = reachable.find((p) => p.id === dragId)
     setDragId(null)
+    setArmedId(null)
     setOverGrade(null)
     if (person) moveTo(person, g, team)
   }
@@ -3688,9 +3714,14 @@ function TeamTab({
         ) : (
           members.map((p) => (
             <div
-              className={`mob-member ${dragId === p.id ? 'dragging' : ''}`}
+              className={`mob-member ${dragId === p.id ? 'dragging' : ''} ${armedId === p.id ? 'armed' : ''}`}
               key={p.id}
-              draggable={canManageTeam && !busy}
+              draggable={canManageTeam && !busy && armedId === p.id}
+              onPointerDown={() => startHold(p.id)}
+              onPointerUp={cancelHold}
+              onPointerLeave={cancelHold}
+              onPointerCancel={cancelHold}
+              onContextMenu={(e) => e.preventDefault()}
               onDragStart={(e) => {
                 setDragId(p.id)
                 e.dataTransfer.effectAllowed = 'move'
@@ -3698,6 +3729,7 @@ function TeamTab({
               }}
               onDragEnd={() => {
                 setDragId(null)
+                setArmedId(null)
                 setOverGrade(null)
               }}
             >
@@ -3809,7 +3841,7 @@ function TeamTab({
           <div className="mob-card-label">
             <span>My Team</span>
             {myTeam.length > 0 && <span className="mob-chip">{myTeam.length}</span>}
-            {runsTeams && canManageTeam && (
+            {runsTeams && canCreateTeam && activeStation && (
               <button
                 className="mob-icon-btn corner"
                 onClick={() => setDraftName('')}
@@ -3871,6 +3903,11 @@ function TeamTab({
             <div className="mob-sub">Loading…</div>
           ) : (
             <>
+              {/* Above station level your own line is not the subject —
+                  the stations are — so the chart of yourself is skipped
+                  and the board opens straight onto them. */}
+              {!hasHeadRow && (
+              <>
               {/* Above you, and you. These accept a drop only to explain
                   why they cannot take one. */}
               <div className="mob-org">
@@ -3901,6 +3938,8 @@ function TeamTab({
                     ? `The ${tier.name} tier sits at or above ${chartTop?.name ?? 'the top of the chart'} — nothing above it here.`
                     : 'No tier selected.'}
                 </div>
+              )}
+              </>
               )}
 
               {/* Below you. One column per team — swipe, or step with the

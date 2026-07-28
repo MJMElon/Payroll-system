@@ -889,6 +889,21 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   box-shadow: 0 1px 2px rgba(10, 40, 28, 0.06); cursor: grab;
 }
 .mob-member.dragging { opacity: 0.45; cursor: grabbing; }
+/* Held long enough to be moved. The wobble is the whole signal — until a
+   name does this, nothing on the board can be dragged. */
+@keyframes mob-wobble {
+  0%, 100% { transform: rotate(-1.1deg); }
+  50% { transform: rotate(1.1deg); }
+}
+.mob-member.armed {
+  animation: mob-wobble 0.22s ease-in-out infinite;
+  box-shadow: 0 0 0 1.5px var(--accent-strong), 0 3px 8px rgba(10, 40, 28, 0.14);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mob-member.armed { animation: none; }
+}
+/* A press-and-hold must not turn into a text selection or a magnifier. */
+.mob-member { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
 .mob-member-grip { color: #c3cad2; font-size: 0.75rem; letter-spacing: -2px; flex: none; }
 .mob-member-pick {
   flex: none; max-width: 42%; border: 1px solid #dfe4ea; border-radius: 8px;
