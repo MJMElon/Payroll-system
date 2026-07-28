@@ -3,39 +3,38 @@
 //
 // Three columns under the page banner:
 //   LEFT    Pending Allocation. Everyone waiting to be placed, sticky so it
-//           rides along as you scroll. It takes drops both ways: drag a
-//           card out to place someone, drag a name back in when you do not
-//           yet know where they belong (that strips tier, leader, team and
-//           station, and queues them again).
+//           rides along as you scroll, and it takes drops both ways: drag a
+//           card out to place someone, drag a name back in to un-place them.
 //   MIDDLE  Formation, in two halves that match how the mill is organised:
 //
-//           ABOVE the station-head tier — one row per tier, since those
-//           tiers run every station:
+//           ABOVE the station-head tier — one row per tier, name only,
+//           since those tiers run every station:
 //             MANAGER    [ Rahim ]
 //             ENGINEER   [ Chandran ]
 //
-//           FROM the station-head tier down — one box per station:
-//             ┌ STERILIZER & TIPPLER · 1 Station Head · 2 teams · 10 people
-//             │  [ Norhayati ]                                    + Team
-//             │  ┌ TEAM A · 2 Assistant · 4 Operator ┐ ┌ TEAM B · … ┐
-//             │  │  [ Siti ]                         │ │ [ Mei Ling ]│
-//             │  │    [Anand] [Faiz] [Devi]          │ │   [Aina] …  │
-//             │  │  [ Zulkifli ]                     │ └─────────────┘
-//             │  │    [Joseph]                       │
-//             │  └───────────────────────────────────┘
-//             └──────────────────────────────────────────────────────────
+//           FROM the station-head tier down — one box per STATION, side by
+//           side (they are the same tier), and inside each box one labelled
+//           row per tier, split by team:
 //
-//           so one look answers how many teams a station head runs, how
-//           many assistants each team has, and whose operators those are.
+//             ┌ STERILIZER & TIPPLER STATION ──────────────────────────┐
+//             │ Station Head :            [ Norhayati ]                │
+//             │ Assistant Station Head :  TEAM A [ Siti ][ Zulkifli ]  │
+//             │                           TEAM B [ Mei Ling ]          │
+//             │ Operator :                TEAM A [Anand][Faiz][Devi]   │
+//             │                           TEAM B [Aina][Lim]           │
+//             └────────────────────────────────────────────────────────┘
+//
+//           The shape says the numbers, so nothing counts them out loud.
 //   RIGHT   Profile details for whoever was clicked: a "Label : value"
 //           sheet that the ✎ in its corner turns into one form, with Save
 //           and Cancel. Tier, station and team are read-only there; they
 //           follow where the person sits, so they change by dragging.
 //
 // Drops: on a block, they join that leader and that leader's team; on a
-// team box, that team under whoever made it; on an assistant's box, that
-// assistant; on a bare tier row, the tier alone. A pending card with no
-// tier lands on the tier straight below wherever it is dropped.
+// team line, that team at that tier and station, reporting to the lowest
+// person already above them in it; on a station's head row or a bare tier
+// row, the tier (and station) alone. A pending card with no tier lands on
+// the tier straight below whatever block it is dropped on.
 //
 // Access: THE TIER TAG RULES. Nobody reaches their own tier or the tiers
 // above it, whatever their account role says — an Operator-tagged admin
@@ -274,8 +273,6 @@ export default function WorkerManagement() {
   // under it (the assistants), and everything deeper.
   const stationGrades = grades.filter((g) => worksAtAStation(g.sort_order))
   const headGrade = stationGrades[0] ?? null
-  const subGrade = stationGrades[1] ?? null
-  const deepName = stationGrades[2]?.name ?? null
 
   const selected = selectedId ? profiles.find((p) => p.id === selectedId) ?? null : null
 
@@ -553,7 +550,7 @@ export default function WorkerManagement() {
    * without it, a tier nobody stands on can never be filled, since every
    * other route needs a block already sitting one tier above.
    */
-  async function placeOnTier(person: Profile, grade: Grade) {
+  async function placeOnTier(person: Profile, grade: Grade, station?: Station | null) {
     if (person.id === profile?.id) {
       return setError('You cannot move yourself on the chart — someone above you has to do that.')
     }
@@ -573,6 +570,10 @@ export default function WorkerManagement() {
       // A tier above the station tier belongs to every station.
       patch.station_ids = []
       patch.station_id = null
+    } else if (station) {
+      // Dropped inside a station box: that is the station they work at.
+      patch.station_ids = [station.id]
+      patch.station_id = station.id
     }
     // A leader who is no longer above them cannot stay their leader.
     const sup = person.supervisor_id ? profiles.find((x) => x.id === person.supervisor_id) : null
@@ -591,6 +592,67 @@ export default function WorkerManagement() {
       return setError(
         `The database would not let you put ${displayName(person)} on ${grade.name} — that needs ` +
           'a higher tier, or the "Change other users\' settings" function.',
+      )
+    }
+    load()
+  }
+
+  /**
+   * Drop on a team's line inside a station box: the tier, the team and the
+   * station are all settled by WHERE it landed, and they report to the
+   * lowest person already above them in that team.
+   */
+  async function placeInTeam(
+    person: Profile,
+    grade: Grade,
+    team: Team | null,
+    station: Station | null,
+  ) {
+    if (person.id === profile?.id) {
+      return setError('You cannot move yourself on the chart — someone above you has to do that.')
+    }
+    if (person.tags_confirmed && !canMove(person)) {
+      return setError(
+        `You can only move someone who reports up to you, and ${displayName(person)} does not.`,
+      )
+    }
+    if (!belowMe(grade.sort_order)) {
+      return setError(`${grade.name} is not below your own tier, so you cannot put anyone there.`)
+    }
+    const inTeam = team ? visible.filter((p) => p.team_id === team.id && p.id !== person.id) : []
+    const leader =
+      inTeam
+        .filter((p) => (tierOf(p) ?? 99) < grade.sort_order)
+        .sort((a, b) => (tierOf(b) ?? 0) - (tierOf(a) ?? 0))[0] ??
+      (team?.created_by ? profiles.find((x) => x.id === team.created_by) ?? null : null)
+    if (leader && !canPlaceUnder(leader)) {
+      return setError(
+        `You can only add people under yourself or under someone who reports up to you, and ` +
+          `${displayName(leader)} is neither.`,
+      )
+    }
+    setError(null)
+    const patch: Record<string, unknown> = {
+      grade_id: grade.id,
+      team_id: team?.id ?? null,
+      supervisor_id: leader?.id ?? null,
+      tags_confirmed: true,
+    }
+    if (person.role !== 'admin') patch.role = roleForTier(grade.sort_order, grade.name)
+    if (station) {
+      patch.station_ids = [station.id]
+      patch.station_id = station.id
+    }
+    const { data, error } = await supabase
+      .from('access_profiles')
+      .update(patch)
+      .eq('id', person.id)
+      .select('id')
+    if (error) return setError(error.message)
+    if (!data || data.length === 0) {
+      return setError(
+        `The database would not let you place ${displayName(person)} — that needs a higher ` +
+          'tier, or the "Change other users\' settings" function.',
       )
     }
     load()
@@ -721,19 +783,19 @@ export default function WorkerManagement() {
   }
 
   /**
-   * From the station-head tier down, the chart stops being rows and becomes
-   * one box per STATION — that is how the floor is actually organised:
+   * From the station-head tier down the chart is one box per STATION, and
+   * inside the box one labelled row per tier — the tier name on the left,
+   * its people on the right, split by team from the assistant tier down:
    *
-   *   ┌ Sterilizer & Tippler ─ 1 Station Head · 2 teams · 9 people ──────┐
-   *   │  [ Ahmad ]                                          + Team       │
-   *   │  ┌ Team A · 1 assistant · 4 operators ┐ ┌ Team B · … ┐           │
-   *   │  │  [ Bala ]                          │ │  [ Suresh ]│           │
-   *   │  │     [Aminah] [Kumar] [Lee] [Siti]  │ │    …       │           │
-   *   │  └────────────────────────────────────┘ └────────────┘           │
-   *   └───────────────────────────────────────────────────────────────────┘
+   *   ┌ STERILIZER & TIPPLER STATION ─────────────────────────┐
+   *   │ Station Head :            [ Norhayati ]               │
+   *   │ Assistant Station Head :  TEAM A  [ Siti ][ Zulkifli ]│
+   *   │                           TEAM B  [ Mei Ling ]        │
+   *   │ Operator :                TEAM A  [Anand][Faiz][Devi] │
+   *   │                           TEAM B  [Aina][Lim]         │
+   *   └───────────────────────────────────────────────────────┘
    *
-   * so one look answers: how many teams under this station head, how many
-   * assistants in each team, and whose operators those are.
+   * The shape says the numbers, so nothing counts them out loud.
    */
   function stationBox(station: Station | null) {
     if (!headGrade) return null
@@ -742,146 +804,160 @@ export default function WorkerManagement() {
       station ? stationsOf(p).includes(station.id) : stationsOf(p).length === 0
     const here = visible.filter((p) => worksAtAStation(tierOf(p)) && atStation(p))
     const heads = here.filter((p) => p.grade_id === headGrade.id)
-    const below = here.filter((p) => (tierOf(p) ?? 0) > headGrade.sort_order)
 
-    // The teams of this station: the ones its heads made, plus any team a
-    // person here belongs to (a team the station inherited).
+    // This station's teams: the ones its heads made, the ones tagged to it,
+    // and any team its people belong to.
     const boxTeams = teams
       .filter(
         (t) =>
           heads.some((h) => h.id === t.created_by) ||
           (station && t.station_id === station.id) ||
-          below.some((p) => p.team_id === t.id),
+          here.some((p) => p.team_id === t.id),
       )
       .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
-
-    const teamPeople = (t: Team) => below.filter((p) => p.team_id === t.id)
-    const loose = below.filter((p) => !p.team_id || !boxTeams.some((t) => t.id === p.team_id))
 
     return (
       <section className="wm-station-box" key={key}>
         <header className="wm-station-head">
           <span className="wm-station-name">{station?.name ?? 'No station yet'}</span>
-          <span className="wm-station-counts">
-            {heads.length} {headGrade.name} · {boxTeams.length} team
-            {boxTeams.length === 1 ? '' : 's'} · {here.length} people
-          </span>
         </header>
 
-        <div className="wm-station-heads">
-          {heads.length === 0 ? (
-            <span className="wm-cluster-empty">
-              No {headGrade.name} here yet — drop a name on the {headGrade.name} row above.
-            </span>
-          ) : (
-            heads.map((h) => block(h, false, true))
-          )}
-        </div>
-
-        <div className="wm-team-boxes">
-          {boxTeams.map((t) => teamBox(t, teamPeople(t), key))}
-          {loose.length > 0 && teamBox(null, loose, key)}
-          {boxTeams.length === 0 && loose.length === 0 && (
-            <span className="wm-cluster-empty">
-              No teams yet — use "+ Team" on a {headGrade.name} block.
-            </span>
-          )}
-        </div>
-      </section>
-    )
-  }
-
-  /** One team inside a station box: its assistants, each with their people. */
-  function teamBox(team: Team | null, people: Profile[], stationKey: string) {
-    const owner = team?.created_by ? profiles.find((x) => x.id === team.created_by) ?? null : null
-    const subs = subGrade ? people.filter((p) => p.grade_id === subGrade.id) : []
-    const rest = people.filter((p) => !subs.some((sb) => sb.id === p.id))
-    const underSub = (sb: Profile) => rest.filter((p) => p.supervisor_id === sb.id)
-    const orphans = rest.filter((p) => !subs.some((sb) => sb.id === p.supervisor_id))
-    const key = `teambox:${stationKey}:${team?.id ?? 'none'}`
-    const dropOn = owner ?? subs[0] ?? null
-
-    return (
-      <div className={`wm-team-box ${dropKey === key ? 'over' : ''}`} key={key}>
-        <div
-          className="wm-team-box-head"
-          {...(dropOn ? dropProps(key, dropOn, team, canPlaceUnder(dropOn)) : {})}
-        >
-          {team && renamingId === team.id ? (
-            <input
-              className="wm-cluster-input"
-              autoFocus
-              value={renameDraft}
-              onChange={(e) => setRenameDraft(e.target.value)}
-              onBlur={() => saveTeamName(team)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') saveTeamName(team)
-                if (e.key === 'Escape') setRenamingId(null)
-              }}
-            />
-          ) : (
-            <span className={`wm-cluster-name ${team ? '' : 'none'}`}>
-              {team ? team.name : 'No team yet'}
-            </span>
-          )}
-          <span className="wm-team-box-counts">
-            {subGrade ? `${subs.length} ${subGrade.name}` : ''}
-            {subGrade && deepName ? ' · ' : ''}
-            {deepName ? `${rest.length} ${deepName}` : ''}
-          </span>
-          {team && canManageTeam(team) && renamingId !== team.id && (
-            <span className="wm-team-box-tools">
-              <button
-                type="button"
-                className="wm-icon"
-                title="Rename team"
-                onClick={() => {
-                  setRenamingId(team.id)
-                  setRenameDraft(team.name)
-                }}
-              >
-                ✎
-              </button>
-              <button
-                type="button"
-                className="wm-icon danger"
-                title="Remove team"
-                onClick={() => removeTeam(team, people.length)}
-              >
-                ×
-              </button>
-            </span>
-          )}
-        </div>
-
-        <div className="wm-team-box-body">
-          {subs.map((sb) => {
-            const mine = underSub(sb)
-            const subKey = `sub:${stationKey}:${team?.id ?? 'none'}:${sb.id}`
+        {stationGrades.map((g, depth) => {
+          const people = here.filter((p) => p.grade_id === g.id)
+          const rowKey = `srow:${key}:${g.id}`
+          // Below the station head a block is just a name, so it can be compact
+          // and several fit on one line — that is what makes the shape readable.
+          const mini = depth >= 1
+          // The head tier is not split by team — a station head runs them all.
+          if (depth === 0) {
             return (
-              <div
-                className={`wm-sub-box ${dropKey === subKey ? 'over' : ''}`}
-                key={sb.id}
-                {...dropProps(subKey, sb, team, canPlaceUnder(sb))}
-              >
-                {block(sb, false, true)}
-                <div className="wm-sub-people">
-                  {mine.length === 0 ? (
+              <div className="wm-srow" key={g.id}>
+                <span className="wm-srow-label">{g.name} :</span>
+                <div
+                  className={`wm-srow-body ${dropKey === rowKey ? 'over' : ''}`}
+                  onDragOver={(e) => {
+                    if (!belowMe(g.sort_order)) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                    setDropKey(rowKey)
+                  }}
+                  onDragLeave={() => setDropKey((cur) => (cur === rowKey ? null : cur))}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    const carried = e.dataTransfer.getData('text/plain')
+                    const dragged = profiles.find((x) => x.id === (carried || dragId))
+                    setDragId(null)
+                    setDropKey(null)
+                    if (dragged) placeOnTier(dragged, g, station)
+                  }}
+                >
+                  {people.length === 0 ? (
                     <span className="wm-cluster-empty">Drop a name here</span>
                   ) : (
-                    mine.map((one) => block(one, true))
+                    people.map((one) => block(one, false, true))
                   )}
                 </div>
               </div>
             )
-          })}
-          {orphans.length > 0 && (
-            <div className="wm-sub-box loose">
-              <div className="wm-sub-people">{orphans.map((one) => block(one, true))}</div>
+          }
+
+          const loose = people.filter((p) => !p.team_id || !boxTeams.some((t) => t.id === p.team_id))
+          return (
+            <div className="wm-srow" key={g.id}>
+              <span className="wm-srow-label">{g.name} :</span>
+              <div className="wm-srow-body col">
+                {boxTeams.map((t) =>
+                  teamLine(t, people.filter((p) => p.team_id === t.id), g, station, mini, depth === 1),
+                )}
+                {loose.length > 0 && teamLine(null, loose, g, station, mini, false)}
+                {boxTeams.length === 0 && loose.length === 0 && (
+                  <span className="wm-cluster-empty">
+                    No team yet — use "+ Team" on a {headGrade.name} block.
+                  </span>
+                )}
+              </div>
             </div>
-          )}
-          {subs.length === 0 && orphans.length === 0 && (
-            <span className="wm-cluster-empty">Nobody in this team yet</span>
+          )
+        })}
+      </section>
+    )
+  }
+
+  /** One team's line inside a tier row: the team name, then its people. */
+  function teamLine(
+    team: Team | null,
+    people: Profile[],
+    grade: Grade,
+    station: Station | null,
+    mini: boolean,
+    withTools: boolean,
+  ) {
+    const key = `tline:${station?.id ?? 'x'}:${grade.id}:${team?.id ?? 'none'}`
+    return (
+      <div
+        className={`wm-tline ${dropKey === key ? 'over' : ''}`}
+        key={key}
+        onDragOver={(e) => {
+          if (!belowMe(grade.sort_order)) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'move'
+          setDropKey(key)
+        }}
+        onDragLeave={() => setDropKey((cur) => (cur === key ? null : cur))}
+        onDrop={(e) => {
+          e.preventDefault()
+          const carried = e.dataTransfer.getData('text/plain')
+          const dragged = profiles.find((x) => x.id === (carried || dragId))
+          setDragId(null)
+          setDropKey(null)
+          if (dragged) placeInTeam(dragged, grade, team, station)
+        }}
+      >
+        {team && renamingId === team.id ? (
+          <input
+            className="wm-cluster-input"
+            autoFocus
+            value={renameDraft}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onBlur={() => saveTeamName(team)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') saveTeamName(team)
+              if (e.key === 'Escape') setRenamingId(null)
+            }}
+          />
+        ) : (
+          <span className={`wm-tline-name ${team ? '' : 'none'}`}>
+            {team ? team.name : 'No team'}
+          </span>
+        )}
+        {team && withTools && canManageTeam(team) && renamingId !== team.id && (
+          <span className="wm-tline-tools">
+            <button
+              type="button"
+              className="wm-icon"
+              title="Rename team"
+              onClick={() => {
+                setRenamingId(team.id)
+                setRenameDraft(team.name)
+              }}
+            >
+              ✎
+            </button>
+            <button
+              type="button"
+              className="wm-icon danger"
+              title="Remove team"
+              onClick={() => removeTeam(team, people.length)}
+            >
+              ×
+            </button>
+          </span>
+        )}
+        <div className="wm-tline-blocks">
+          {people.length === 0 ? (
+            <span className="wm-cluster-empty">Drop a name here</span>
+          ) : (
+            people.map((one) => block(one, mini, true))
           )}
         </div>
       </div>
