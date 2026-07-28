@@ -2179,9 +2179,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .op-filters { align-items: flex-end; }
 .op-filters .btn { margin-bottom: 1px; }
 .op-tabbar { margin: 0; }
-/* The three Work Record tabs split the bar's full width evenly. */
+/* The three Work Record tabs split the bar's full width evenly. The open
+   tab wears the button's dark metal so there is no squinting at two
+   near-identical whites to find where you are. */
 .tabs.glass.op-tabs { display: flex; align-self: stretch; }
-.op-tabs .tab { flex: 1; text-align: center; }
+.op-tabs .tab { flex: 1; text-align: center; font-weight: 600; }
+.tabs.glass.op-tabs .tab.active {
+  color: #fff;
+  background: linear-gradient(180deg, #566270, #333c47);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 4px 14px rgba(35, 45, 58, 0.32);
+}
+
+/* The station whose records are on screen, said in the section title so
+   it survives the rail being folded away. */
+.op-h3-station { color: var(--accent-strong); font-weight: 700; }
 
 /* Count riding in a tab label. */
 .tab-count {
@@ -2195,6 +2206,30 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .op-line { display: flex; gap: 0.7rem; align-items: baseline; font-size: 0.85rem; }
 .op-line-label { color: var(--muted); min-width: 132px; flex: none; }
 .op-line-value { min-width: 0; }
+
+/* The record's head: tag + name lead, the date holds the right edge,
+   the station reads underneath. */
+.op-head { display: flex; align-items: flex-start; gap: 0.8rem; }
+.op-head-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.op-head-name { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 1.05rem; }
+.op-head-station { color: var(--muted); font-size: 0.85rem; }
+.op-head-date { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* The job carries the day section as its title. */
+.op-job-title {
+  font-family: 'Montserrat', system-ui, sans-serif;
+  font-weight: 800; font-size: 1rem; margin-bottom: 0.15rem;
+}
+
+/* The calculation: one priced line per rate, the total ruled off. */
+.op-calc-line {
+  display: flex; justify-content: space-between; gap: 0.8rem;
+  font-size: 0.85rem; font-variant-numeric: tabular-nums;
+}
+.op-calc-line.total {
+  border-top: 1px solid var(--border); padding-top: 0.35rem; margin-top: 0.15rem;
+  font-weight: 800; font-size: 0.95rem;
+}
 
 /* The day laid out on the mill clock: one line per hour, submissions
    numbered inside the hour they arrived; empty stretches fold into one
