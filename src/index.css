@@ -267,6 +267,20 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
 }
 .ui-select-option .tick { flex: none; opacity: 0; }
 .ui-select-option[aria-selected='true'] .tick { opacity: 1; }
+/* Tick-several lists (a rate that pays two tiers, or stands at three
+   stations): a box per row, and the names are written out in full — the
+   panel widens past the trigger rather than shortening what it says. */
+.ui-select-menu.floating { position: fixed; right: auto; bottom: auto; }
+.ui-select.multi .ui-select-menu { right: auto; width: max-content; max-width: 320px; }
+.ui-select.multi .ui-select-option-label { overflow: visible; text-overflow: clip; }
+.ui-select-box {
+  flex: none; width: 16px; height: 16px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--surface);
+  display: flex; align-items: center; justify-content: center; color: transparent;
+}
+.ui-select-option[aria-selected='true'] .ui-select-box {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
 .ui-select-empty { padding: 0.5rem 0.55rem; font-size: 0.85rem; color: var(--muted); }
 
 /* Tabs */
@@ -1263,71 +1277,6 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   text-transform: uppercase; letter-spacing: 0.07em;
 }
 
-/* Create piece rate — the window is the listing: one line per rate, so a
-   batch can be keyed in and submitted together. Wide enough for eight
-   columns, and the table itself scrolls sideways on a small screen. */
-.modal.modal-table { max-width: min(1340px, 96vw); }
-.rate-rows th, .rate-rows td { padding: 0.35rem 0.3rem; vertical-align: middle; }
-/* One height for every control on the line, whatever the cell holds —
-   otherwise the hourly-tier boxes sit shorter than the rest of the row. */
-.rate-rows td select,
-.rate-rows td input,
-.rate-rows td .pickbox,
-.rate-rows td .cell-none {
-  width: 100%; height: 36px; box-sizing: border-box;
-  padding: 0 0.45rem; font-size: 0.85rem;
-}
-.rate-rows td .cell-none {
-  display: flex; align-items: center; justify-content: flex-end;
-  color: var(--muted);
-}
-.rate-rows td input.money { text-align: right; }
-/* Fixed columns: a line naming three stations must not stretch its column
-   and push the effective date off the window — the cell shortens the text
-   instead, and the full list is in the tick panel either way. */
-.rate-rows { table-layout: fixed; width: 100%; min-width: 1150px; }
-.rate-rows .c-station { width: 170px; }
-.rate-rows .c-tag { width: 190px; }
-.rate-rows .c-desc { width: 185px; }
-.rate-rows .c-num { width: 100px; }
-.rate-rows th.c-num { text-align: right; }
-.rate-rows .c-unit { width: 132px; }
-.rate-rows .c-date { width: 142px; }
-.rate-rows .c-kill { width: 34px; }
-.rate-rows .c-kill .modal-close { width: 26px; height: 26px; }
-
-/* Tick-list that reads as a dropdown: several stations, or several tier
-   tags, on one line. The panel is fixed so the table's sideways scroll
-   cannot clip it, and the names are never cut short inside it. */
-.pickbox {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.35rem;
-  border: 1px solid var(--border); border-radius: 8px;
-  background: var(--surface); color: var(--text);
-  font: inherit; text-align: left; cursor: pointer;
-}
-.pickbox:hover { border-color: var(--accent); }
-.pickbox-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pickbox-caret { flex: none; color: var(--muted); font-size: 0.7rem; }
-.pickbox-menu {
-  position: fixed; z-index: 60;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-  box-shadow: 0 16px 38px rgba(5, 30, 18, 0.22);
-  padding: 0.3rem; max-height: 240px; overflow-y: auto;
-}
-.pickbox-item {
-  display: flex; align-items: center; gap: 0.5rem; white-space: nowrap;
-  padding: 0.35rem 0.5rem; border-radius: 7px; font-size: 0.85rem; cursor: pointer;
-}
-.pickbox-item:hover { background: var(--bg); }
-/* Named through .rate-rows too, or the table's own "every control fills
-   its cell" rule would blow the tick box up to the width of the panel. */
-.rate-rows td .pickbox-item input,
-.pickbox-item input {
-  width: 16px; height: 16px; flex: none;
-  padding: 0; margin: 0; accent-color: var(--accent);
-}
-.pickbox-item span { flex: 1; }
-
 /* Tag editor — titled setting sections */
 .modal.modal-wide { max-width: 640px; }
 .tag-section {
@@ -2068,6 +2017,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* line, so a whole batch of rates goes in without reopening.           */
 /* ------------------------------------------------------------------ */
 .modal.modal-xwide { max-width: min(1180px, 96vw); }
+/* Paid by the hour puts two more columns on every line, so the window
+   takes the extra width rather than squeezing the six it already had. */
+.modal.modal-xwide.tiered { max-width: min(1340px, 96vw); }
 
 .pr-grid { display: flex; flex-direction: column; gap: 0.5rem; }
 .pr-grid-head, .pr-grid-row {
@@ -2076,6 +2028,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
     minmax(140px, 1fr) minmax(140px, 1fr) minmax(190px, 1.7fr)
     minmax(132px, 1.05fr) minmax(120px, 0.95fr) minmax(140px, 1.05fr) 34px;
   gap: 0.5rem; align-items: start;
+}
+.pr-grid.tiered .pr-grid-head,
+.pr-grid.tiered .pr-grid-row {
+  grid-template-columns:
+    minmax(158px, 1.1fr) minmax(158px, 1.1fr) minmax(175px, 1.4fr)
+    minmax(128px, 1fr) minmax(100px, 0.75fr) minmax(100px, 0.75fr)
+    minmax(100px, 0.75fr) minmax(134px, 1fr) 34px;
+}
+/* A line that is not paid by the hour leaves the two hourly cells empty,
+   and one that is leaves the flat rate empty — the dash keeps the cell
+   the same height as the boxes beside it. */
+.pr-none {
+  display: flex; align-items: center; min-height: 40px;
+  padding: 0 0.6rem; color: var(--muted);
 }
 .pr-grid-head {
   padding: 0 0.1rem 0.1rem; font-size: 0.7rem; font-weight: 800;
@@ -2120,7 +2086,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 @media (max-width: 1000px) {
   .pr-grid-head { display: none; }
-  .pr-grid-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+  .pr-grid-row,
+  .pr-grid.tiered .pr-grid-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
   .pr-grid-row .pr-cell-label { display: block; }
   .pr-grid-row { padding: 1.9rem 0.6rem 0.6rem; }
   .pr-grid-row .pr-cell.wide { grid-column: 1 / -1; }
@@ -2129,7 +2096,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   .pr-row-drop { position: absolute; top: 0.3rem; right: 0.35rem; }
 }
 @media (max-width: 560px) {
-  .pr-grid-row { grid-template-columns: minmax(0, 1fr); }
+  .pr-grid-row,
+  .pr-grid.tiered .pr-grid-row { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ------------------------------------------------------------------ */
