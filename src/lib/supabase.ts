@@ -54,6 +54,10 @@ export interface Profile {
   team_name?: string | null
   // The team this person belongs to (Worker Management board).
   team_id?: string | null
+  // Selfie shown on the mobile Profile tab — a path into the public
+  // `records` bucket. Written only through the set_my_avatar() function,
+  // which is the one column a person may change on their own row.
+  avatar_path?: string | null
 }
 
 /**

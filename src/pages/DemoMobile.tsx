@@ -439,7 +439,13 @@ export default function DemoMobile() {
                   <ProfileTab
                     profile={profile}
                     tier={tier}
+                    grades={grades}
                     stations={stations}
+                    jobs={jobs}
+                    rateFor={rateFor}
+                    amountFor={amountFor}
+                    tier2RateFor={tier2RateFor}
+                    onError={setError}
                   />
                 )}
               </div>
@@ -2663,21 +2669,38 @@ function ApprovalDetail({
 }
 
 /* ------------------------------------------------------------------ */
-/* TAB 5 — PROFILE: the user's profile & earnings dashboard. Same for */
-/* every tier; team management now lives on the Team tab.             */
+/* TAB 5 — PROFILE. Same layout for every tier, top to bottom:        */
+/*   1  selfie (uploadable), name, tier, station                      */
+/*   2  personal details — collapsed until asked for                  */
+/*   3  this month's own numbers                                      */
+/*   4  the last three months of payslips                             */
+/*   5  the piece-rate contract: your tier, then the tiers below      */
 /* ------------------------------------------------------------------ */
 
 function ProfileTab({
   profile,
   tier,
+  grades,
   stations,
+  jobs,
+  rateFor,
+  amountFor,
+  tier2RateFor,
+  onError,
 }: {
   profile: Profile | null
   tier: Grade | null
+  grades: Grade[]
   stations: Station[]
+  jobs: Job[]
+  rateFor: (jobId: string) => number
+  amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
+  onError: (m: string | null) => void
 }) {
   const [workerName, setWorkerName] = useState<string | null>(null)
   const [supervisorName, setSupervisorName] = useState<string | null>(null)
+  const [showDetails, setShowDetails] = useState(false)
 
   useEffect(() => {
     if (!profile?.worker_id) return setWorkerName(null)
@@ -2700,17 +2723,17 @@ function ProfileTab({
   }, [profile?.supervisor_id])
 
   const myName = profileName(profile)
-  const initials = myName.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase()
 
-  const stationNames = (() => {
-    const ids = profile?.station_ids && profile.station_ids.length > 0
+  const myStationIds =
+    profile?.station_ids && profile.station_ids.length > 0
       ? profile.station_ids
       : profile?.station_id
         ? [profile.station_id]
         : []
-    if (ids.length === 0) return 'All stations'
-    return ids.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
-  })()
+  const stationNames =
+    myStationIds.length === 0
+      ? 'All stations'
+      : myStationIds.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
 
   // Only the modules that are actually ticked per tag get named — the
   // common ones (station status) are open to everyone and go unsaid.
@@ -2734,49 +2757,228 @@ function ProfileTab({
       </div>
 
       <div className="mob-body">
+        {/* 1 — who you are. */}
         <div className="mob-card" style={{ alignItems: 'center', textAlign: 'center' }}>
-          <span className="mob-recent-avatar" style={{ width: 48, height: 48, fontSize: '1rem' }}>
-            {initials}
-          </span>
+          <AvatarPicker profile={profile} myName={myName} onError={onError} />
           <div className="mob-role">{myName}</div>
           <div className="mob-sub">{tier?.name ?? '—'}</div>
+          <div className="mob-chart-station">{stationNames}</div>
         </div>
 
+        {/* 2 — everything else about you, out of the way until asked for. */}
+        <div className="mob-card">
+          <button
+            className="mob-disclosure"
+            aria-expanded={showDetails}
+            onClick={() => setShowDetails((v) => !v)}
+          >
+            <span className="mob-card-label">My details</span>
+            <span className={`mob-caret ${showDetails ? 'open' : ''}`} aria-hidden="true">›</span>
+          </button>
+          {showDetails && (
+            <>
+              <Row label="Worker ID" value={profile?.employee_code ?? '—'} />
+              <Row label="Email" value={profile?.email ?? '—'} />
+              <Row label="Phone number" value={profile?.phone ?? '—'} />
+              <div className="mob-detail-rule" />
+              <Row label="Role" value={profile?.role ? profile.role[0].toUpperCase() + profile.role.slice(1) : '—'} />
+              <Row label="Modules" value={moduleLabels || '—'} />
+              <Row label="Status" value={profile?.tags_confirmed ? 'Confirmed' : 'Pending confirmation'} />
+              <Row label="Reports to" value={supervisorName ?? '—'} />
+              <Row label="Linked worker record" value={workerName ?? '—'} />
+            </>
+          )}
+        </div>
+
+        {/* 3 — this month at a glance. */}
+        <MyNumbersSection profileId={profile?.id ?? null} amountFor={amountFor} />
+
+        {/* 4 — the last three payslips. */}
         <PayslipSection profile={profile} />
 
-        <div className="mob-card">
-          <div className="mob-title">Core identity</div>
-          <Row label="Full name" value={profile?.full_name ?? '—'} />
-          <Row label="Email" value={profile?.email ?? '—'} />
-          <Row label="Employee code" value={profile?.employee_code ?? '—'} />
-        </div>
+        {/* 5 — what each tier is paid, yours first. */}
+        <ContractSection
+          tier={tier}
+          grades={grades}
+          jobs={jobs}
+          stations={stations}
+          myStationIds={myStationIds}
+          rateFor={rateFor}
+          tier2RateFor={tier2RateFor}
+        />
+      </div>
+    </>
+  )
+}
 
-        <div className="mob-card">
-          <div className="mob-title">Access & role</div>
-          <Row label="Role" value={profile?.role ? profile.role[0].toUpperCase() + profile.role.slice(1) : '—'} />
-          <Row label="Tier tag" value={tier?.name ?? '—'} />
-          <Row label="Modules" value={moduleLabels || '—'} />
-          <Row label="Status" value={profile?.tags_confirmed ? 'Confirmed' : 'Pending confirmation'} />
-        </div>
+/* ------------------------------------------------------------------ */
+/* The selfie. The photo goes into the same public `records` bucket as  */
+/* the work photos; the path is written back through set_my_avatar(),   */
+/* which is the ONE column a person may change on their own row. Until  */
+/* that migration is applied the initials stand in and the camera says  */
+/* why it cannot save.                                                  */
+/* ------------------------------------------------------------------ */
 
-        <div className="mob-card">
-          <div className="mob-title">Work assignment</div>
-          <Row label="Station(s)" value={stationNames} />
-          <Row label="Reports to" value={supervisorName ?? '—'} />
-          <Row label="Linked worker record" value={workerName ?? '—'} />
-        </div>
+function AvatarPicker({
+  profile,
+  myName,
+  onError,
+}: {
+  profile: Profile | null
+  myName: string
+  onError: (m: string | null) => void
+}) {
+  const [path, setPath] = useState<string | null>(null)
+  const [ready, setReady] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
+  // Read the stored path straight from the row rather than trusting the
+  // cached auth profile — this tab remounts on every visit, so a photo
+  // taken a moment ago is already there.
+  useEffect(() => {
+    if (!profile?.id) return
+    let cancelled = false
+    supabase
+      .from('access_profiles')
+      .select('avatar_path')
+      .eq('id', profile.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return
+        setReady(!error)
+        setPath((data as { avatar_path?: string | null } | null)?.avatar_path ?? null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [profile?.id])
+
+  const initials = myName.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+  const url = path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
+
+  async function handleFile(file: File | undefined) {
+    if (!file || !profile?.id) return
+    setUploading(true)
+    onError(null)
+    try {
+      const photo = await compressImage(file)
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const next = `avatars/${profile.id}-${stamp}.jpg`
+      const { error: upErr } = await supabase.storage
+        .from('records')
+        .upload(next, photo, { contentType: 'image/jpeg' })
+      if (upErr) throw new Error(upErr.message)
+      const { error: rpcErr } = await supabase.rpc('set_my_avatar', { path: next })
+      if (rpcErr) throw new Error(`Photo uploaded but not saved: ${rpcErr.message}`)
+      setPath(next)
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  return (
+    <>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        capture="user"
+        style={{ display: 'none' }}
+        onChange={(e) => handleFile(e.target.files?.[0])}
+      />
+      <button
+        className="mob-avatar-btn"
+        disabled={uploading || !profile?.id}
+        onClick={() => fileRef.current?.click()}
+        aria-label={path ? 'Change your photo' : 'Add your photo'}
+      >
+        {url ? (
+          <img className="mob-avatar-img" src={url} alt="" />
+        ) : (
+          <span className="mob-avatar-initials">{initials}</span>
+        )}
+        <span className="mob-avatar-cam" aria-hidden="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 8h3.2l1.6-2.4h8.4L18.8 8H21v11H3z" />
+            <circle cx="12" cy="13" r="3.4" />
+          </svg>
+        </span>
+      </button>
+      {/* Only speak up when there is something to say — the camera badge
+          already reads as "tap me", so a caption in the quiet case just
+          pushes the name away from the face. */}
+      {(uploading || !ready) && (
+        <div className="mob-sub">
+          {uploading ? 'Saving photo…' : 'Photo needs a pending database update.'}
+        </div>
+      )}
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* This month's own numbers — the same four the Performance tab keeps, */
+/* here because "how did I do" is a question about yourself.           */
+/* ------------------------------------------------------------------ */
+
+function MyNumbersSection({
+  profileId,
+  amountFor,
+}: {
+  profileId: string | null
+  amountFor: (jobId: string, quantity: number) => number
+}) {
+  const [entries, setEntries] = useState<ProductionEntry[]>([])
+
+  useEffect(() => {
+    if (!profileId) return
+    const from = new Date()
+    from.setDate(from.getDate() - 40) // this month, plus a little carry-over
+    supabase
+      .from('production_entries')
+      .select('*')
+      .eq('user_id', profileId)
+      .gte('work_date', dayISO(from))
+      .then(({ data }) => setEntries(data ?? []))
+  }, [profileId])
+
+  const monthStart = todayISO().slice(0, 8) + '01'
+  const paid = entries.filter((e) => e.work_date >= monthStart && e.approval_status !== 'rejected')
+  const total = paid.reduce((s, e) => s + amountFor(e.job_id, e.quantity), 0)
+  const days = new Set(paid.map((e) => e.work_date)).size
+  const avg = days > 0 ? total / days : 0
+  const waiting = entries.filter((e) =>
+    ['pending', 'verified'].includes(e.approval_status ?? ''),
+  ).length
+
+  return (
+    <>
+      <div className="mob-card-label" style={{ padding: '0 0.2rem' }}>
+        This month
+      </div>
+      <div className="mob-grid2">
         <div className="mob-card">
-          <div className="mob-title">Piece-rate approval (legacy)</div>
-          <Row label="Can approve rates" value={profile?.can_approve_rates ? 'Yes' : 'No'} />
-          <Row
-            label="Approval role"
-            value={
-              profile?.approval_role
-                ? profile.approval_role[0].toUpperCase() + profile.approval_role.slice(1)
-                : '—'
-            }
-          />
+          <div className="mob-field-label">Earned</div>
+          <div className="mob-stat">{RM(total)}</div>
+        </div>
+        <div className="mob-card">
+          <div className="mob-field-label">Days worked</div>
+          <div className="mob-stat">{days}</div>
+        </div>
+      </div>
+      <div className="mob-grid2">
+        <div className="mob-card">
+          <div className="mob-field-label">Avg / day</div>
+          <div className="mob-stat">{RM(avg)}</div>
+        </div>
+        <div className="mob-card">
+          <div className="mob-field-label">Pending approval</div>
+          <div className="mob-stat">{waiting}</div>
         </div>
       </div>
     </>
@@ -2784,22 +2986,114 @@ function ProfileTab({
 }
 
 /* ------------------------------------------------------------------ */
-/* MY PAYSLIP: the person's latest FINALIZED payroll — basic salary,  */
-/* piece-work lines, adjustments and total. RLS only lets people see  */
-/* their own lines, so this is safe for every tier.                   */
+/* PIECE-RATE CONTRACT: what each job pays, YOUR tier first and then   */
+/* every tier below it, so a leader can see what the people under them */
+/* earn. Scoped to your own station(s), approved rates only.           */
 /* ------------------------------------------------------------------ */
 
+function ContractSection({
+  tier,
+  grades,
+  jobs,
+  stations,
+  myStationIds,
+  rateFor,
+  tier2RateFor,
+}: {
+  tier: Grade | null
+  grades: Grade[]
+  jobs: Job[]
+  stations: Station[]
+  myStationIds: string[]
+  rateFor: (jobId: string) => number
+  tier2RateFor: (jobId: string) => number | null
+}) {
+  const scoped =
+    myStationIds.length === 0 ? jobs : jobs.filter((j) => myStationIds.includes(j.station_id))
+  const approved = scoped.filter((j) => j.approval_status === 'approved')
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const manyStations = myStationIds.length !== 1
+
+  // Your tier, then everything below it — a tier ABOVE yours is not part
+  // of your contract and is not shown.
+  const shownTiers = tier
+    ? grades.filter((g) => g.sort_order >= tier.sort_order).sort((a, b) => a.sort_order - b.sort_order)
+    : []
+  // A job with no tier tag is open to anyone, so it belongs to no single
+  // rung — it gets its own group at the end.
+  const untagged = approved.filter((j) => !j.grade_id)
+
+  const groups = shownTiers
+    .map((g) => ({ grade: g, rows: approved.filter((j) => j.grade_id === g.id) }))
+    .filter((x) => x.rows.length > 0)
+
+  const JobRow = ({ job }: { job: Job }) => (
+    <div className="mob-row">
+      <span>
+        <span className="mob-entry-name">{job.name}</span>
+        {manyStations && (
+          <span className="mob-station-meta" style={{ display: 'block' }}>
+            {stationName(job.station_id)}
+          </span>
+        )}
+      </span>
+      <span className="mob-entry-amt">
+        {rateLabelFor(rateFor, tier2RateFor, job.id)}
+        <span className="mob-station-meta">{job.unit}</span>
+      </span>
+    </div>
+  )
+
+  return (
+    <div className="mob-card">
+      <div className="mob-card-label">Piece rate contract</div>
+      {groups.length === 0 && untagged.length === 0 && (
+        <div className="mob-sub">No approved piece rate for your tier yet.</div>
+      )}
+      {groups.map(({ grade, rows }) => (
+        <div key={grade.id}>
+          <div className="mob-contract-tier">
+            <span className={`tag-dot dot-${grade.color}`} aria-hidden="true" />
+            <span>{grade.name}</span>
+            {tier?.id === grade.id && <span className="mob-chip ok">You</span>}
+          </div>
+          {rows.map((j) => <JobRow key={j.id} job={j} />)}
+        </div>
+      ))}
+      {untagged.length > 0 && (
+        <div>
+          <div className="mob-contract-tier">
+            <span className="tag-dot dot-grey" aria-hidden="true" />
+            <span>Any tier</span>
+          </div>
+          {untagged.map((j) => <JobRow key={j.id} job={j} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* MY PAYSLIP: the last three FINALIZED payrolls, newest first — one   */
+/* row per month showing what was earned, opening onto the basic       */
+/* salary, piece-work lines and adjustments behind it. RLS only lets   */
+/* people see their own lines, so this is safe for every tier.         */
+/* ------------------------------------------------------------------ */
+
+const PAYSLIP_MONTHS = 3
+
 function PayslipSection({ profile }: { profile: Profile | null }) {
-  const [run, setRun] = useState<PayrollRun | null>(null)
+  const [runs, setRuns] = useState<PayrollRun[]>([])
   const [lines, setLines] = useState<PayrollLine[]>([])
   const [adjs, setAdjs] = useState<PayrollAdjustment[]>([])
   const [jobNames, setJobNames] = useState<Map<string, string>>(new Map())
+  const [open, setOpen] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!profile?.id) return
     ;(async () => {
-      const [{ data: runs }, { data: l }, { data: a }] = await Promise.all([
+      const [{ data: runRows }, { data: l }, { data: a }] = await Promise.all([
         supabase
           .from('payroll_runs')
           .select('id, period_start, period_end, status, created_at, finalized_at')
@@ -2809,15 +3103,18 @@ function PayslipSection({ profile }: { profile: Profile | null }) {
         supabase.from('payroll_lines').select('*').eq('user_id', profile.id),
         supabase.from('payroll_adjustments').select('*').eq('user_id', profile.id),
       ])
-      const finalized = (runs ?? []) as PayrollRun[]
-      const mine = (r: PayrollRun) =>
+      const finalized = (runRows ?? []) as PayrollRun[]
+      // A run is "mine" when it carries my lines or adjustments. Someone on
+      // a flat basic salary has neither, so for them every finalized run
+      // still counts — that salary is what they were paid.
+      const hasMine = (r: PayrollRun) =>
         (l ?? []).some((x) => x.run_id === r.id) || (a ?? []).some((x) => x.run_id === r.id)
-      const picked =
-        finalized.find(mine) ??
-        (Number(profile.basic_salary ?? 0) > 0 ? finalized[0] ?? null : null)
-      setRun(picked)
-      setLines(picked ? ((l ?? []) as PayrollLine[]).filter((x) => x.run_id === picked.id) : [])
-      setAdjs(picked ? ((a ?? []) as PayrollAdjustment[]).filter((x) => x.run_id === picked.id) : [])
+      const onBasic = Number(profile.basic_salary ?? 0) > 0
+      const mine = finalized.filter((r) => hasMine(r) || onBasic).slice(0, PAYSLIP_MONTHS)
+      setRuns(mine)
+      setOpen(mine[0]?.id ?? null) // the newest opens on arrival
+      setLines((l ?? []) as PayrollLine[])
+      setAdjs((a ?? []) as PayrollAdjustment[])
       const jobIds = [...new Set((l ?? []).map((x) => x.job_id))]
       if (jobIds.length > 0) {
         const { data: j } = await supabase.from('jobs').select('id, name').in('id', jobIds)
@@ -2829,48 +3126,78 @@ function PayslipSection({ profile }: { profile: Profile | null }) {
   }, [profile?.id])
 
   const basic = Number(profile?.basic_salary ?? 0)
-  const total =
-    (run ? basic : 0) +
-    lines.reduce((s, x) => s + Number(x.amount), 0) +
-    adjs.reduce((s, x) => s + Number(x.amount), 0)
+  const linesOf = (runId: string) => lines.filter((x) => x.run_id === runId)
+  const adjsOf = (runId: string) => adjs.filter((x) => x.run_id === runId)
+  const totalOf = (runId: string) =>
+    basic +
+    linesOf(runId).reduce((s, x) => s + Number(x.amount), 0) +
+    adjsOf(runId).reduce((s, x) => s + Number(x.amount), 0)
+  // A payroll period is named by the month it ends in.
+  const monthOf = (r: PayrollRun) =>
+    new Date(r.period_end + 'T00:00:00').toLocaleDateString(undefined, {
+      month: 'long',
+      year: 'numeric',
+    })
 
   return (
     <div className="mob-card">
-      <div className="mob-title">My payslip</div>
+      <div className="mob-card-label">Payslip</div>
       {loading ? (
         <div className="mob-sub">Loading…</div>
-      ) : !run ? (
+      ) : runs.length === 0 ? (
         <div className="mob-sub">No finalized payroll yet.</div>
       ) : (
-        <>
-          <div className="mob-sub">
-            {run.period_start} → {run.period_end}
-          </div>
-          {basic > 0 && (
-            <div className="mob-breakrow">
-              <span>Basic salary (monthly)</span>
-              <span>{basic.toFixed(2)}</span>
+        runs.map((r) => {
+          const isOpen = open === r.id
+          return (
+            <div className="mob-payslip" key={r.id}>
+              <button
+                className="mob-disclosure"
+                aria-expanded={isOpen}
+                onClick={() => setOpen(isOpen ? null : r.id)}
+              >
+                <span>
+                  <span className="mob-entry-name">{monthOf(r)}</span>
+                  <span className="mob-station-meta" style={{ display: 'block' }}>
+                    {r.period_start} → {r.period_end}
+                  </span>
+                </span>
+                <span className="mob-entry-side">
+                  <span className="mob-entry-amt">{RM(totalOf(r.id))}</span>
+                  <span className={`mob-caret ${isOpen ? 'open' : ''}`} aria-hidden="true">›</span>
+                </span>
+              </button>
+              {isOpen && (
+                <>
+                  {basic > 0 && (
+                    <div className="mob-breakrow">
+                      <span>Basic salary (monthly)</span>
+                      <span>{basic.toFixed(2)}</span>
+                    </div>
+                  )}
+                  {linesOf(r.id).map((x) => (
+                    <div className="mob-breakrow" key={x.id}>
+                      <span>
+                        {jobNames.get(x.job_id) ?? 'Piece work'} × {Number(x.quantity)}
+                      </span>
+                      <span>{Number(x.amount).toFixed(2)}</span>
+                    </div>
+                  ))}
+                  {adjsOf(r.id).map((x) => (
+                    <div className="mob-breakrow" key={x.id}>
+                      <span>Adjustment — {x.reason}</span>
+                      <span>{Number(x.amount).toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div className="mob-breakrow total">
+                    <span>Total pay</span>
+                    <span>{RM(totalOf(r.id))}</span>
+                  </div>
+                </>
+              )}
             </div>
-          )}
-          {lines.map((x) => (
-            <div className="mob-breakrow" key={x.id}>
-              <span>
-                {jobNames.get(x.job_id) ?? 'Piece work'} × {Number(x.quantity)}
-              </span>
-              <span>{Number(x.amount).toFixed(2)}</span>
-            </div>
-          ))}
-          {adjs.map((x) => (
-            <div className="mob-breakrow" key={x.id}>
-              <span>Adjustment — {x.reason}</span>
-              <span>{Number(x.amount).toFixed(2)}</span>
-            </div>
-          ))}
-          <div className="mob-breakrow total">
-            <span>Total pay</span>
-            <span>RM {total.toFixed(2)}</span>
-          </div>
-        </>
+          )
+        })
       )}
     </div>
   )

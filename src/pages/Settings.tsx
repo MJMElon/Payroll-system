@@ -388,7 +388,6 @@ function TagsTab() {
               {canManageStations && <th></th>}
               <th>#</th>
               <th>Station</th>
-              <th>Requirement</th>
               <th className="right">Actions</th>
             </tr>
           </thead>
@@ -411,11 +410,6 @@ function TagsTab() {
                 {canManageStations && <td className="drag-handle" aria-hidden="true">⠿</td>}
                 <td className="muted">{i + 1}</td>
                 <td>{st.name}</td>
-                <td className="muted small">
-                  {st.hourly_count
-                    ? `Hourly · min ${st.hourly_min_prev ?? 0} prev hr · max ${st.hourly_target ?? 6}/hr`
-                    : '—'}
-                </td>
                 <td className="right">
                   <span className="row-actions">
                     <button
@@ -459,7 +453,6 @@ function TagsTab() {
           station={stationModal.station}
           mode={stationModal.mode}
           canEdit={canManageStations}
-          usedBy={jobsAt(stationModal.station.id)}
           onMode={(mode) => setStationModal((s) => (s ? { ...s, mode } : s))}
           onClose={() => setStationModal(null)}
           onSaved={() => {
@@ -567,7 +560,6 @@ function StationModal({
   station,
   mode,
   canEdit,
-  usedBy,
   onMode,
   onClose,
   onSaved,
@@ -575,53 +567,35 @@ function StationModal({
   station: Station
   mode: Mode
   canEdit: boolean
-  /** Piece Rate work types pointing here — what stops a delete. */
-  usedBy: StationJob[]
   onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
 }) {
   const overlay = useOverlayClose(onClose)
   const [name, setName] = useState(station.name)
-  const [hourly, setHourly] = useState(Boolean(station.hourly_count))
-  const [minPrevInput, setMinPrevInput] = useState(String(station.hourly_min_prev ?? 0))
-  const [targetInput, setTargetInput] = useState(String(station.hourly_target ?? 6))
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // A station tag is a name and nothing else. How much work counts, and
+  // over what period, is a rate question — it belongs with the rates in
+  // the Piece Rate module, not on the tag.
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    const target = Number(targetInput)
-    const minPrev = Number(minPrevInput)
-    if (hourly && (!Number.isInteger(target) || target < 1 || target > 60)) {
-      return setError('Max work done this hour must be a whole number between 1 and 60.')
-    }
-    if (hourly && (!Number.isInteger(minPrev) || minPrev < 0 || minPrev > 60)) {
-      return setError('Min work done from previous hour must be a whole number between 0 and 60.')
-    }
     setSaving(true)
     const { error } = await supabase
       .from('stations')
-      .update({
-        name: name.trim(),
-        hourly_count: hourly,
-        hourly_target: hourly ? target : station.hourly_target ?? 6,
-        hourly_min_prev: hourly ? minPrev : station.hourly_min_prev ?? 0,
-      })
+      .update({ name: name.trim() })
       .eq('id', station.id)
     setSaving(false)
     if (error) return setError(error.message)
     onSaved()
   }
 
-  // Cancelling an edit puts the untouched values back, so reopening the
+  // Cancelling an edit puts the untouched name back, so reopening the
   // form does not show what was typed and then abandoned.
   function cancel() {
     setName(station.name)
-    setHourly(Boolean(station.hourly_count))
-    setMinPrevInput(String(station.hourly_min_prev ?? 0))
-    setTargetInput(String(station.hourly_target ?? 6))
     setError(null)
     onMode('view')
   }
@@ -643,43 +617,6 @@ function StationModal({
               <span>{station.name}</span>
             </div>
 
-            <div className="tag-section">
-              <div className="tag-section-title">Work requirement (mobile view)</div>
-              {station.hourly_count ? (
-                <>
-                  <span className="small">· Hourly count — records are counted per hour</span>
-                  <span className="small">
-                    · Min {station.hourly_min_prev ?? 0} done in the previous hour
-                  </span>
-                  <span className="small">· Max {station.hourly_target ?? 6} in this hour</span>
-                </>
-              ) : (
-                <span className="small muted">None</span>
-              )}
-            </div>
-
-            {/* What is holding this station down, named — a station tag
-                cannot be deleted while Piece Rate work types point at it,
-                so this is the list to clear first. */}
-            <div className="tag-section">
-              <div className="tag-section-title">Used by</div>
-              {usedBy.length === 0 ? (
-                <span className="small muted">Nothing — this station can be deleted.</span>
-              ) : (
-                <>
-                  {usedBy.map((j) => (
-                    <span key={j.id} className="small">
-                      · {j.name}
-                      {!j.active && <span className="muted"> (inactive)</span>}
-                    </span>
-                  ))}
-                  <p className="tag-section-hint">
-                    Clear these in <Link to="/piece-rate">Piece Rate</Link> to free the station.
-                  </p>
-                </>
-              )}
-            </div>
-
             {canEdit && (
               <div className="row-form" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn" onClick={() => onMode('edit')}>
@@ -695,38 +632,6 @@ function StationModal({
               <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
             </label>
 
-            <div className="field">
-              <span>Work requirement (shown in the mobile view)</span>
-              <label className="checkbox small" style={{ margin: 0 }}>
-                <input type="checkbox" checked={hourly} onChange={(e) => setHourly(e.target.checked)} />{' '}
-                Hourly count — records are counted per hour (stamp card)
-              </label>
-            </div>
-
-            {hourly && (
-              <div className="row-form">
-                <label className="field inline grow">
-                  <span>1. Min work done from previous hour</span>
-                  <input
-                    inputMode="numeric"
-                    value={minPrevInput}
-                    onChange={(e) => setMinPrevInput(e.target.value)}
-                    placeholder="0"
-                    required
-                  />
-                </label>
-                <label className="field inline grow">
-                  <span>2. Work done in this hour (max)</span>
-                  <input
-                    inputMode="numeric"
-                    value={targetInput}
-                    onChange={(e) => setTargetInput(e.target.value)}
-                    placeholder="6"
-                    required
-                  />
-                </label>
-              </div>
-            )}
             <div className="row-form" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>
               <button className="btn" type="submit" disabled={saving}>
