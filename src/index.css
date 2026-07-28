@@ -569,9 +569,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 /* Square module tiles on the main page */
 .module-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
+/* The mark and the name are ONE centred group rather than a pair pushed
+   to opposite corners — a square tile holding two short lines had a hole
+   in the middle of it. The grip lifts out of the flow into the corner. */
 .module-tile {
-  width: 190px; aspect-ratio: 1;
-  display: flex; flex-direction: column; justify-content: space-between;
+  width: 190px; aspect-ratio: 1; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.8rem; text-align: center;
   background: linear-gradient(160deg, #ffffff, #eef0f4);
   border-radius: 20px; padding: 1.15rem;
   box-shadow: var(--shadow);
@@ -592,25 +596,30 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .module-tile:hover {
   box-shadow: 0 4px 8px rgba(25, 32, 42, 0.09), 0 22px 48px rgba(30, 42, 58, 0.22);
 }
-.module-tile h2 { margin: 0; font-size: 1.02rem; }
+/* Two lines are always reserved for the name, so a one-line tile and a
+   two-line tile still line their marks up across the row. */
+.module-tile h2 {
+  margin: 0; font-size: 1rem; line-height: 1.25; min-height: 2.5em;
+  display: flex; align-items: center; justify-content: center;
+}
 .module-tile p { margin: 0; }
-/* The tile's top line: its mark on the left, and on the right the grip
-   that says the tile can be picked up and reordered — the affordance the
-   grid used to spell out in a sentence underneath it. */
-.tile-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+/* The grip in the corner: the tile can be picked up and reordered, said
+   on the tile itself rather than in a line of text under the grid. */
 .tile-grip {
+  position: absolute; top: 0.6rem; right: 0.6rem;
   display: inline-flex; padding: 0.15rem 0.05rem; border-radius: 6px;
-  color: var(--muted); opacity: 0.4; cursor: grab;
+  color: var(--muted); opacity: 0.38; cursor: grab;
   transition: opacity 0.15s ease;
 }
 .module-tile:hover .tile-grip { opacity: 0.85; }
 .module-tile.dragging .tile-grip { cursor: grabbing; opacity: 1; }
 .tile-icon {
-  width: 44px; height: 44px; border-radius: 13px;
+  width: 54px; height: 54px; border-radius: 17px;
   display: inline-flex; align-items: center; justify-content: center;
   background: linear-gradient(135deg, #79828d, #a9b1ba 55%, #8d959f); color: #fff;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 6px 16px rgba(60, 70, 85, 0.30);
 }
+.module-tile .tile-icon svg { width: 24px; height: 24px; }
 
 /* Floating windows (modals) */
 .modal-overlay {

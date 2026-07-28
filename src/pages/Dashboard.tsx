@@ -182,10 +182,8 @@ export default function Dashboard() {
             }}
             title="Drag to reorder"
           >
-            <span className="tile-top">
-              <span className="tile-icon" aria-hidden="true">{m.icon}</span>
-              <span className="tile-grip" aria-hidden="true"><IconGrip /></span>
-            </span>
+            <span className="tile-grip" aria-hidden="true"><IconGrip /></span>
+            <span className="tile-icon" aria-hidden="true">{m.icon}</span>
             <h2>{m.title}</h2>
           </Link>
         ))}
