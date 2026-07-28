@@ -27,8 +27,8 @@
 // no tier lands on the tier straight below the block, and takes its station.
 //
 // Access: any leader may build their OWN branch — dragging someone into a
-// team needs no capability at all. Editing details needs "Edit worker
-// profile" and pay needs "Edit worker salary", each granted on its own per
+// team needs no capability at all. Editing details needs "Edit profile
+// details" and pay needs "Edit basic salary", each granted on its own per
 // tier in Settings → Tier & Station Tags setting, so a lower tier can keep
 // details tidy without ever seeing what anyone earns.
 // ---------------------------------------------------------------------------
@@ -430,7 +430,7 @@ export default function WorkerManagement() {
     if (!data || data.length === 0) {
       setError(
         `The database would not let you edit ${displayName(person)} — that needs the ` +
-          '"Edit worker profile" or "Edit worker salary" function.',
+          '"Edit profile details" or "Edit basic salary" function.',
       )
       return false
     }
@@ -1048,7 +1048,7 @@ function WorkerPanel({
 
       {!canEdit && (
         <p className="muted small" style={{ margin: 0 }}>
-          Editing a worker needs the "Edit worker profile" or "Edit worker salary" function, granted
+          Editing a worker needs the "Edit profile details" or "Edit basic salary" function, granted
           per tier in Settings → Tier &amp; Station Tags setting.
         </p>
       )}

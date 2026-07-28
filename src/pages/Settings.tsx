@@ -15,6 +15,7 @@ import {
   sortCapabilities,
   tagClass,
 } from '../lib/tags'
+import { useOverlayClose } from '../lib/useOverlayClose'
 import { useWideShell } from '../lib/useWideShell'
 
 import AuditLogTab from './settings/AuditLogTab'
@@ -25,7 +26,7 @@ type Mode = 'view' | 'edit'
 
 /** What tier 1 is for, shown under its name on both faces. */
 const MANAGEMENT_NOTE =
-  'Able to create, delete and do setting of tags for tier & station.'
+  'Able to create, delete and do setting of tags for ALL tiers & stations.'
 
 /* Row action icons — shared by the tier tag and station tag tables. */
 const iconProps = {
@@ -529,6 +530,7 @@ function StationModal({
   onClose: () => void
   onSaved: () => void
 }) {
+  const overlay = useOverlayClose(onClose)
   const [name, setName] = useState(station.name)
   const [hourly, setHourly] = useState(Boolean(station.hourly_count))
   const [minPrevInput, setMinPrevInput] = useState(String(station.hourly_min_prev ?? 0))
@@ -574,7 +576,7 @@ function StationModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" {...overlay}>
       <div className="modal modal-view" onClick={(e) => e.stopPropagation()}>
         <div className="row-form spread">
           <h2>{mode === 'view' ? 'Station' : 'Edit station'}</h2>
@@ -689,6 +691,7 @@ function TagModal({
   onClose: () => void
   onSaved: () => void
 }) {
+  const overlay = useOverlayClose(onClose)
   // Tier 1 is the super admin: every ability, always — the checkboxes are
   // shown ticked and locked.
   const isSuper = grade?.sort_order === 1
@@ -784,7 +787,7 @@ function TagModal({
   // than a field, and the buttons differ.
   if (mode === 'view' && grade) {
     return (
-      <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-overlay" {...overlay}>
         <div className="modal modal-view" onClick={(e) => e.stopPropagation()}>
           <div className="row-form spread">
             <h2>Tier Tag Access Manage</h2>
@@ -822,7 +825,7 @@ function TagModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" {...overlay}>
       <form className="modal modal-view" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="row-form spread">
           <h2>Tier Tag Access Manage</h2>

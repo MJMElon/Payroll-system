@@ -44,14 +44,18 @@ export function effectiveModules(modules: string[] | null | undefined): string[]
 // they always display in this sequence no matter what order they were
 // ticked. Grouped so the tag editor reads like a permission sheet.
 export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[] = [
-  // Work entries (mobile records)
-  { key: 'data-entry', label: 'Data entry', group: 'Work entry setting' },
+  // Work entries. Verify and approve always reach DOWN the tiers and never
+  // up — that is the system's rule everywhere, so the labels stay short
+  // rather than repeating it on each line.
+  { key: 'data-entry', label: 'Add new work entry', group: 'Work entry setting' },
   { key: 'edit-entry', label: 'Edit work entry', group: 'Work entry setting' },
-  { key: 'verify', label: "Verify below tiers' work entry", group: 'Work entry setting' },
-  { key: 'approve', label: "Approve below tiers' work entry", group: 'Work entry setting' },
+  { key: 'delete-entry', label: 'Delete work entry', group: 'Work entry setting' },
+  { key: 'verify', label: 'Verify work entry', group: 'Work entry setting' },
+  { key: 'approve', label: 'Approve work entry', group: 'Work entry setting' },
   // Piece rates
-  { key: 'rate-create', label: 'Create piece rate', group: 'Piece rate setting' },
+  { key: 'rate-create', label: 'Add new piece rate', group: 'Piece rate setting' },
   { key: 'rate-edit', label: 'Edit piece rate', group: 'Piece rate setting' },
+  { key: 'rate-delete', label: 'Delete piece rate', group: 'Piece rate setting' },
   { key: 'rate-verify', label: 'Verify piece rate', group: 'Piece rate setting' },
   { key: 'rate-approve', label: 'Approve piece rate', group: 'Piece rate setting' },
   // Tag management — each function grantable on its own
@@ -63,8 +67,8 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   // Team manage — dragging someone into a team needs no capability, any
   // leader may do it. Profile and salary are separate grants, so a lower
   // tier can keep details tidy without ever seeing pay.
-  { key: 'worker-edit', label: 'Edit worker profile', group: 'Team manage setting' },
-  { key: 'worker-salary', label: 'Edit worker salary', group: 'Team manage setting' },
+  { key: 'worker-edit', label: 'Edit profile details', group: 'Team manage setting' },
+  { key: 'worker-salary', label: 'Edit basic salary', group: 'Team manage setting' },
   { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
 ]
 
