@@ -595,6 +595,50 @@ function RecordRow({ record, url }: { record: PhotoRecord; url: string | null })
   )
 }
 
+/**
+ * One period of the "work done" target, read like a usage meter: the window
+ * and the headline percentage on top, a single 100% track filled by what was
+ * approved and then by what was rejected, and the counts underneath. The
+ * empty remainder IS the waiting slice — no third segment needed.
+ */
+function ScoreMeter({
+  label,
+  score,
+}: {
+  label: string
+  score: {
+    total: number
+    done: number
+    rejected: number
+    waiting: number
+    donePct: number
+    rejectedPct: number
+    waitingPct: number
+  }
+}) {
+  return (
+    <div className="mob-meter">
+      <div className="mob-meter-head">
+        <span className="mob-meter-label">{label}</span>
+        <span className="mob-meter-pct">{score.donePct}%</span>
+      </div>
+      <div
+        className="mob-scorebar"
+        role="img"
+        aria-label={`${label}: ${score.donePct}% done, ${score.rejectedPct}% rejected, ${score.waitingPct}% waiting`}
+      >
+        <div className="done" style={{ width: `${score.donePct}%` }} />
+        <div className="bad" style={{ width: `${score.rejectedPct}%` }} />
+      </div>
+      <div className="mob-meter-foot">
+        {score.total === 0
+          ? 'Nothing recorded yet'
+          : `${score.total} record${score.total === 1 ? '' : 's'} · ${score.done} done · ${score.rejected} rejected · ${score.waiting} waiting`}
+      </div>
+    </div>
+  )
+}
+
 function statusChip(status: string | undefined) {
   const s = status ?? 'approved'
   const cls = s === 'approved' ? 'ok' : s === 'rejected' ? 'bad' : s === 'verified' ? 'mid' : 'warn'
@@ -875,17 +919,29 @@ function PerformanceTab({
   const outputToday = todayByStation.reduce((s, x) => s + x.output, 0)
 
   // My own scorecard, against a target of everything I submit ending up
-  // approved. Measured over the month, not today: work submitted today is
-  // still in the queue, so a daily reading would sit near 0% every morning
-  // and say nothing about how the person is actually doing.
-  const myMonthAll = myEntries.filter((e) => e.work_date >= monthStart)
-  const myStat = (k: string) => myMonthAll.filter((e) => (e.approval_status ?? 'approved') === k).length
-  const myDone = myStat('approved')
-  const myRejected = myStat('rejected')
-  const pctOf = (n: number) => (myMonthAll.length > 0 ? Math.round((n / myMonthAll.length) * 100) : 0)
-  const donePct = pctOf(myDone)
-  const rejectedPct = pctOf(myRejected)
-  const waitingPct = Math.max(0, 100 - donePct - rejectedPct)
+  // approved. Read as a meter over two windows: today first, then the week
+  // it sits in. Today is mostly "waiting" by nature — work recorded this
+  // morning has not been through approval yet — which is exactly what the
+  // waiting slice is there to show.
+  const scoreOver = (rows: ProductionEntry[]) => {
+    const count = (k: string) => rows.filter((e) => (e.approval_status ?? 'approved') === k).length
+    const done = count('approved')
+    const rejected = count('rejected')
+    const pct = (n: number) => (rows.length > 0 ? Math.round((n / rows.length) * 100) : 0)
+    const donePct = pct(done)
+    const rejectedPct = pct(rejected)
+    return {
+      total: rows.length,
+      done,
+      rejected,
+      waiting: rows.length - done - rejected,
+      donePct,
+      rejectedPct,
+      waitingPct: Math.max(0, 100 - donePct - rejectedPct),
+    }
+  }
+  const myToday = scoreOver(myEntries.filter((e) => e.work_date === todayISO()))
+  const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
   const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
   const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
   const compliance = scopedRows.length > 0 ? Math.round((doneAll / scopedRows.length) * 100) : null
@@ -938,19 +994,14 @@ function PerformanceTab({
         {/* 2 — my own scorecard: everything I submit should end up approved. */}
         {canEntry && (
           <div className="mob-card">
-            <div className="mob-card-label">My work done · this month</div>
-            <div className="mob-sub">
-              Target 100% · {myMonthAll.length} record{myMonthAll.length === 1 ? '' : 's'} submitted
-            </div>
-            <div className="mob-scorebar" role="img"
-              aria-label={`${donePct}% done, ${rejectedPct}% rejected, ${waitingPct}% waiting`}>
-              <div className="done" style={{ width: `${donePct}%` }} />
-              <div className="bad" style={{ width: `${rejectedPct}%` }} />
-            </div>
+            <div className="mob-card-label">My work done</div>
+            <div className="mob-sub">Target 100% approved</div>
+            <ScoreMeter label="Today" score={myToday} />
+            <ScoreMeter label="This week" score={myThisWeek} />
             <div className="mob-scorekey">
-              <span><i className="dot done" />Work done <strong>{donePct}%</strong></span>
-              <span><i className="dot bad" />Rejected <strong>{rejectedPct}%</strong></span>
-              <span><i className="dot wait" />Waiting <strong>{waitingPct}%</strong></span>
+              <span><i className="dot done" />Work done</span>
+              <span><i className="dot bad" />Rejected</span>
+              <span><i className="dot wait" />Waiting approval</span>
             </div>
           </div>
         )}

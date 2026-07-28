@@ -723,9 +723,23 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-scorebar > .done { background: linear-gradient(90deg, #15803d, #22c55e); }
 .mob-scorebar > .bad { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+/* One period of the target, stacked like a usage meter. */
+.mob-meter { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.35rem; }
+.mob-meter-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.mob-meter-label {
+  font-size: 0.7rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.mob-meter-pct {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 1.05rem; font-weight: 800; letter-spacing: -0.01em;
+}
+.mob-meter-foot { font-size: 0.68rem; color: var(--muted); }
+
 .mob-scorekey {
   display: flex; flex-wrap: wrap; gap: 0.15rem 0.7rem;
   font-size: 0.7rem; color: var(--muted);
+  margin-top: 0.3rem; padding-top: 0.4rem; border-top: 1px solid #eef0f4;
 }
 .mob-scorekey span { display: flex; align-items: center; gap: 0.3rem; }
 .mob-scorekey strong { color: var(--text); font-weight: 800; }
