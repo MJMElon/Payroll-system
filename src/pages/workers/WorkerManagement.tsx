@@ -775,11 +775,6 @@ export default function WorkerManagement() {
               grade={gradeOf(selected) ?? null}
               team={teamOf(selected)}
               stationText={stationLabel(selected)}
-              leader={
-                selected.supervisor_id
-                  ? displayName(profiles.find((x) => x.id === selected.supervisor_id))
-                  : null
-              }
               jobs={jobs}
               rates={rates}
               canEditProfile={canEditProfile}
@@ -856,7 +851,6 @@ function WorkerPanel({
   grade,
   team,
   stationText,
-  leader,
   jobs,
   rates,
   canEditProfile,
@@ -868,7 +862,6 @@ function WorkerPanel({
   grade: Grade | null
   team: Team | null
   stationText: string
-  leader: string | null
   jobs: Job[]
   rates: PieceRate[]
   canEditProfile: boolean
@@ -885,7 +878,6 @@ function WorkerPanel({
     phone: person.phone ?? '',
     bank_name: person.bank_name ?? '',
     bank_account: person.bank_account ?? '',
-    joined_on: person.joined_on ?? '',
     basic_salary: person.basic_salary != null ? String(person.basic_salary) : '',
   })
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
@@ -898,8 +890,7 @@ function WorkerPanel({
       phone: person.phone ?? '',
       bank_name: person.bank_name ?? '',
       bank_account: person.bank_account ?? '',
-      joined_on: person.joined_on ?? '',
-      basic_salary: person.basic_salary != null ? String(person.basic_salary) : '',
+        basic_salary: person.basic_salary != null ? String(person.basic_salary) : '',
     })
     setEditing(true)
   }
@@ -913,7 +904,6 @@ function WorkerPanel({
       patch.phone = form.phone.trim() || null
       patch.bank_name = form.bank_name.trim() || null
       patch.bank_account = form.bank_account.trim() || null
-      patch.joined_on = form.joined_on || null
     }
     if (canEditSalary) {
       const v = form.basic_salary.trim()
@@ -971,21 +961,20 @@ function WorkerPanel({
         <div className="wm-fields">
           {canEditProfile ? (
             <>
-              <EditRow label="Name" value={form.full_name} onChange={set('full_name')} placeholder="Full name" />
               <Row label="Tier" value={grade?.name} />
+              <EditRow label="Name" value={form.full_name} onChange={set('full_name')} placeholder="Full name" />
+              <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} placeholder="EMP001" />
               <Row label="Station" value={stationText} />
               <Row label="Team" value={team?.name} />
-              <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} placeholder="EMP001" />
               <EditRow label="IC / passport" value={form.ic_number} onChange={set('ic_number')} />
               <EditRow label="Phone" value={form.phone} onChange={set('phone')} />
               <EditRow label="Bank" value={form.bank_name} onChange={set('bank_name')} />
               <EditRow label="Bank a/c" value={form.bank_account} onChange={set('bank_account')} />
-              <EditRow label="Joined on" type="date" value={form.joined_on} onChange={set('joined_on')} />
             </>
           ) : (
             <>
-              <Row label="Name" value={displayName(person)} />
               <Row label="Tier" value={grade?.name} />
+              <Row label="Name" value={displayName(person)} />
               <Row label="Station" value={stationText} />
             </>
           )}
@@ -1013,15 +1002,13 @@ function WorkerPanel({
         </div>
       ) : (
         <div className="wm-fields">
-          <Row label="Name" value={displayName(person)} />
           <Row label="Tier" value={grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : null} />
+          <Row label="Name" value={displayName(person)} />
+          <Row label="Staff no." value={person.employee_code} />
           <Row label="Station" value={stationText} />
           <Row label="Team" value={team?.name} />
-          <Row label="Reports to" value={leader} />
           <Row label="Email" value={person.email} />
-          <Row label="Staff no." value={person.employee_code} />
           <Row label="Phone" value={person.phone} />
-          <Row label="Joined on" value={person.joined_on} />
           {canEditSalary && (
             <Row
               label="Basic salary"
