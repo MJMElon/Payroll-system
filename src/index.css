@@ -192,17 +192,82 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   .account { margin-left: auto; }
 }
 
-/* Selects share the input look */
+/* Selects share the input look. The browser's own arrow is dropped for one
+   drawn in our ink, so a closed dropdown reads as part of the app rather
+   than as an operating-system widget. */
 select {
-  padding: 0.6rem 0.7rem; border: 1px solid var(--border);
-  border-radius: 8px; font-size: 0.95rem; background: var(--surface); color: var(--text);
+  appearance: none; -webkit-appearance: none;
+  padding: 0.6rem 2rem 0.6rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 0.95rem; color: var(--text); cursor: pointer;
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236a7380' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 0.6rem center;
 }
+select:hover { border-color: var(--accent); }
 select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 
 /* Standalone filter dropdown (e.g. "All stations") — same bordered look as
    any select, just a bit wider so the label isn't cramped. */
 .filter-select { min-width: 160px; }
 .filter-select:hover { border-color: var(--accent); }
+
+/* ------------------------------------------------------------------ */
+/* The system's own dropdown (components/Select.tsx). A native select   */
+/* hands its option list to the operating system, which paints it in a  */
+/* style we cannot reach; this is the same control drawn on our own     */
+/* surfaces so the open list matches the page it sits on.               */
+/* ------------------------------------------------------------------ */
+.ui-select { position: relative; display: inline-flex; flex-direction: column; min-width: 160px; }
+.ui-select.block { display: flex; width: 100%; min-width: 0; }
+.ui-select-trigger {
+  appearance: none; cursor: pointer; width: 100%;
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 0.6rem 0.55rem 0.7rem; min-height: 40px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff, #f7f8fa);
+  color: var(--text); font: inherit; font-size: 0.92rem; text-align: left;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(25, 32, 42, 0.05);
+}
+.ui-select-trigger:hover:not(:disabled) { border-color: var(--accent); background: var(--surface); }
+.ui-select-trigger:disabled { background: var(--bg); color: var(--muted); cursor: default; }
+.ui-select.open .ui-select-trigger {
+  border-color: var(--accent); background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(76, 88, 102, 0.14);
+}
+.ui-select.invalid .ui-select-trigger { border-color: #f1a9a6; background: #fdf4f4; }
+.ui-select-value {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-select-value.placeholder { color: var(--muted); }
+.ui-select-caret { flex: none; color: var(--muted); transition: transform 0.15s ease; }
+.ui-select.open .ui-select-caret { transform: rotate(180deg); }
+
+.ui-select-menu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 5px); z-index: 60;
+  min-width: 100%; max-height: 264px; overflow-y: auto; padding: 0.3rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(25, 35, 50, 0.22);
+  animation: ui-select-in 0.12s ease-out;
+}
+.ui-select-menu.up { top: auto; bottom: calc(100% + 5px); }
+@keyframes ui-select-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.ui-select-option {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  appearance: none; border: none; background: none; cursor: pointer;
+  padding: 0.45rem 0.55rem; border-radius: 8px;
+  font: inherit; font-size: 0.9rem; color: var(--text); text-align: left;
+}
+.ui-select-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-select-option[data-active='true'] { background: var(--bg); }
+.ui-select-option[aria-selected='true'] {
+  background: var(--accent-soft); color: var(--accent-strong); font-weight: 600;
+}
+.ui-select-option .tick { flex: none; opacity: 0; }
+.ui-select-option[aria-selected='true'] .tick { opacity: 1; }
+.ui-select-empty { padding: 0.5rem 0.55rem; font-size: 0.85rem; color: var(--muted); }
 
 /* Tabs */
 .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); }
@@ -1220,8 +1285,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* ------------------------------------------------------------------ */
 .wm-page { display: flex; flex-direction: column; gap: 0.75rem; }
 
-.wm-head { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
-.wm-head .wm-back {
+/* The way out of a module. Team Manage set the shape; `.module-head` /
+   `.module-back` is the same pair of rules under a name any module can
+   wear, so every module leaves by the same door. */
+.wm-head, .module-head { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
+.wm-head .wm-back, .module-head .module-back {
   padding: 0.4rem 0.75rem; font-size: 0.82rem; border-radius: 8px;
   text-decoration: none; white-space: nowrap; margin-bottom: 0;
 }
@@ -1434,4 +1502,76 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   .wm-side { position: static; }
   .wm-side-inner { max-height: 240px; }
   .wm-add { visibility: visible; }
+}
+
+/* ------------------------------------------------------------------ */
+/* PIECE RATE — the multi-row create window. The pop-out is widened to  */
+/* the masterlist's shape so a new rate is keyed in on ONE line, in the */
+/* same left-to-right order the masterlist reads: tier tag, station,    */
+/* work description, unit, rate, effective date. "+ Row" stacks another */
+/* line, so a whole batch of rates goes in without reopening.           */
+/* ------------------------------------------------------------------ */
+.modal.modal-xwide { max-width: min(1180px, 96vw); }
+
+.pr-grid { display: flex; flex-direction: column; gap: 0.5rem; }
+.pr-grid-head, .pr-grid-row {
+  display: grid;
+  grid-template-columns:
+    minmax(140px, 1fr) minmax(140px, 1fr) minmax(190px, 1.7fr)
+    minmax(132px, 1.05fr) minmax(120px, 0.95fr) minmax(140px, 1.05fr) 34px;
+  gap: 0.5rem; align-items: start;
+}
+.pr-grid-head {
+  padding: 0 0.1rem 0.1rem; font-size: 0.7rem; font-weight: 800;
+  color: var(--accent-strong); text-transform: uppercase; letter-spacing: 0.06em;
+}
+.pr-grid-row {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+  padding: 0.55rem; position: relative;
+}
+.pr-grid-row.bad { border-color: #f1a9a6; background: #fdf4f4; }
+.pr-grid-row input {
+  width: 100%; min-width: 0; padding: 0.55rem 0.6rem; min-height: 40px;
+  font-size: 0.92rem; border-radius: 10px;
+}
+.pr-cell { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+/* Column names ride at the top on a wide window; on a narrow one they
+   move into each cell so a stacked row still says what it is. */
+.pr-cell-label { display: none; font-size: 0.7rem; font-weight: 700; color: var(--muted); }
+
+.pr-rate-cell { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+.pr-tier-inputs { display: flex; gap: 0.3rem; }
+.pr-tier-inputs label { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.pr-tier-inputs span { font-size: 0.66rem; color: var(--muted); }
+.pr-tier-toggle {
+  appearance: none; border: none; background: none; cursor: pointer; padding: 0;
+  align-self: flex-start; font-size: 0.7rem; font-weight: 700; color: var(--accent);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.pr-tier-toggle:hover { color: var(--accent-strong); }
+
+.pr-row-drop {
+  appearance: none; border: 1px solid transparent; background: none; cursor: pointer;
+  width: 32px; height: 40px; border-radius: 10px;
+  color: var(--muted); font-size: 1.05rem; line-height: 1; align-self: start;
+}
+.pr-row-drop:hover:not(:disabled) { background: #fbeceb; border-color: #f1cfcd; color: var(--danger); }
+.pr-row-drop:disabled { opacity: 0.3; cursor: default; }
+
+.pr-row-no {
+  font-size: 0.7rem; font-weight: 800; color: var(--muted);
+}
+
+@media (max-width: 1000px) {
+  .pr-grid-head { display: none; }
+  .pr-grid-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+  .pr-grid-row .pr-cell-label { display: block; }
+  .pr-grid-row { padding: 1.9rem 0.6rem 0.6rem; }
+  .pr-grid-row .pr-cell.wide { grid-column: 1 / -1; }
+  /* Stacked, the row is a block — its "remove" sits in the block's own
+     top corner rather than trailing the last field. */
+  .pr-row-drop { position: absolute; top: 0.3rem; right: 0.35rem; }
+}
+@media (max-width: 560px) {
+  .pr-grid-row { grid-template-columns: minmax(0, 1fr); }
 }
