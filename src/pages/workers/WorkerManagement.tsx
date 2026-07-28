@@ -308,17 +308,30 @@ export default function WorkerManagement() {
   // People with no tier tag at all.
   const looseRow = useMemo(() => visible.filter((p) => !p.grade_id), [visible])
 
-  /** Split a tier row into its teams, in team order, no-team last. */
-  function clustersFor(people: Profile[]): Group[] {
-    const present = teams
-      .filter((t) => people.some((p) => p.team_id === t.id))
+  /**
+   * Split a tier row into its teams, in team order, no-team last.
+   *
+   * A team shows on the row DIRECTLY BELOW the tier that owns it even while
+   * it is still empty — that row is where it gets filled from, and a team
+   * box that only appears once someone is in it can never be the thing you
+   * drop the first person into. It also shows on any row holding a member.
+   */
+  function clustersFor(people: Profile[], tier: number | null): Group[] {
+    const holdsAMember = (t: Team) => people.some((p) => p.team_id === t.id)
+    const isTheRowBelowItsOwner = (t: Team) => {
+      if (tier === null) return false
+      const owner = teamTier(t)
+      return owner < tier && !grades.some((g) => g.sort_order > owner && g.sort_order < tier)
+    }
+    const shown = teams
+      .filter((t) => holdsAMember(t) || isTheRowBelowItsOwner(t))
       .sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
-    if (present.length === 0) return [{ team: null, people }]
-    const groups: Group[] = present.map((t) => ({
+    if (shown.length === 0) return [{ team: null, people }]
+    const groups: Group[] = shown.map((t) => ({
       team: t,
       people: people.filter((p) => p.team_id === t.id),
     }))
-    const rest = people.filter((p) => !p.team_id || !present.some((t) => t.id === p.team_id))
+    const rest = people.filter((p) => !p.team_id || !shown.some((t) => t.id === p.team_id))
     if (rest.length > 0) groups.push({ team: null, people: rest })
     return groups
   }
@@ -669,7 +682,7 @@ export default function WorkerManagement() {
 
   /** A tier row: every name on that tier, split into its teams. */
   function tierRow(grade: Grade | null, people: Profile[]) {
-    const clusters = clustersFor(people)
+    const clusters = clustersFor(people, grade?.sort_order ?? null)
     const bare = clusters.length === 1 && !clusters[0].team
     const rowKey = `tier:${grade?.id ?? 'untagged'}`
     // Dropping on the row itself only settles the tier — that is how the
@@ -693,7 +706,7 @@ export default function WorkerManagement() {
           <span className="wm-tier-n">{people.length}</span>
         </div>
         <div className={`wm-row-blocks ${dropKey === rowKey ? 'over' : ''}`} {...rowDrop}>
-          {people.length === 0 && (
+          {people.length === 0 && !clusters.some((c) => c.team) && (
             <p className="wm-row-empty">
               {grade && canPlaceOnTier(grade)
                 ? `Nobody on this tier yet — drop a name here to make them ${grade.name}.`
@@ -760,7 +773,13 @@ export default function WorkerManagement() {
                         </>
                       )}
                     </div>
-                    <div className="wm-cluster-blocks">{c.people.map(block)}</div>
+                    <div className="wm-cluster-blocks">
+                      {c.people.length === 0 ? (
+                        <span className="wm-cluster-empty">Drop a name here</span>
+                      ) : (
+                        c.people.map(block)
+                      )}
+                    </div>
                   </div>
                 )
               })}

@@ -1323,7 +1323,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-cluster-of { color: var(--muted); font-weight: 600; text-transform: none; letter-spacing: 0; }
 .wm-cluster-n { color: var(--muted); font-size: 0.66rem; font-variant-numeric: tabular-nums; }
 .wm-cluster-input { font: inherit; font-size: 0.72rem; font-weight: 700; padding: 0.05rem 0.3rem; width: 8rem; }
-.wm-cluster-blocks { display: flex; gap: 0.45rem; }
+.wm-cluster-blocks { display: flex; gap: 0.45rem; min-height: 2.2rem; align-items: center; }
+.wm-cluster-empty {
+  color: #9aa3ae; font-size: 0.72rem; font-style: italic; padding: 0 0.35rem;
+  white-space: nowrap;
+}
 .wm-icon {
   appearance: none; background: none; border: none; cursor: pointer;
   color: var(--muted); font-size: 0.72rem; line-height: 1; padding: 0.05rem 0.2rem;
