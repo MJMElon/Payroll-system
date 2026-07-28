@@ -267,55 +267,6 @@ export default function DemoMobile() {
       ? stations
       : stations.filter((s) => myStationIds.includes(s.id))
 
-  // The Approvals PAGE is granted PER USER in Settings -> User access
-  // ("Work approval screen") — not tied to any tier. Admins and the
-  // tier-1 super admin always have final-approval access.
-  const myOwnGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
-  const realApprovalLevel: 'verify' | 'approve' | null =
-    profile?.role === 'admin' || myOwnGrade?.sort_order === 1
-      ? 'approve'
-      : profile?.mobile_approval ?? null
-  // In THIS demo the phone follows the previewed tier, so you can see each
-  // version of the one design. In the real app there is no selector — the
-  // Approvals page shows only for accounts granted the per-user
-  // "Work approval screen" in Settings -> User access.
-  const approvalLevel: 'verify' | 'approve' | null = signupPreview
-    ? null
-    : tier
-      ? tierCaps.includes('approve')
-        ? 'approve'
-        : tierCaps.includes('verify')
-          ? 'verify'
-          : null
-      : realApprovalLevel
-
-  // Badge on the Approvals tab: how many entries wait for MY action.
-  const [approvalsCount, setApprovalsCount] = useState(0)
-  useEffect(() => {
-    if (!approvalLevel || !profile?.id) return
-    let cancelled = false
-    async function count() {
-      const { data } = await supabase
-        .from('production_entries')
-        .select('id, user_id, approval_status')
-        .in('approval_status', ['pending', 'verified'])
-      if (cancelled) return
-      const rows = (data ?? []).filter(
-        (e) =>
-          e.user_id !== profile?.id &&
-          ['pending', 'verified'].includes(e.approval_status ?? '') &&
-          (approvalLevel === 'approve' || e.approval_status === 'pending'),
-      )
-      setApprovalsCount(rows.length)
-    }
-    count()
-    const t = setInterval(count, 60_000)
-    return () => {
-      cancelled = true
-      clearInterval(t)
-    }
-  }, [approvalLevel, profile?.id, tab])
-
   // Elapsed-hour photo → entry conversion used to only run while the
   // Record tab (or Performance's station drill-in) happened to be open —
   // so it never fired if you took a photo, then left before the hour
@@ -470,7 +421,6 @@ export default function DemoMobile() {
                 <TabBar
                   tab={tab}
                   onTab={setTab}
-                  badge={approvalLevel ? approvalsCount : 0}
                 />
               )}
             </div>
@@ -491,11 +441,9 @@ export default function DemoMobile() {
 function TabBar({
   tab,
   onTab,
-  badge,
 }: {
   tab: Tab
   onTab: (t: Tab) => void
-  badge: number
 }) {
   // Five slots, identical for every tier: the "+" (add a new entry) sits
   // EXACTLY in the centre with two tabs flexing on each side —
@@ -509,7 +457,6 @@ function TabBar({
             <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
           </svg>
           <span>Performance</span>
-          {badge > 0 && <span className="mob-tab-badge">{badge > 99 ? '99+' : badge}</span>}
         </button>
         <button className={`mob-tab ${tab === 'mywork' ? 'active' : ''}`} onClick={() => onTab('mywork')}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -2218,6 +2165,7 @@ function EntryDetail({
   onBack,
   workerTier,
   decide,
+  blocked,
 }: {
   entry: ProductionEntry
   myName: string
@@ -2232,6 +2180,9 @@ function EntryDetail({
   workerTier?: Grade | null
   /** Shown only when the viewer's tag grants the step this record is at. */
   decide?: { canVerify: boolean; canApprove: boolean; busy: boolean; act: (next: 'verified' | 'approved' | 'rejected') => void }
+  /** Why no decision is offered, when none is. The caller knows; guessing
+   *  it here got it wrong and told people their tag was at fault. */
+  blocked?: 'own' | 'no-permission'
 }) {
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
@@ -2317,9 +2268,10 @@ function EntryDetail({
               day: 'numeric', month: 'long', year: 'numeric',
             })}
           </div>
-          <div className="mob-review-tags" style={{ marginTop: '0.2rem' }}>
-            {workerTag && <span className={tagClass(workerTag.color)}>{workerTag.name}</span>}
-            <span className="mob-entry-name">{myName}</span>
+          <div className="mob-field-label" style={{ marginTop: '0.35rem' }}>Work by</div>
+          <div className="mob-workby">
+            <span className="mob-person-name">{myName}</span>
+            {workerTag && <span className={`${tagClass(workerTag.color)} sm`}>{workerTag.name}</span>}
           </div>
           <div className="mob-row" style={{ marginTop: '0.2rem' }}>
             <span>{job?.name ?? 'Work'}</span>
@@ -2333,7 +2285,7 @@ function EntryDetail({
             beside the row it belongs to rather than in a gallery of its
             own. */}
         <div className="mob-card">
-          <div className="mob-title">Submitted parameter</div>
+          <div className="mob-title">Submitted Work Record</div>
           <div className="mob-paramrows">
             {rows.map((r, i) => (
               <div className="mob-paramrow" key={r.key}>
@@ -2355,6 +2307,54 @@ function EntryDetail({
             ))}
           </div>
         </div>
+
+        {/* The decision sits with the rows it is made on — the quantities,
+            the rates and the photo for each one are the evidence, and
+            scrolling away from them to act made the two feel unrelated.
+            Which button shows follows the viewer's tag and the step this
+            record is actually at, never both at once. */}
+        {/* An absent button is indistinguishable from a broken one, so the
+            reason is stated: your own work, a tag without the permission,
+            or a record already past the step you hold. */}
+        {blocked && ['pending', 'verified'].includes(status) && (
+          <div className="mob-card">
+            <div className="mob-sub">
+              {blocked === 'own'
+                ? 'This is your own record — it is reviewed by somebody above you.'
+                : 'Your tier tag has no verify or approve permission. Tick one in Settings → Tags management.'}
+            </div>
+          </div>
+        )}
+        {decide && !decide.canVerify && !decide.canApprove && (
+          <div className="mob-card">
+            <div className="mob-sub">
+              Your tier tag has no verify or approve permission.
+            </div>
+          </div>
+        )}
+        {decide && (decide.canVerify || decide.canApprove) && (
+          <>
+            <div className="row-form" style={{ gap: '0.5rem' }}>
+              {decide.canVerify && status === 'pending' && (
+                <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
+                  onClick={() => decide.act('verified')}>✓ Verify</button>
+              )}
+              {decide.canApprove && status === 'verified' && (
+                <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
+                  onClick={() => decide.act('approved')}>✓ Approve</button>
+              )}
+              {['pending', 'verified'].includes(status) && (
+                <button className="mob-btn reject" style={{ flex: 1 }} disabled={decide.busy}
+                  onClick={() => decide.act('rejected')}>✗ Reject</button>
+              )}
+            </div>
+            {decide.canVerify && !decide.canApprove && status === 'verified' && (
+              <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
+                Already verified — a final approver takes it from here.
+              </div>
+            )}
+          </>
+        )}
 
         <div className="mob-card">
           <div className="mob-title">Calculation</div>
@@ -2404,25 +2404,6 @@ function EntryDetail({
           </div>
         </div>
 
-        {/* The decision sits at the bottom, under everything it is made
-            on. Which button shows follows the viewer's tag and the step
-            this record is actually at — never both at once. */}
-        {decide && (decide.canVerify || decide.canApprove) && (
-          <div className="row-form" style={{ gap: '0.5rem' }}>
-            {decide.canVerify && status === 'pending' && (
-              <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
-                onClick={() => decide.act('verified')}>✓ Verify</button>
-            )}
-            {decide.canApprove && status === 'verified' && (
-              <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
-                onClick={() => decide.act('approved')}>✓ Approve</button>
-            )}
-            {['pending', 'verified'].includes(status) && (
-              <button className="mob-btn reject" style={{ flex: 1 }} disabled={decide.busy}
-                onClick={() => decide.act('rejected')}>✗ Reject</button>
-            )}
-          </div>
-        )}
       </div>
     </>
   )
@@ -2794,6 +2775,13 @@ function MyWorkTab({
           detail.user_id && detail.user_id !== profileId
             ? grades.find((g) => g.id === submitters.get(detail.user_id!)?.grade_id) ?? null
             : tier
+        }
+        blocked={
+          detail.user_id === profileId
+            ? 'own'
+            : canVerify || canApprove
+              ? undefined
+              : 'no-permission'
         }
         decide={
           detail.user_id !== profileId && (canVerify || canApprove)

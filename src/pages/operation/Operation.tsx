@@ -55,8 +55,6 @@ const RAIL_KEY = 'mjm-op-rail-open'
 // tells the two apart.
 type Tab = 'open' | 'approved' | 'rejected'
 
-const RM = (n: number) => `RM ${n.toFixed(2)}`
-
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 /** DD/MMM/YYYY — read the same way everywhere, in any locale. */
@@ -306,11 +304,15 @@ export default function Operation() {
   const isLocked = (e: ProductionEntry) =>
     lockedPeriods.some((p) => p.period_start <= e.work_date && e.work_date <= p.period_end)
 
+  const isManagement =
+    profile?.role === 'admin' || profile?.role === 'manager' || myGrade?.sort_order === 1
+
   /** The one step this user may take on this entry right now, if any.
-   *  Nobody signs off their own work, and a closed period takes no more. */
+   *  Below management, nobody signs off their own work; a closed payroll
+   *  period takes no more from anyone. */
   const actionFor = (e: ProductionEntry): 'verified' | 'approved' | null => {
     if (!approvalLevel || isLocked(e)) return null
-    if (e.user_id === profile?.id) return null
+    if (!isManagement && e.user_id === profile?.id) return null
     const s = stat(e)
     if (s === 'pending') return 'verified'
     if (s === 'verified' && approvalLevel === 'approve') return 'approved'
@@ -390,11 +392,6 @@ export default function Operation() {
     .filter((s) => (oneStation ? s.id === scope : true))
     .map((s) => ({ station: s, rows: buildGroups(visible.filter((e) => e.station_id === s.id)) }))
     .filter((b) => oneStation || b.rows.length > 0)
-
-  const totals = {
-    rows: stationBlocks.reduce((n, b) => n + b.rows.length, 0),
-    amount: visible.reduce((n, e) => n + amountFor(e.job_id, e.quantity), 0),
-  }
 
   /** The Piece Rate cell: one number — unless the rate is tiered AND the
    *  5th unit was reached, in which case both prices show with the units
@@ -728,17 +725,10 @@ export default function Operation() {
 
             {/* Adding work lives under the first tab — a new entry lands
                 there, waiting to be verified. */}
-            {tab === 'open' ? (
-              <div className="row-form spread op-tabbar">
-                <span className="muted small">
-                  {totals.rows} row{totals.rows === 1 ? '' : 's'} · {RM(totals.amount)}
-                </span>
+            {tab === 'open' && (
+              <div className="row-form op-tabbar" style={{ justifyContent: 'flex-end' }}>
                 <Link to="/operation/add" className="btn">+ Add Job Record</Link>
               </div>
-            ) : (
-              <p className="muted small" style={{ margin: 0 }}>
-                {totals.rows} row{totals.rows === 1 ? '' : 's'} · {RM(totals.amount)}
-              </p>
             )}
 
             {/* One station picked: the rail already names it, so the block
@@ -749,7 +739,6 @@ export default function Operation() {
                 ? <p className="muted">Nothing here for these filters.</p>
                 : stationBlocks.map(({ station, rows }) => {
                     const shut = collapsed.has(station.id)
-                    const amount = rows.reduce((n, g) => n + groupAmount(g), 0)
                     return (
                       <section className="op-group" key={station.id}>
                         <div className="op-group-head">
@@ -768,12 +757,8 @@ export default function Operation() {
                           >
                             <span className="op-caret" aria-hidden="true">{shut ? '▸' : '▾'}</span>
                             <span className="op-group-name">{station.name}</span>
-                            {myStationIds.includes(station.id) && <span className="you-chip">you</span>}
                           </button>
-                          <span className="op-group-meta">
-                            {rows.length} row{rows.length === 1 ? '' : 's'}
-                            <strong>{RM(amount)}</strong>
-                          </span>
+
                         </div>
                         {!shut && groupRows(rows)}
                       </section>
@@ -857,6 +842,8 @@ function GroupModal({
   onActMany: (list: ProductionEntry[], next: 'verified' | 'approved') => void
 }) {
   const overlay = useOverlayClose(onClose)
+  // A clicked photo floats over the record instead of leaving for a tab.
+  const [photoView, setPhotoView] = useState<string | null>(null)
 
   // The day's 24 hours starting at 07:00, each holding the submissions
   // that arrived in it; runs of empty hours fold into one quiet line.
@@ -880,6 +867,14 @@ function GroupModal({
 
   const toVerify = group.entries.filter((e) => actionFor(e) === 'verified')
   const toApprove = group.entries.filter((e) => actionFor(e) === 'approved')
+
+  // Every distinct name that has stamped an entry in this record.
+  const names = (field: 'verified_by' | 'approved_by') => {
+    const list = [...new Set(group.entries.map((e) => shortWho(e[field])).filter(Boolean))] as string[]
+    return list.length ? list.join(', ') : null
+  }
+  const verifiedBy = names('verified_by')
+  const approvedBy = names('approved_by')
 
   const timeOf = (e: ProductionEntry) =>
     new Date(e.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -908,26 +903,10 @@ function GroupModal({
         </div>
 
         <div className="tag-section op-rec-sec">
-          <div className="row-form spread" style={{ gap: '0.4rem' }}>
-            <div>
-              <div className="op-job-title">{job?.name ?? 'Work'}</div>
-              <div className="tag-section-title">The day — {hh(DAY_START_HOUR)} → {hh(DAY_START_HOUR)}</div>
-            </div>
-            <div className="row-form" style={{ gap: '0.4rem' }}>
-              {toVerify.length > 1 && (
-                <button className="btn row-btn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
-                  ✓ Verify all {toVerify.length}
-                </button>
-              )}
-              {toApprove.length > 1 && (
-                <button className="btn row-btn" disabled={busy === 'bulk'} onClick={() => onActMany(toApprove, 'approved')}>
-                  ✓ Approve all {toApprove.length}
-                </button>
-              )}
-            </div>
+          <div className="op-job-title">{job?.name ?? 'Work'}</div>
+          <div className="tag-section-title">
+            Photo evidence (from time {hh(DAY_START_HOUR)} → {hh(DAY_START_HOUR)})
           </div>
-
-          <div className="tag-section-title">Photo evidence</div>
           <div className="board-scroll">
             <table className="table op-tl-table">
               <thead>
@@ -962,16 +941,15 @@ function GroupModal({
                           <td className="right nowrap">{amountFor(e.job_id, e.quantity).toFixed(2)}</td>
                           <td>
                             {photo ? (
-                              <a
+                              <button
+                                type="button"
                                 className="op-photo-link"
-                                href={photo}
-                                target="_blank"
-                                rel="noreferrer"
-                                title="Open the photo"
-                                aria-label="Open the photo"
+                                title="View the photo"
+                                aria-label="View the photo"
+                                onClick={() => setPhotoView(photo)}
                               >
                                 📷
-                              </a>
+                              </button>
                             ) : (
                               <span className="muted">—</span>
                             )}
@@ -1009,34 +987,105 @@ function GroupModal({
           </div>
         </div>
 
-        {/* The calculation — the piece rate line by line, then the total. */}
+        {/* Contract info — what the contract pays, count by count. */}
         <div className="tag-section op-rec-sec">
-          <div className="tag-section-title">The calculation</div>
+          <div className="tag-section-title">Contract info</div>
           {!rate ? (
             <p className="muted small" style={{ margin: 0 }}>No effective piece rate found for this job.</p>
-          ) : rate.tier2_rate == null ? (
-            <div className="op-calc-line">
-              <span>{groupQty} {job?.unit ?? ''} × RM {Number(rate.rate).toFixed(2)}</span>
-              <span>{(groupQty * Number(rate.rate)).toFixed(2)}</span>
-            </div>
           ) : (
-            <>
-              <div className="op-calc-line">
-                <span>1st–4th of the hour · {t1Units} × RM {Number(rate.rate).toFixed(2)}</span>
-                <span>{(t1Units * Number(rate.rate)).toFixed(2)}</span>
-              </div>
-              <div className="op-calc-line">
-                <span>5th onward · {t2Units} × RM {Number(rate.tier2_rate).toFixed(2)}</span>
-                <span>{(t2Units * Number(rate.tier2_rate)).toFixed(2)}</span>
-              </div>
-            </>
+            <div className="board-scroll">
+              <table className="table op-contract-table">
+                <thead>
+                  <tr>
+                    <th>Piece rate criteria</th>
+                    <th className="right">Qty count</th>
+                    <th className="right">Piece rate (RM)</th>
+                    <th className="right">Total (RM)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rate.tier2_rate == null ? (
+                    <tr>
+                      <td>Flat rate · {job?.unit ?? 'unit'}</td>
+                      <td className="right">{groupQty}</td>
+                      <td className="right">{Number(rate.rate).toFixed(2)}</td>
+                      <td className="right">{(groupQty * Number(rate.rate)).toFixed(2)}</td>
+                    </tr>
+                  ) : (
+                    <>
+                      <tr>
+                        <td>1st–4th unit of the hour</td>
+                        <td className="right">{t1Units}</td>
+                        <td className="right">{Number(rate.rate).toFixed(2)}</td>
+                        <td className="right">{(t1Units * Number(rate.rate)).toFixed(2)}</td>
+                      </tr>
+                      <tr>
+                        <td>5th unit onward</td>
+                        <td className="right">{t2Units}</td>
+                        <td className="right">{Number(rate.tier2_rate).toFixed(2)}</td>
+                        <td className="right">{(t2Units * Number(rate.tier2_rate)).toFixed(2)}</td>
+                      </tr>
+                    </>
+                  )}
+                  <tr className="total-row">
+                    <td colSpan={3}>Total amount</td>
+                    <td className="right">{groupAmount.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           )}
-          <div className="op-calc-line total">
-            <span>Total amount</span>
-            <span>RM {groupAmount.toFixed(2)}</span>
+        </div>
+
+        {/* Who has signed this record off — stamped entry by entry, read
+            here as one line each. */}
+        <div className="tag-section op-rec-sec">
+          <div className="tag-section-title">Sign-off</div>
+          <div className="op-calc-line">
+            <span>Verified by</span>
+            <span>{verifiedBy ?? '—'}</span>
+          </div>
+          <div className="op-calc-line">
+            <span>Approved by</span>
+            <span>{approvedBy ?? '—'}</span>
           </div>
         </div>
+
+        {/* The whole record signed off in one press — same access rules as
+            the per-entry buttons, covering every entry that is ready. */}
+        {(toVerify.length > 0 || toApprove.length > 0) && (
+          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+            {toVerify.length > 0 && (
+              <button className="btn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
+                ✓ Verify record
+              </button>
+            )}
+            {toApprove.length > 0 && (
+              <button className="btn" disabled={busy === 'bulk'} onClick={() => onActMany(toApprove, 'approved')}>
+                ✓ Approve record
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      {photoView && (
+        <div className="op-lightbox" onClick={() => setPhotoView(null)}>
+          <button
+            type="button"
+            className="modal-close"
+            onClick={() => setPhotoView(null)}
+            aria-label="Close the photo"
+          >
+            ×
+          </button>
+          {photoView.toLowerCase().includes('.pdf') ? (
+            <iframe src={photoView} title="Attached document" onClick={(e) => e.stopPropagation()} />
+          ) : (
+            <img src={photoView} alt="Photo evidence" onClick={(e) => e.stopPropagation()} />
+          )}
+        </div>
+      )}
     </div>
   )
 }

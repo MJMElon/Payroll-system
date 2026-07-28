@@ -1548,3 +1548,19 @@ $$;
 
 revoke all on function public.set_my_details(text, text) from public;
 grant execute on function public.set_my_details(text, text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- The station rungs were seeded with data-entry alone, so nobody at station
+-- level could verify or approve anything and the mobile record screen showed
+-- no buttons at all. The intended shape is: the assistant station head
+-- verifies, and the station head verifies and gives the final approval.
+--
+-- Guarded on the tag still being exactly what the seed left ('{data-entry}')
+-- so a tag anybody has since edited is never overwritten — including one
+-- where these were deliberately unticked.
+-- ---------------------------------------------------------------------------
+update public.grades set capabilities = '{data-entry,verify}'
+  where name = 'Assistant Station Head' and capabilities = '{data-entry}';
+
+update public.grades set capabilities = '{data-entry,verify,approve}'
+  where name = 'Station Head' and capabilities = '{data-entry}';
