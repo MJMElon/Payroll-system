@@ -905,7 +905,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: #fff; border-radius: 16px; padding: 1rem;
   display: flex; flex-direction: column; gap: 0.5rem; width: 100%;
   box-shadow: 0 18px 40px rgba(10, 30, 20, 0.35);
+  /* A long list must scroll INSIDE the sheet — the phone frame clips
+     anything taller, so the buttons would otherwise be unreachable. */
+  max-height: 100%; overflow-y: auto;
 }
+.mob-modal .mob-row { flex: none; }
+/* A lane that only reports, never takes a drop. */
+.mob-lane.static { border-style: solid; border-color: #eceff3; background: #f8fafb; }
 
 /* An entry row inside a My work card that is itself tappable. */
 .mob-plainbtn {

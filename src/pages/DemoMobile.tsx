@@ -41,6 +41,16 @@ type Tab = 'performance' | 'mywork' | 'record' | 'team' | 'profile'
  */
 const ADMIN_TIER_ORDER = 1
 
+/**
+ * Nothing in the schema marks a tier as "runs the system, not the floor",
+ * and position alone cannot tell when there is more than one such rung. So
+ * alongside the structural tests (the super-admin rung, and holding
+ * "change other users' settings") these known names are excluded from the
+ * team chart. It is a closed list of existing tiers, not a rule new tiers
+ * have to be added to — anything else appears on its own.
+ */
+const ADMIN_TIER_NAMES = /^(admin|administrator|management)$/i
+
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
 // A tiered piece rate (e.g. cage tipping) pays Tier 1 for the first N units
@@ -3282,6 +3292,9 @@ function TeamTab({
   // Which lane the "Add name" popup is filling: its tier and its team.
   const [adding, setAdding] = useState<{ grade: Grade; teamId: string | null } | null>(null)
   const [teams, setTeams] = useState<Team[]>([])
+  // Above station level you cover several stations, so the tab opens on the
+  // list of them and one is picked to look at.
+  const [pickedStation, setPickedStation] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [overGrade, setOverGrade] = useState<string | null>(null)
@@ -3343,7 +3356,9 @@ function TeamTab({
   // admin rung, and holding "change other users' settings", which the tag
   // editor only ever hands to management-level tags.
   const isAdminTier = (g: Grade) =>
-    g.sort_order === ADMIN_TIER_ORDER || (g.capabilities ?? []).includes('user-access')
+    g.sort_order === ADMIN_TIER_ORDER ||
+    (g.capabilities ?? []).includes('user-access') ||
+    ADMIN_TIER_NAMES.test(g.name.trim())
   const operatingTiers = grades
     .filter((g) => !isAdminTier(g))
     .sort((a, b) => a.sort_order - b.sort_order)
@@ -3402,20 +3417,43 @@ function TeamTab({
    * With only one rung below (nothing can lead anything) it stays a plain
    * set of lanes. All read off position — no tier is named in code.
    */
-  const teamLeaderTier = nextBelow
+  // With three or more rungs under you, the first belongs to whoever heads
+  // the station and teams are led from the rung under THAT. With two, you
+  // head the station yourself and the rung below leads the teams.
+  const hasHeadRow = lowerTiers.length > 2
+  const headTier = hasHeadRow ? lowerTiers[0] ?? null : null
+  const teamLeaderTier = hasHeadRow ? lowerTiers[1] ?? null : lowerTiers[0] ?? null
   // Running teams is a grant too — the same tag setting that allows making
   // one. Without it the board is the flat set of lanes.
   const canCreateTeam = effectiveCapabilities(tier).includes('team-create')
   const runsTeams = canCreateTeam && lowerTiers.length > 1 && teamLeaderTier != null
 
+  // The stations this person covers. With exactly one you go straight to
+  // its board; with several the tab opens on the list.
+  const myStations =
+    myStationIds.length > 0 ? stations.filter((st) => myStationIds.includes(st.id)) : stations
+  const activeStation =
+    myStations.length === 1
+      ? myStations[0]
+      : myStations.find((st) => st.id === pickedStation) ?? null
+  const atStation = (p: Profile) => {
+    if (!activeStation) return false
+    const ids = p.station_ids && p.station_ids.length > 0
+      ? p.station_ids
+      : p.station_id ? [p.station_id] : []
+    return ids.includes(activeStation.id)
+  }
+  // Whoever heads the station being looked at — only shown when that is
+  // somebody other than the reader.
+  const stationHeads =
+    headTier && activeStation
+      ? people.filter((p) => p.grade_id === headTier.id && atStation(p))
+      : []
+
   // Teams are real rows now, so a team exists the moment it is named —
-  // before anybody is in it. Mine are the ones at my station.
+  // before anybody is in it.
   const myTeams = teams
-    .filter(
-      (t) =>
-        (t.station_id != null && myStationIds.includes(t.station_id)) ||
-        t.created_by === profile?.id,
-    )
+    .filter((t) => (activeStation ? t.station_id === activeStation.id : false))
     .sort((x, y) => x.sort_order - y.sort_order)
   const teamColumns = runsTeams
     ? myTeams.map((t) => ({
@@ -3425,11 +3463,22 @@ function TeamTab({
         members: people.filter((p) => p.team_id === t.id),
       }))
     : []
-  // Under me but in no team — a freshly claimed sign up, most often.
-  const looseMembers = runsTeams ? myTeam.filter((p) => !p.team_id) : myTeam
-  // Every rung under me shows in every column, empty or not, so there is
-  // always somewhere to put the next person.
-  const memberTiers = lowerTiers
+  // At this station, under me, and in no team — a freshly claimed sign up,
+  // most often.
+  const looseMembers = runsTeams
+    ? people.filter(
+        (p) =>
+          !p.team_id &&
+          atStation(p) &&
+          tier != null &&
+          (grades.find((g) => g.id === p.grade_id)?.sort_order ?? 0) > tier.sort_order,
+      )
+    : myTeam
+  // Every rung from the team leader down shows in every column, empty or
+  // not, so there is always somewhere to put the next person.
+  const memberTiers = teamLeaderTier
+    ? lowerTiers.filter((g) => g.sort_order >= teamLeaderTier.sort_order)
+    : lowerTiers
 
   /**
    * Pull a new sign up into my team. They keep the tier they signed up on,
@@ -3772,9 +3821,51 @@ function TeamTab({
             )}
           </div>
           <div className="mob-chart-where">
-            <span className="mob-chart-station">{myStationName}</span>
-            <span className="mob-station-meta">{myTeamName}</span>
+            {activeStation ? (
+              <>
+                {myStations.length > 1 && (
+                  <button className="mob-back" onClick={() => setPickedStation(null)}>‹ Stations</button>
+                )}
+                <span className="mob-chart-station">{activeStation.name}</span>
+              </>
+            ) : (
+              <span className="mob-chart-station">{myStationName}</span>
+            )}
+            {!headTier && <span className="mob-station-meta">{myTeamName}</span>}
           </div>
+
+          {/* Above station level the tab opens on the stations covered —
+              pick one to see its head, its teams and their people. */}
+          {!activeStation && !loading && (
+            <>
+              {myStations.length === 0 && (
+                <div className="mob-sub">No stations tagged to you yet.</div>
+              )}
+              {myStations.map((st) => {
+                const heads = headTier
+                  ? people.filter((p) => {
+                      const ids = p.station_ids && p.station_ids.length > 0
+                        ? p.station_ids
+                        : p.station_id ? [p.station_id] : []
+                      return p.grade_id === headTier.id && ids.includes(st.id)
+                    })
+                  : []
+                const count = teams.filter((t) => t.station_id === st.id).length
+                return (
+                  <button className="mob-lineitem" key={st.id} onClick={() => setPickedStation(st.id)}>
+                    <span>
+                      <span className="mob-person-name">{st.name}</span>
+                      <span className="mob-station-meta" style={{ display: 'block' }}>
+                        {heads.length > 0 ? heads.map(profileName).join(', ') : 'No head yet'}
+                        {' · '}{count} team{count === 1 ? '' : 's'}
+                      </span>
+                    </span>
+                    <span className="mob-caret">›</span>
+                  </button>
+                )
+              })}
+            </>
+          )}
 
           {loading ? (
             <div className="mob-sub">Loading…</div>
@@ -3812,18 +3903,30 @@ function TeamTab({
                 </div>
               )}
 
-              {canManageTeam && lowerTiers.length > 0 && (
-                <div className="mob-sub">
-                  Drag a member onto their real tier
-                  {nextBelow ? ` — you can set them as high as ${nextBelow.name}` : ''}.
-                </div>
-              )}
-
               {/* Below you. One column per team — swipe, or step with the
                   arrows — and a plain set of lanes when teams are not run
                   from this tier. */}
-              {runsTeams ? (
+              {activeStation && (runsTeams ? (
                 <>
+                  {/* Who heads this station, when that is not the reader. */}
+                  {headTier && (
+                    <div className="mob-lane static">
+                      <div className="mob-lane-head">
+                        <span className={`tag-dot dot-${headTier.color}`} aria-hidden="true" />
+                        <span className="mob-lane-name">{headTier.name}</span>
+                      </div>
+                      {stationHeads.length === 0 ? (
+                        <div className="mob-lane-empty">Nobody yet</div>
+                      ) : (
+                        stationHeads.map((p) => (
+                          <div className="mob-member" key={p.id}>
+                            <span className="mob-person-name">{profileName(p)}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
                   {draftName != null && (
                     <div className="mob-newteam">
                       <input
@@ -3907,7 +4010,7 @@ function TeamTab({
                   if (!canManageTeam && members.length === 0) return null
                   return <Lane key={g.id} grade={g} team={undefined} members={members} />
                 })
-              )}
+              ))}
 
             </>
           )}
