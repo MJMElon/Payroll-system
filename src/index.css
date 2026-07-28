@@ -1657,12 +1657,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .wm-station-box.shut .wm-station-head { padding-bottom: 0; border-bottom: none; }
 .wm-station-box.shut { width: auto; min-width: 0; }
-.wm-station-caret { color: var(--accent-strong); font-size: 0.8rem; line-height: 1; }
 /* Sits beside the name, not at the far end: a wide station scrolls
    sideways, and a control you have to scroll to find is no control. */
 .wm-station-toggle {
-  color: var(--muted); font-size: 0.72rem; font-weight: 700;
-  border: 1px solid var(--border); border-radius: 999px; padding: 0.1rem 0.55rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.55rem; height: 1.55rem; flex: none;
+  color: var(--muted); border: 1px solid var(--border); border-radius: 8px;
   background: var(--surface);
 }
 .wm-station-head:hover .wm-station-toggle { border-color: var(--accent-strong); color: var(--accent-strong); }

@@ -847,11 +847,37 @@ export default function WorkerManagement() {
           type="button"
           className="wm-station-head"
           aria-expanded={open}
+          aria-label={`${open ? 'Collapse' : 'Expand'} ${station?.name ?? 'No station yet'}`}
+          title={open ? 'Collapse' : 'Expand'}
           onClick={() => setOpenStations((m) => ({ ...m, [key]: !open }))}
         >
-          <span className="wm-station-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
           <span className="wm-station-name">{station?.name ?? 'No station yet'}</span>
-          <span className="wm-station-toggle">{open ? 'Hide' : 'Show'}</span>
+          {/* Chevrons pointing out to open, in to close — the symbol says
+              it without a word to read. */}
+          <span className="wm-station-toggle" aria-hidden="true">
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              {open ? (
+                <>
+                  <path d="M4 7l5 5-5 5" />
+                  <path d="M20 7l-5 5 5 5" />
+                </>
+              ) : (
+                <>
+                  <path d="M9 7l-5 5 5 5" />
+                  <path d="M15 7l5 5-5 5" />
+                </>
+              )}
+            </svg>
+          </span>
         </button>
         {open && (
           <>
