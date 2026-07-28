@@ -502,6 +502,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Icon action buttons sitting together in a table's right-hand cell */
 .row-actions { display: inline-flex; gap: 0.35rem; justify-content: flex-end; }
 
+/* Editing in place: the cell becomes the field, sized to sit in the row
+   without pushing it taller than its neighbours. */
+.row-input {
+  width: 100%; max-width: 320px;
+  padding: 0.3rem 0.5rem; font-size: 0.9rem;
+}
+
 /* Square module tiles on the main page */
 .module-grid { display: flex; gap: 1rem; flex-wrap: wrap; }
 .module-tile {
