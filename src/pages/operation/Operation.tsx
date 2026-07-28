@@ -55,8 +55,6 @@ const RAIL_KEY = 'mjm-op-rail-open'
 // tells the two apart.
 type Tab = 'open' | 'approved' | 'rejected'
 
-const RM = (n: number) => `RM ${n.toFixed(2)}`
-
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 /** DD/MMM/YYYY — read the same way everywhere, in any locale. */
@@ -391,11 +389,6 @@ export default function Operation() {
     .map((s) => ({ station: s, rows: buildGroups(visible.filter((e) => e.station_id === s.id)) }))
     .filter((b) => oneStation || b.rows.length > 0)
 
-  const totals = {
-    rows: stationBlocks.reduce((n, b) => n + b.rows.length, 0),
-    amount: visible.reduce((n, e) => n + amountFor(e.job_id, e.quantity), 0),
-  }
-
   /** The Piece Rate cell: one number — unless the rate is tiered AND the
    *  5th unit was reached, in which case both prices show with the units
    *  each one paid for. */
@@ -728,17 +721,10 @@ export default function Operation() {
 
             {/* Adding work lives under the first tab — a new entry lands
                 there, waiting to be verified. */}
-            {tab === 'open' ? (
-              <div className="row-form spread op-tabbar">
-                <span className="muted small">
-                  {totals.rows} row{totals.rows === 1 ? '' : 's'} · {RM(totals.amount)}
-                </span>
+            {tab === 'open' && (
+              <div className="row-form op-tabbar" style={{ justifyContent: 'flex-end' }}>
                 <Link to="/operation/add" className="btn">+ Add Job Record</Link>
               </div>
-            ) : (
-              <p className="muted small" style={{ margin: 0 }}>
-                {totals.rows} row{totals.rows === 1 ? '' : 's'} · {RM(totals.amount)}
-              </p>
             )}
 
             {/* One station picked: the rail already names it, so the block
@@ -749,7 +735,6 @@ export default function Operation() {
                 ? <p className="muted">Nothing here for these filters.</p>
                 : stationBlocks.map(({ station, rows }) => {
                     const shut = collapsed.has(station.id)
-                    const amount = rows.reduce((n, g) => n + groupAmount(g), 0)
                     return (
                       <section className="op-group" key={station.id}>
                         <div className="op-group-head">
@@ -770,10 +755,7 @@ export default function Operation() {
                             <span className="op-group-name">{station.name}</span>
                             {myStationIds.includes(station.id) && <span className="you-chip">you</span>}
                           </button>
-                          <span className="op-group-meta">
-                            {rows.length} row{rows.length === 1 ? '' : 's'}
-                            <strong>{RM(amount)}</strong>
-                          </span>
+
                         </div>
                         {!shut && groupRows(rows)}
                       </section>
@@ -881,6 +863,14 @@ function GroupModal({
   const toVerify = group.entries.filter((e) => actionFor(e) === 'verified')
   const toApprove = group.entries.filter((e) => actionFor(e) === 'approved')
 
+  // Every distinct name that has stamped an entry in this record.
+  const names = (field: 'verified_by' | 'approved_by') => {
+    const list = [...new Set(group.entries.map((e) => shortWho(e[field])).filter(Boolean))] as string[]
+    return list.length ? list.join(', ') : null
+  }
+  const verifiedBy = names('verified_by')
+  const approvedBy = names('approved_by')
+
   const timeOf = (e: ProductionEntry) =>
     new Date(e.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
 
@@ -908,26 +898,10 @@ function GroupModal({
         </div>
 
         <div className="tag-section op-rec-sec">
-          <div className="row-form spread" style={{ gap: '0.4rem' }}>
-            <div>
-              <div className="op-job-title">{job?.name ?? 'Work'}</div>
-              <div className="tag-section-title">The day — {hh(DAY_START_HOUR)} → {hh(DAY_START_HOUR)}</div>
-            </div>
-            <div className="row-form" style={{ gap: '0.4rem' }}>
-              {toVerify.length > 1 && (
-                <button className="btn row-btn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
-                  ✓ Verify all {toVerify.length}
-                </button>
-              )}
-              {toApprove.length > 1 && (
-                <button className="btn row-btn" disabled={busy === 'bulk'} onClick={() => onActMany(toApprove, 'approved')}>
-                  ✓ Approve all {toApprove.length}
-                </button>
-              )}
-            </div>
+          <div className="op-job-title">{job?.name ?? 'Work'}</div>
+          <div className="tag-section-title">
+            Photo evidence (from time {hh(DAY_START_HOUR)} → {hh(DAY_START_HOUR)})
           </div>
-
-          <div className="tag-section-title">Photo evidence</div>
           <div className="board-scroll">
             <table className="table op-tl-table">
               <thead>
@@ -1036,6 +1010,37 @@ function GroupModal({
             <span>RM {groupAmount.toFixed(2)}</span>
           </div>
         </div>
+
+        {/* Who has signed this record off — stamped entry by entry, read
+            here as one line each. */}
+        <div className="tag-section op-rec-sec">
+          <div className="tag-section-title">Sign-off</div>
+          <div className="op-calc-line">
+            <span>Verified by</span>
+            <span>{verifiedBy ?? '—'}</span>
+          </div>
+          <div className="op-calc-line">
+            <span>Approved by</span>
+            <span>{approvedBy ?? '—'}</span>
+          </div>
+        </div>
+
+        {/* The whole record signed off in one press — same access rules as
+            the per-entry buttons, covering every entry that is ready. */}
+        {(toVerify.length > 0 || toApprove.length > 0) && (
+          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+            {toVerify.length > 0 && (
+              <button className="btn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
+                ✓ Verify record
+              </button>
+            )}
+            {toApprove.length > 0 && (
+              <button className="btn" disabled={busy === 'bulk'} onClick={() => onActMany(toApprove, 'approved')}>
+                ✓ Approve record
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
