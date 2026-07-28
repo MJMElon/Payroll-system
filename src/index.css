@@ -925,6 +925,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   max-height: 100%; overflow-y: auto;
 }
 .mob-modal .mob-row { flex: none; }
+/* The sheet scrolls, so its heading — and the X on it — stay put. */
+.mob-modal > .mob-card-label:first-child {
+  position: sticky; top: -1rem; z-index: 1;
+  background: #fff; padding: 0.55rem 0 0.35rem; margin-top: -0.55rem;
+}
+.mob-card-label .mob-icon-btn.corner.close { font-size: 0.8rem; }
 /* A lane that only reports, never takes a drop. */
 .mob-lane.static { border-style: solid; border-color: #eceff3; background: #f8fafb; }
 

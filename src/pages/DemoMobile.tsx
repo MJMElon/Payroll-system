@@ -4062,7 +4062,17 @@ function TeamTab({
       {adding && (
         <div className="mob-modal-wrap" role="dialog" aria-modal="true">
           <div className="mob-modal">
-            <div className="mob-card-label">Pending Allocation</div>
+            <div className="mob-card-label">
+              <span>Pending Allocation</span>
+              <button
+                className="mob-icon-btn corner close"
+                onClick={() => setAdding(null)}
+                title="Close"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
             <div className="mob-sub">Add to {adding.grade.name}</div>
             {pending.length === 0 ? (
               <div className="mob-sub">Nobody is waiting for a team.</div>
