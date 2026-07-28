@@ -3623,8 +3623,10 @@ function TeamTab({
         supervisor_id: profile.id,
         grade_id: target.grade.id,
         team_id: team?.id ?? null,
-        station_ids: profile.station_ids ?? [],
-        station_id: profile.station_ids?.[0] ?? profile.station_id ?? null,
+        // The station being looked at, not the reader's own — above
+        // station level those are not the same place.
+        station_ids: activeStation ? [activeStation.id] : profile.station_ids ?? [],
+        station_id: activeStation?.id ?? profile.station_ids?.[0] ?? profile.station_id ?? null,
         tags_confirmed: true,
       })
       .eq('id', p.id)
