@@ -25,7 +25,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { useOverlayClose } from '../../lib/useOverlayClose'
 import { useWideShell } from '../../lib/useWideShell'
-import { tagClass } from '../../lib/tags'
+import { effectiveCapabilities, tagClass } from '../../lib/tags'
 import {
   supabase,
   todayISO,
@@ -133,9 +133,9 @@ function groupKeyOf(e: ProductionEntry) {
 
 export default function Operation() {
   const { profile } = useAuth()
-  // Same reach as Team Manage: the shell widens to the window with the
-  // default gutter, so the rail sits out at the same left edge.
-  const wideStyle = useWideShell()
+  // Widened like Team Manage, but with a broader gutter so the page
+  // keeps clear margins at both edges.
+  const wideStyle = useWideShell(56)
   const [stations, setStations] = useState<Station[]>([])
   const [grades, setGrades] = useState<Grade[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
@@ -265,12 +265,18 @@ export default function Operation() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, from, to, loading])
 
-  // Approval rights: same per-user grant as the mobile Approvals screen.
+  // Sign-off rights follow the tag's capabilities from Settings (Work
+  // entry setting: Verify / Approve) — tier 1 holds every capability by
+  // rule. Admins and managers can approve regardless, and the per-user
+  // mobile grant still counts.
   const myGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
+  const myCaps = effectiveCapabilities(myGrade)
   const approvalLevel: 'verify' | 'approve' | null =
-    profile?.role === 'admin' || myGrade?.sort_order === 1
+    profile?.role === 'admin' || profile?.role === 'manager' || myCaps.includes('approve')
       ? 'approve'
-      : profile?.mobile_approval ?? null
+      : myCaps.includes('verify')
+        ? 'verify'
+        : profile?.mobile_approval ?? null
   const canManage =
     profile?.role === 'admin' || profile?.role === 'manager' || myGrade?.sort_order === 1
 
@@ -354,12 +360,6 @@ export default function Operation() {
   }
   const inScope = entries.filter(matchesSearch)
   const visible = inScope.filter(inTab)
-
-  const tabCounts = {
-    open: inScope.filter((e) => ['pending', 'verified'].includes(stat(e))).length,
-    approved: inScope.filter((e) => stat(e) === 'approved').length,
-    rejected: inScope.filter((e) => stat(e) === 'rejected').length,
-  }
 
   /** Fold entries into one row per worker + job + day, submissions kept in
    *  the order they were sent. */
@@ -745,7 +745,10 @@ export default function Operation() {
 
         <div className="sidebar-content stack">
           <div className="card stack">
-            <h3>Work Record</h3>
+            <h3>
+              Work Record
+              {oneStation && <span className="op-h3-station"> — {stationName(scope)}</span>}
+            </h3>
 
             {/* Filters sit above the tabs: they hold whichever tab is open. */}
             <form className="row-form op-filters" onSubmit={applyFilters}>
@@ -775,21 +778,21 @@ export default function Operation() {
                 className={`tab ${tab === 'open' ? 'active' : ''}`}
                 onClick={() => setTab('open')}
               >
-                Pending Verify {tabCounts.open > 0 && <span className="tab-count">{tabCounts.open}</span>}
+                Pending Verify
               </button>
               <button
                 type="button"
                 className={`tab ${tab === 'approved' ? 'active' : ''}`}
                 onClick={() => setTab('approved')}
               >
-                Approved {tabCounts.approved > 0 && <span className="tab-count">{tabCounts.approved}</span>}
+                Approved
               </button>
               <button
                 type="button"
                 className={`tab ${tab === 'rejected' ? 'active' : ''}`}
                 onClick={() => setTab('rejected')}
               >
-                Rejected {tabCounts.rejected > 0 && <span className="tab-count">{tabCounts.rejected}</span>}
+                Rejected
               </button>
             </div>
 
@@ -960,12 +963,9 @@ function GroupModal({
   const timeOf = (e: ProductionEntry) =>
     new Date(e.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
 
-  const Line = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <div className="op-line">
-      <span className="op-line-label">{label}</span>
-      <span className="op-line-value">{children}</span>
-    </div>
-  )
+  // What the day's count is worth, price line by price line.
+  const t1Units = group.entries.reduce((n, e) => n + Math.min(e.quantity, TIER1_UNIT_CAP), 0)
+  const t2Units = group.entries.reduce((n, e) => n + Math.max(0, e.quantity - TIER1_UNIT_CAP), 0)
 
   return (
     <div className="modal-overlay" {...overlay}>
@@ -975,29 +975,25 @@ function GroupModal({
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
-        <div className="tag-section">
-          <div className="tag-section-title">The work</div>
-          <Line label="Date">{fmtDate(group.date)}</Line>
-          <Line label="Station tag">{stationName}</Line>
-          <Line label="Tier tag">
-            {tier ? <span className={tagClass(tier.color)}>{tier.name}</span> : '—'}
-          </Line>
-          <Line label="Name">{workerName}</Line>
-          <Line label="Job">{job?.name ?? 'Work'}</Line>
-          <Line label="Qty">{groupQty} {job?.unit ?? ''}</Line>
-          <Line label="Piece rate (RM)">
-            {!rate
-              ? '—'
-              : rate.tier2_rate == null
-                ? Number(rate.rate).toFixed(2)
-                : `1st–4th ${Number(rate.rate).toFixed(2)} · 5th+ ${Number(rate.tier2_rate).toFixed(2)}`}
-          </Line>
-          <Line label="Total amount (RM)"><strong>{groupAmount.toFixed(2)}</strong></Line>
+        {/* Who did the work: the tag and the name carry the card, the date
+            sits at the right, the station reads underneath. */}
+        <div className="op-head">
+          <div className="op-head-main">
+            <div className="op-head-name">
+              {tier && <span className={tagClass(tier.color)}>{tier.name}</span>}
+              <strong>{workerName}</strong>
+            </div>
+            <div className="op-head-station">{stationName}</div>
+          </div>
+          <div className="op-head-date">{fmtDate(group.date)}</div>
         </div>
 
         <div className="tag-section">
           <div className="row-form spread" style={{ gap: '0.4rem' }}>
-            <div className="tag-section-title">The day — {hh(DAY_START_HOUR)} → {hh(DAY_START_HOUR)}</div>
+            <div>
+              <div className="op-job-title">{job?.name ?? 'Work'}</div>
+              <div className="tag-section-title">The day — {hh(DAY_START_HOUR)} → {hh(DAY_START_HOUR)}</div>
+            </div>
             <div className="row-form" style={{ gap: '0.4rem' }}>
               {toVerify.length > 1 && (
                 <button className="btn row-btn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
@@ -1086,6 +1082,34 @@ function GroupModal({
                 )}
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* The calculation — the piece rate line by line, then the total. */}
+        <div className="tag-section">
+          <div className="tag-section-title">The calculation</div>
+          {!rate ? (
+            <p className="muted small" style={{ margin: 0 }}>No effective piece rate found for this job.</p>
+          ) : rate.tier2_rate == null ? (
+            <div className="op-calc-line">
+              <span>{groupQty} {job?.unit ?? ''} × RM {Number(rate.rate).toFixed(2)}</span>
+              <span>{(groupQty * Number(rate.rate)).toFixed(2)}</span>
+            </div>
+          ) : (
+            <>
+              <div className="op-calc-line">
+                <span>1st–4th of the hour · {t1Units} × RM {Number(rate.rate).toFixed(2)}</span>
+                <span>{(t1Units * Number(rate.rate)).toFixed(2)}</span>
+              </div>
+              <div className="op-calc-line">
+                <span>5th onward · {t2Units} × RM {Number(rate.tier2_rate).toFixed(2)}</span>
+                <span>{(t2Units * Number(rate.tier2_rate)).toFixed(2)}</span>
+              </div>
+            </>
+          )}
+          <div className="op-calc-line total">
+            <span>Total amount</span>
+            <span>RM {groupAmount.toFixed(2)}</span>
           </div>
         </div>
       </div>
