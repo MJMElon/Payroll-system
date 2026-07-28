@@ -1333,3 +1333,22 @@ $$;
 
 revoke all on function public.set_my_avatar(text) from public;
 grant execute on function public.set_my_avatar(text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Working a team is a GRANT, not a rung. Until now the mobile Team tab
+-- offered Pending Allocation and the tier board to anyone sitting above the
+-- bottom tier, which handed an Operator the same controls as a Station Head.
+-- "team-assign" makes it something you tick per tag instead.
+--
+-- Backfilled onto every tier that is above the bottom rung, so behaviour is
+-- unchanged on the first run and the tags can then be trimmed to whoever
+-- should really hold it.
+-- ---------------------------------------------------------------------------
+update public.grades set capabilities = capabilities || '{team-assign}'
+  where sort_order < (select max(sort_order) from public.grades)
+    and not 'team-assign' = any(capabilities);
+
+-- Re-assert the super admin's full set, now including team-assign.
+update public.grades set capabilities =
+  '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,worker-edit,worker-salary,station-create}'
+  where sort_order = 1;

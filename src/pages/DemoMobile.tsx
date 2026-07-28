@@ -3221,7 +3221,11 @@ function TeamTab({
     .sort((a, b) => a.sort_order - b.sort_order)[0] ?? null
 
   const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
-  const isLeader = tier !== null && grades.length > 0 && tier.sort_order < bottomTier
+  // Who may work a team is a SETTING, not a position on the ladder. Sitting
+  // above the bottom tier no longer implies it — the tag has to grant
+  // "Claim Sign Ups & Set Tier" (Settings → Tags management). Everyone
+  // still sees the chart; only the two working sections are gated.
+  const canManageTeam = effectiveCapabilities(tier).includes('team-assign')
 
   // The highest tier this leader may hand out — exactly one rung below their
   // own. Everything at or above their own tier is off limits.
@@ -3344,7 +3348,7 @@ function TeamTab({
         {/* 1 — Pending Allocation: the name, and one icon to claim them.
             The section label is deliberately a small caps rule so it never
             reads as one of the names underneath it. */}
-        {isLeader && (
+        {canManageTeam && (
           <div className="mob-card">
             <div className="mob-card-label">
               Pending Allocation{' '}
@@ -3411,8 +3415,11 @@ function TeamTab({
           )}
         </div>
 
-        {/* 3 — the tier lanes: drag each member to what they actually do. */}
-        {isLeader ? (
+        {/* 3 — the tier lanes: drag each member to what they actually do.
+            Without the grant there is nothing to work, so the section is
+            absent rather than present-and-empty. Anyone who does have
+            people under them still sees who they are. */}
+        {canManageTeam ? (
           <div className="mob-card">
             <div className="mob-card-label">
               Team members <span className="mob-chip">{myTeam.length}</span>
@@ -3504,12 +3511,27 @@ function TeamTab({
               <div className="mob-sub">Nobody in your team yet — claim someone from Pending Allocation.</div>
             )}
           </div>
-        ) : (
+        ) : myTeam.length > 0 ? (
           <div className="mob-card">
-            <div className="mob-card-label">Team members</div>
-            <div className="mob-sub">Nobody reports to you.</div>
+            <div className="mob-card-label">
+              Team members <span className="mob-chip">{myTeam.length}</span>
+            </div>
+            {myTeam.map((p) => {
+              const g = grades.find((x) => x.id === p.grade_id) ?? null
+              return (
+                <div className="mob-row" key={p.id}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
+                    <span>
+                      <span className="mob-person-name">{profileName(p)}</span>
+                      <span className="mob-station-meta">{g?.name ?? '—'}</span>
+                    </span>
+                  </span>
+                </div>
+              )
+            })}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* The ceiling pop-out — says exactly how high this leader may go. */}
