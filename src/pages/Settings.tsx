@@ -4,41 +4,109 @@ import { useAuth } from '../context/AuthContext'
 import { supabase, type Grade, type Station } from '../lib/supabase'
 import {
   ALL_CAPABILITIES,
+  CAPABILITY_GROUPS,
   CAPABILITY_OPTIONS,
   DEFAULT_MODULES,
+  GROUP_MODULE,
+  MANAGEMENT_ONLY_GROUPS,
+  MODULE_GROUP,
   MODULE_OPTIONS,
-  capabilityLabel,
-  effectiveCapabilities,
   nextTagColor,
   sortCapabilities,
   tagClass,
 } from '../lib/tags'
+import { useOverlayClose } from '../lib/useOverlayClose'
 import { useWideShell } from '../lib/useWideShell'
 
 import AuditLogTab from './settings/AuditLogTab'
 
 type Tab = 'tags' | 'audit'
+/** Which face of a row's pop-out is showing. */
+type Mode = 'view' | 'edit'
+/** Just enough of a Piece Rate work type to say it is holding a station. */
+type StationJob = { id: string; name: string; station_id: string; active: boolean }
+
+/**
+ * Postgres refuses to delete a row something still points at, and reports
+ * it as a raw constraint violation — "violates foreign key constraint
+ * jobs_station_id_fkey on table jobs" tells the user nothing about what
+ * to do. Name what is holding the row instead, and where to go and clear
+ * it. The trailing `on table "x"` is the table doing the holding.
+ */
+const HELD_BY: Record<string, string> = {
+  jobs: 'work types in the Piece Rate module',
+  piece_rates: 'piece rates in the Piece Rate module',
+  production_entries: 'work records in the Operation module',
+  access_profiles: 'people it is tagged to',
+  teams: 'teams in Team Manage',
+  payroll_lines: 'payroll lines',
+  payroll_adjustments: 'payroll adjustments',
+  photo_records: 'photo records',
+}
+
+function deleteError(err: { code?: string; message: string }, what: string): string {
+  if (err.code !== '23503') return err.message
+  const table = /on table "([^"]+)"\s*$/.exec(err.message)?.[1]
+  const holder = (table && HELD_BY[table]) ?? (table ? `records in ${table}` : 'other records')
+  return `${what} is still used by ${holder}, so it cannot be deleted. Remove or move those first, then delete it here.`
+}
+
+/** What tier 1 is for, shown under its name on both faces. */
+const MANAGEMENT_NOTE =
+  'Able to create, delete and do setting of tags for ALL tiers & stations.'
+
+/* Row action icons — shared by the tier tag and station tag tables. */
+const iconProps = {
+  width: 15,
+  height: 15,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+} as const
+
+const EyeIcon = () => (
+  <svg {...iconProps}>
+    <path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+)
+const PencilIcon = () => (
+  <svg {...iconProps}>
+    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+  </svg>
+)
+const TrashIcon = () => (
+  <svg {...iconProps}>
+    <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+  </svg>
+)
 
 export default function Settings() {
   const { profile } = useAuth()
   const [tab, setTab] = useState<Tab>('tags')
-  // Settings holds wide tables — let it use the whole window like the
-  // Payroll and Worker Management pages instead of the narrow page cap.
-  const wideStyle = useWideShell()
+  // Settings reaches past the narrow page cap, but only so far: wide
+  // margins, and a ceiling so the cards stop stretching on a big screen.
+  const wideStyle = useWideShell(96, 1280)
   // The audit log's RLS only answers to admins/managers — showing the tab
   // to anyone else would just render an empty (confusing) table.
   const canAudit = profile?.role === 'admin' || profile?.role === 'manager'
 
   return (
     <div className="stack" style={wideStyle}>
-      <div>
-        <Link to="/" className="small muted backlink">← Back to main page</Link>
+      {/* Way out on the left, title centred over the page. */}
+      <div className="page-head">
+        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
         <h1>Settings</h1>
       </div>
 
       <div className="tabs glass">
         <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
-          Tier &amp; Station Tags setting
+          Tier &amp; Station Tags Setting
         </button>
         {canAudit && (
           <button className={`tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>
@@ -59,24 +127,32 @@ function TagsTab() {
   const { profile } = useAuth()
   const [grades, setGrades] = useState<Grade[]>([])
   const [stations, setStations] = useState<Station[]>([])
+  // Work types point at a station, which is what stops a station tag being
+  // deleted. Loading them lets the page SAY what is in the way, by name.
+  const [jobs, setJobs] = useState<StationJob[]>([])
   const [dragId, setDragId] = useState<string | null>(null)
-  const [editor, setEditor] = useState<'closed' | 'new' | Grade>('closed')
+  // One pop-out per row, opening on either face: `view` is read-only and
+  // closes with the × alone, `edit` has Cancel (back to view) and Save.
+  // A null grade is a tag being created, which has no view to fall back to.
+  const [tagModal, setTagModal] = useState<{ grade: Grade | null; mode: Mode } | null>(null)
   const [addingStation, setAddingStation] = useState(false)
   const [stationName, setStationName] = useState('')
   const [dragStation, setDragStation] = useState<string | null>(null)
-  const [stationEditor, setStationEditor] = useState<Station | null>(null)
+  const [stationModal, setStationModal] = useState<{ station: Station; mode: Mode } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   async function load() {
-    const [g, st] = await Promise.all([
+    const [g, st, j] = await Promise.all([
       supabase.from('grades').select('*').order('sort_order'),
       supabase.from('stations').select('*').order('sort_order'),
+      supabase.from('jobs').select('id, name, station_id, active').order('name'),
     ])
     const err = g.error || st.error
     if (err) setError(err.message)
     setGrades(((g.data ?? []) as Grade[]).sort((a, b) => a.sort_order - b.sort_order))
     setStations(st.data ?? [])
+    setJobs((j.data ?? []) as StationJob[])
     setLoading(false)
   }
 
@@ -84,23 +160,18 @@ function TagsTab() {
     load()
   }, [])
 
-  // Each admin function is granted separately per tier by the super admin
-  // (tier 1): add new tag, move tag tiers, edit tags' settings, manage
-  // stations. Admins and tier 1 always have everything.
+  // Creating tier tags and station tags, and setting what a tier may do,
+  // is Management's alone — tier 1 (or an admin account). It is not a
+  // per-tier function any more, so no capability opens it up.
   const myGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
   const myTier = myGrade?.sort_order ?? null
-  const myCaps = effectiveCapabilities(myGrade)
   const isSuperUser = profile?.role === 'admin' || myTier === 1
-  const canAddTag = isSuperUser || myCaps.includes('tag-add')
-  const canMoveTags = isSuperUser || myCaps.includes('tag-move')
-  const canEditTags = isSuperUser || myCaps.includes('tag-edit')
-  // A granted (non-super) user may only touch tags BELOW their own tier —
-  // they can never promote themselves or change their superiors.
-  const rowEditable = (g: Grade) =>
-    g.sort_order !== 1 && (isSuperUser || (myTier !== null && g.sort_order > myTier))
-  const canManageStations =
-    profile?.role === 'admin' || profile?.role === 'manager' ||
-    myTier === 1 || myCaps.includes('station-create')
+  const canAddTag = isSuperUser
+  const canMoveTags = isSuperUser
+  const canEditTags = isSuperUser
+  // The tier-1 tag itself is the super admin and is never edited away.
+  const rowEditable = (g: Grade) => g.sort_order !== 1 && isSuperUser
+  const canManageStations = isSuperUser
 
   // Drop a dragged tag onto another: reorder locally, then renumber every
   // tier 1..n so tier numbers always run top-down with no gaps.
@@ -129,10 +200,11 @@ function TagsTab() {
   }
 
   async function removeTag(g: Grade) {
-    if (!window.confirm(`Delete tag "${g.name}"? This fails if it is in use.`)) return
+    if (!window.confirm(`Delete tier tag "${g.name}"?`)) return
     const { error } = await supabase.from('grades').delete().eq('id', g.id)
-    if (error) setError(error.message)
-    else load()
+    if (error) return setError(deleteError(error, `Tier tag "${g.name}"`))
+    setError(null)
+    load()
   }
 
   async function addStation(e: FormEvent) {
@@ -166,11 +238,26 @@ function TagsTab() {
     load()
   }
 
+  const jobsAt = (stationId: string) => jobs.filter((j) => j.station_id === stationId)
+
   async function removeStation(st: Station) {
-    if (!window.confirm(`Delete station "${st.name}"? This fails if it is in use.`)) return
+    // Say what is in the way BEFORE asking to confirm — being refused
+    // after saying yes reads as a broken button.
+    const used = jobsAt(st.id)
+    if (used.length > 0) {
+      const names = used.slice(0, 3).map((j) => `"${j.name}"`).join(', ')
+      const rest = used.length > 3 ? ` and ${used.length - 3} more` : ''
+      return setError(
+        `Station "${st.name}" is still used by ${used.length} work type${used.length === 1 ? '' : 's'} ` +
+          `in the Piece Rate module — ${names}${rest}. Clear ${used.length === 1 ? 'it' : 'them'} there first, ` +
+          'then this station can be deleted.',
+      )
+    }
+    if (!window.confirm(`Delete station tag "${st.name}"?`)) return
     const { error } = await supabase.from('stations').delete().eq('id', st.id)
-    if (error) setError(error.message)
-    else load()
+    if (error) return setError(deleteError(error, `Station "${st.name}"`))
+    setError(null)
+    load()
   }
 
   if (loading) return <p className="muted">Loading…</p>
@@ -184,7 +271,9 @@ function TagsTab() {
         <div className="row-form spread">
           <h3>Tier tags</h3>
           {canAddTag && (
-            <button className="btn" onClick={() => setEditor('new')}>+ Add tag</button>
+            <button className="btn" onClick={() => setTagModal({ grade: null, mode: 'edit' })}>
+              + Add tag
+            </button>
           )}
         </div>
 
@@ -194,13 +283,12 @@ function TagsTab() {
               {canMoveTags && <th></th>}
               <th>Tier</th>
               <th>Tag</th>
-              <th>Can do</th>
-              {canEditTags && <th className="right">Actions</th>}
+              <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {grades.length === 0 && (
-              <tr><td colSpan={6} className="muted">No tags yet.</td></tr>
+              <tr><td colSpan={4} className="muted">No tags yet.</td></tr>
             )}
             {grades.map((g) => {
               const isSuper = g.sort_order === 1
@@ -226,33 +314,25 @@ function TagsTab() {
                   )}
                   <td className="muted">{g.sort_order}</td>
                   <td><span className={tagClass(g.color)}>{g.name}</span></td>
-                  <td className="muted small">
-                    {isSuper ? (
-                      <span className="badge off">Super admin — every ability</span>
-                    ) : sortCapabilities(g.capabilities ?? []).length > 0 ? (
-                      sortCapabilities(g.capabilities ?? []).map((c) => (
-                        <span key={c} className="badge off" style={{ marginRight: '0.3rem' }}>
-                          {capabilityLabel(c)}
-                        </span>
-                      ))
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  {canEditTags && (
-                    <td className="right">
+                  <td className="right">
+                    <span className="row-actions">
+                      <button
+                        className="icon-btn sm"
+                        title="View what this tier can see and do"
+                        aria-label={`View access of ${g.name}`}
+                        onClick={() => setTagModal({ grade: g, mode: 'view' })}
+                      >
+                        <EyeIcon />
+                      </button>
                       {editable && (
-                        <span className="row-actions">
+                        <>
                           <button
                             className="icon-btn sm"
                             title="Edit tag"
                             aria-label={`Edit ${g.name}`}
-                            onClick={() => setEditor(g)}
+                            onClick={() => setTagModal({ grade: g, mode: 'edit' })}
                           >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                            </svg>
+                            <PencilIcon />
                           </button>
                           {!isSuper && (
                             <button
@@ -261,18 +341,13 @@ function TagsTab() {
                               aria-label={`Delete ${g.name}`}
                               onClick={() => removeTag(g)}
                             >
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
-                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                                <path d="M10 11v6M14 11v6" />
-                              </svg>
+                              <TrashIcon />
                             </button>
                           )}
-                        </span>
+                        </>
                       )}
-                    </td>
-                  )}
+                    </span>
+                  </td>
                 </tr>
               )
             })}
@@ -314,7 +389,7 @@ function TagsTab() {
               <th>#</th>
               <th>Station</th>
               <th>Requirement</th>
-              {canManageStations && <th className="right">Actions</th>}
+              <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -341,50 +416,75 @@ function TagsTab() {
                     ? `Hourly · min ${st.hourly_min_prev ?? 0} prev hr · max ${st.hourly_target ?? 6}/hr`
                     : '—'}
                 </td>
-                {canManageStations && (
-                  <td className="right">
+                <td className="right">
+                  <span className="row-actions">
                     <button
                       className="icon-btn sm"
-                      title="Edit station"
-                      aria-label={`Edit ${st.name}`}
-                      onClick={() => setStationEditor(st)}
+                      title="View this station's settings"
+                      aria-label={`View ${st.name}`}
+                      onClick={() => setStationModal({ station: st, mode: 'view' })}
                     >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                      </svg>
+                      <EyeIcon />
                     </button>
-                  </td>
-                )}
+                    {canManageStations && (
+                      <>
+                        <button
+                          className="icon-btn sm"
+                          title="Edit station"
+                          aria-label={`Edit ${st.name}`}
+                          onClick={() => setStationModal({ station: st, mode: 'edit' })}
+                        >
+                          <PencilIcon />
+                        </button>
+                        <button
+                          className="icon-btn sm danger"
+                          title="Delete station"
+                          aria-label={`Delete ${st.name}`}
+                          onClick={() => removeStation(st)}
+                        >
+                          <TrashIcon />
+                        </button>
+                      </>
+                    )}
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {stationEditor && (
-        <StationEditModal
-          station={stationEditor}
-          onClose={() => setStationEditor(null)}
+      {stationModal && (
+        <StationModal
+          station={stationModal.station}
+          mode={stationModal.mode}
+          canEdit={canManageStations}
+          usedBy={jobsAt(stationModal.station.id)}
+          onMode={(mode) => setStationModal((s) => (s ? { ...s, mode } : s))}
+          onClose={() => setStationModal(null)}
           onSaved={() => {
-            setStationEditor(null)
+            setStationModal(null)
             load()
-          }}
-          onDelete={async () => {
-            await removeStation(stationEditor)
-            setStationEditor(null)
           }}
         />
       )}
 
-      {editor !== 'closed' && (
-        <TagEditModal
-          grade={editor === 'new' ? null : editor}
+      {tagModal && (
+        <TagModal
+          grade={tagModal.grade}
+          mode={tagModal.mode}
+          canEdit={
+            tagModal.grade
+              ? canEditTags &&
+                (tagModal.grade.sort_order === 1 ? isSuperUser : rowEditable(tagModal.grade))
+              : true
+          }
           nextTier={Math.max(0, ...grades.map((g) => g.sort_order)) + 1}
           usedColors={grades.map((g) => g.color)}
-          onClose={() => setEditor('closed')}
+          onMode={(mode) => setTagModal((s) => (s ? { ...s, mode } : s))}
+          onClose={() => setTagModal(null)}
           onSaved={() => {
-            setEditor('closed')
+            setTagModal(null)
             load()
           }}
         />
@@ -394,21 +494,94 @@ function TagsTab() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Station edit pop-out: name + the work requirement preset shown in  */
-/* the mobile view (hourly stamp card).                               */
+/* What a tier may open, and what it may do inside each module. The    */
+/* SAME table serves both faces of the pop-out — viewing is the edit   */
+/* form with nothing to click, so the two never drift apart.           */
 /* ------------------------------------------------------------------ */
 
-function StationEditModal({
+function ModuleTable({
+  modules,
+  capabilities,
+  locked,
+  onToggleModule,
+  onToggleCapability,
+}: {
+  modules: string[]
+  capabilities: string[]
+  /** Read-only: the view face, and the Management tag which is fixed. */
+  locked: boolean
+  onToggleModule: (key: string) => void
+  onToggleCapability: (key: string) => void
+}) {
+  return (
+    <div className="module-table">
+      {MODULE_OPTIONS.map((m) => {
+        const on = modules.includes(m.key)
+        const group = MODULE_GROUP[m.key]
+        const inner = group ? CAPABILITY_OPTIONS.filter((c) => c.group === group) : []
+        return (
+          <div className={`module-row ${on ? 'on' : ''}`} key={m.key}>
+            <label className="checkbox module-head">
+              <input
+                type="checkbox"
+                checked={on}
+                disabled={locked}
+                onChange={() => onToggleModule(m.key)}
+              />
+              <span className="module-name">{m.label}</span>
+              {on && inner.length > 0 && (
+                <span className="module-count">
+                  {inner.filter((c) => capabilities.includes(c.key)).length}/{inner.length}
+                </span>
+              )}
+            </label>
+            {on && inner.length > 0 && (
+              <div className="module-caps">
+                {inner.map((c) => (
+                  <label key={c.key} className="checkbox small" style={{ margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={capabilities.includes(c.key)}
+                      disabled={locked}
+                      onChange={() => onToggleCapability(c.key)}
+                    />{' '}
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Station pop-out. View shows the settings read-only and closes with */
+/* the × alone; Edit adds the form, with Cancel dropping back to view */
+/* rather than shutting the window.                                   */
+/* ------------------------------------------------------------------ */
+
+function StationModal({
   station,
+  mode,
+  canEdit,
+  usedBy,
+  onMode,
   onClose,
   onSaved,
-  onDelete,
 }: {
   station: Station
+  mode: Mode
+  canEdit: boolean
+  /** Piece Rate work types pointing here — what stops a delete. */
+  usedBy: StationJob[]
+  onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
-  onDelete: () => void
 }) {
+  const overlay = useOverlayClose(onClose)
   const [name, setName] = useState(station.name)
   const [hourly, setHourly] = useState(Boolean(station.hourly_count))
   const [minPrevInput, setMinPrevInput] = useState(String(station.hourly_min_prev ?? 0))
@@ -442,76 +615,127 @@ function StationEditModal({
     onSaved()
   }
 
+  // Cancelling an edit puts the untouched values back, so reopening the
+  // form does not show what was typed and then abandoned.
+  function cancel() {
+    setName(station.name)
+    setHourly(Boolean(station.hourly_count))
+    setMinPrevInput(String(station.hourly_min_prev ?? 0))
+    setTargetInput(String(station.hourly_target ?? 6))
+    setError(null)
+    onMode('view')
+  }
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+    <div className="modal-overlay" {...overlay}>
+      <div className="modal modal-view" onClick={(e) => e.stopPropagation()}>
         <div className="row-form spread">
-          <h2>Edit station</h2>
+          <h2>{mode === 'view' ? 'Station' : 'Edit station'}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         {error && <div className="error">{error}</div>}
 
-        <label className="field">
-          <span>Station name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-        </label>
+        {mode === 'view' ? (
+          <>
+            <div className="tag-section">
+              <div className="tag-section-title">Station name</div>
+              <span>{station.name}</span>
+            </div>
 
-        <div className="field">
-          <span>Work requirement (shown in the mobile view)</span>
-          <label className="checkbox small" style={{ margin: 0 }}>
-            <input type="checkbox" checked={hourly} onChange={(e) => setHourly(e.target.checked)} />{' '}
-            Hourly count — records are counted per hour (stamp card)
-          </label>
-        </div>
+            <div className="tag-section">
+              <div className="tag-section-title">Work requirement (mobile view)</div>
+              {station.hourly_count ? (
+                <>
+                  <span className="small">· Hourly count — records are counted per hour</span>
+                  <span className="small">
+                    · Min {station.hourly_min_prev ?? 0} done in the previous hour
+                  </span>
+                  <span className="small">· Max {station.hourly_target ?? 6} in this hour</span>
+                </>
+              ) : (
+                <span className="small muted">None</span>
+              )}
+            </div>
 
-        {hourly && (
-          <div className="row-form">
-            <label className="field inline grow">
-              <span>1. Min work done from previous hour</span>
-              <input
-                inputMode="numeric"
-                value={minPrevInput}
-                onChange={(e) => setMinPrevInput(e.target.value)}
-                placeholder="0"
-                required
-              />
+            {/* What is holding this station down, named — a station tag
+                cannot be deleted while Piece Rate work types point at it,
+                so this is the list to clear first. */}
+            <div className="tag-section">
+              <div className="tag-section-title">Used by</div>
+              {usedBy.length === 0 ? (
+                <span className="small muted">Nothing — this station can be deleted.</span>
+              ) : (
+                <>
+                  {usedBy.map((j) => (
+                    <span key={j.id} className="small">
+                      · {j.name}
+                      {!j.active && <span className="muted"> (inactive)</span>}
+                    </span>
+                  ))}
+                  <p className="tag-section-hint">
+                    Clear these in <Link to="/piece-rate">Piece Rate</Link> to free the station.
+                  </p>
+                </>
+              )}
+            </div>
+
+            {canEdit && (
+              <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+                <button type="button" className="btn" onClick={() => onMode('edit')}>
+                  Edit station
+                </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <form className="stack" style={{ gap: '0.9rem' }} onSubmit={save}>
+            <label className="field">
+              <span>Station name</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
             </label>
-            <label className="field inline grow">
-              <span>2. Work done in this hour (max)</span>
-              <input
-                inputMode="numeric"
-                value={targetInput}
-                onChange={(e) => setTargetInput(e.target.value)}
-                placeholder="6"
-                required
-              />
-            </label>
-          </div>
-        )}
-        {hourly && (
-          <p className="muted small" style={{ margin: 0 }}>
-            When the previous hour reaches its minimum, this hour's stamps become
-            bonus reward stamps.
-          </p>
-        )}
 
-        <div className="row-form spread">
-          <button
-            type="button"
-            className="btn ghost danger"
-            onClick={onDelete}
-          >
-            Delete station
-          </button>
-          <span className="row-form">
-            <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-            <button className="btn" type="submit" disabled={saving}>
-              {saving ? 'Saving…' : 'Save station'}
-            </button>
-          </span>
-        </div>
-      </form>
+            <div className="field">
+              <span>Work requirement (shown in the mobile view)</span>
+              <label className="checkbox small" style={{ margin: 0 }}>
+                <input type="checkbox" checked={hourly} onChange={(e) => setHourly(e.target.checked)} />{' '}
+                Hourly count — records are counted per hour (stamp card)
+              </label>
+            </div>
+
+            {hourly && (
+              <div className="row-form">
+                <label className="field inline grow">
+                  <span>1. Min work done from previous hour</span>
+                  <input
+                    inputMode="numeric"
+                    value={minPrevInput}
+                    onChange={(e) => setMinPrevInput(e.target.value)}
+                    placeholder="0"
+                    required
+                  />
+                </label>
+                <label className="field inline grow">
+                  <span>2. Work done in this hour (max)</span>
+                  <input
+                    inputMode="numeric"
+                    value={targetInput}
+                    onChange={(e) => setTargetInput(e.target.value)}
+                    placeholder="6"
+                    required
+                  />
+                </label>
+              </div>
+            )}
+            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+              <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>
+              <button className="btn" type="submit" disabled={saving}>
+                {saving ? 'Saving…' : 'Save station'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   )
 }
@@ -521,19 +745,26 @@ function StationEditModal({
 /* do.                                                                */
 /* ------------------------------------------------------------------ */
 
-function TagEditModal({
+function TagModal({
   grade,
+  mode,
+  canEdit,
   nextTier,
   usedColors,
+  onMode,
   onClose,
   onSaved,
 }: {
   grade: Grade | null
+  mode: Mode
+  canEdit: boolean
   nextTier: number
   usedColors: string[]
+  onMode: (mode: Mode) => void
   onClose: () => void
   onSaved: () => void
 }) {
+  const overlay = useOverlayClose(onClose)
   // Tier 1 is the super admin: every ability, always — the checkboxes are
   // shown ticked and locked.
   const isSuper = grade?.sort_order === 1
@@ -560,7 +791,15 @@ function TagEditModal({
 
   function toggleModule(key: string) {
     if (isSuper) return
-    setModules((m) => (m.includes(key) ? m.filter((k) => k !== key) : [...m, key]))
+    const turningOff = modules.includes(key)
+    setModules((m) => (turningOff ? m.filter((k) => k !== key) : [...m, key]))
+    // Closing a module drops its own functions with it — there is nothing
+    // to grant on a module this tier can no longer open.
+    const group = turningOff ? MODULE_GROUP[key] : null
+    if (group) {
+      const inner = CAPABILITY_OPTIONS.filter((c) => c.group === group).map((c) => c.key)
+      setCapabilities((c) => c.filter((k) => !inner.includes(k)))
+    }
   }
 
   async function save(e: FormEvent) {
@@ -582,6 +821,13 @@ function TagEditModal({
     onSaved()
   }
 
+  // Groups that belong to no module, so they cannot sit inside the module
+  // table and keep a block of their own. Management-only groups are not
+  // handed out per tier at all.
+  const looseGroups = CAPABILITY_GROUPS.filter(
+    (group) => !MANAGEMENT_ONLY_GROUPS.includes(group) && !GROUP_MODULE[group],
+  )
+
   // One checkbox row per capability of a group — shared by every section.
   const capBoxes = (group: string) =>
     CAPABILITY_OPTIONS.filter((c) => c.group === group).map((c) => (
@@ -596,106 +842,117 @@ function TagEditModal({
       </label>
     ))
 
+  // Cancelling drops what was typed and shows the saved tag again. A tag
+  // being created has no saved face to return to, so Cancel closes.
+  function cancel() {
+    if (!grade) return onClose()
+    setName(grade.name)
+    setModules(isSuper ? MODULE_OPTIONS.map((m) => m.key) : grade.modules ?? [...DEFAULT_MODULES])
+    setCapabilities(
+      isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade.capabilities ?? ['data-entry']),
+    )
+    setError(null)
+    onMode('view')
+  }
+
+  // The view face is the edit face with nothing to click: same title,
+  // same tier line, same module table — only the name is a badge rather
+  // than a field, and the buttons differ.
+  if (mode === 'view' && grade) {
+    return (
+      <div className="modal-overlay" {...overlay}>
+        <div className="modal modal-view" onClick={(e) => e.stopPropagation()}>
+          <div className="row-form spread">
+            <h2>Tier Tag Access Manage</h2>
+            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          </div>
+
+          <div className="tier-line">
+            <span className="tier-line-no">Tier {grade.sort_order} :</span>
+            <span className={`${tagClass(grade.color)} tag-name-lg`}>{grade.name}</span>
+          </div>
+
+          {isSuper && <span className="small muted">{MANAGEMENT_NOTE}</span>}
+
+          <div className="tag-section">
+            <div className="tag-section-title">Access to Module</div>
+            <ModuleTable
+              modules={modules}
+              capabilities={capabilities}
+              locked
+              onToggleModule={() => {}}
+              onToggleCapability={() => {}}
+            />
+          </div>
+
+          {canEdit && (
+            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+              <button type="button" className="btn" onClick={() => onMode('edit')}>
+                Edit tag
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <form className="modal modal-wide" onClick={(e) => e.stopPropagation()} onSubmit={save}>
+    <div className="modal-overlay" {...overlay}>
+      <form className="modal modal-view" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="row-form spread">
-          <h2>{grade ? 'Edit tag' : 'New tag'}</h2>
+          <h2>Tier Tag Access Manage</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         {error && <div className="error">{error}</div>}
-        {isSuper && (
-          <p className="muted small" style={{ margin: 0 }}>
-            This tag is the super admin — it always has every ability, sees every
-            module, and stays at tier 1.
-          </p>
-        )}
 
-        <div className="row-form">
-          <label className="field grow">
-            <span>Tag name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
-          </label>
-          <div className="field">
-            <span>Colour (auto-issued)</span>
-            <span className={tagClass(color)} style={{ alignSelf: 'flex-start' }}>
-              {name.trim() || 'preview'}
-            </span>
-          </div>
+        {/* Which tier this is, then the tag itself as the name field —
+            type straight into it to rename. */}
+        <div className="tier-line">
+          <span className="tier-line-no">Tier {grade?.sort_order ?? nextTier} :</span>
+          <input
+            className={`${tagClass(color)} tag-name-input`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            size={Math.max(10, name.length + 1)}
+            placeholder="Tag name"
+            aria-label="Tag name"
+            /* Only a tag being created opens with the cursor here — an edit
+               should land on the sheet, not in the name box. */
+            autoFocus={!grade}
+            required
+          />
         </div>
 
-        {/* Right below the tag name, as requested: who this tier may manage. */}
+        {/* What being tier 1 means, said where it belongs: on tier 1. */}
+        {isSuper && <span className="small muted">{MANAGEMENT_NOTE}</span>}
+
+        {/* Tick a module and it opens to show that module's own functions,
+            so what a tier may do sits under the module it belongs to. */}
         <div className="tag-section">
-          <div className="tag-section-title">User setting</div>
-          {capBoxes('User setting')}
-          <p className="tag-section-hint">
-            Lets this tier manage people in every team from Worker Management,
-            not just their own.
-          </p>
+          <div className="tag-section-title">Access to Module</div>
+          <ModuleTable
+            modules={modules}
+            capabilities={capabilities}
+            locked={isSuper}
+            onToggleModule={toggleModule}
+            onToggleCapability={toggleCapability}
+          />
         </div>
 
-        <div className="tag-section">
-          <div className="tag-section-title">Can see</div>
-          <p className="tag-section-hint">
-            Data always follows the fixed rule: this tier and every tier below it;
-            station tags narrow it to those stations. Tick the web modules this
-            tier sees.
-          </p>
-          <div className="cap-cols">
-            {MODULE_OPTIONS.map((m) => (
-              <label key={m.key} className="checkbox small" style={{ margin: 0 }}>
-                <input
-                  type="checkbox"
-                  checked={modules.includes(m.key)}
-                  disabled={isSuper}
-                  onChange={() => toggleModule(m.key)}
-                />{' '}
-                {m.label}
-              </label>
-            ))}
-            {capBoxes('View setting')}
+        {/* Anything that governs no single module keeps its own block. */}
+        {looseGroups.map((group) => (
+          <div className="tag-section" key={group}>
+            <div className="tag-section-title">{group}</div>
+            {capBoxes(group)}
           </div>
-        </div>
-
-        <div className="tag-cols">
-          <div className="tag-section">
-            <div className="tag-section-title">Work entry setting</div>
-            {capBoxes('Work entry setting')}
-          </div>
-          <div className="tag-section">
-            <div className="tag-section-title">Piece rate setting</div>
-            {capBoxes('Piece rate setting')}
-          </div>
-        </div>
-
-        <div className="tag-cols">
-          <div className="tag-section">
-            <div className="tag-section-title">Tag management setting</div>
-            {capBoxes('Tag management setting')}
-          </div>
-          <div className="tag-section">
-            <div className="tag-section-title">Station setting</div>
-            {capBoxes('Station setting')}
-            <p className="tag-section-hint">
-              Only tags and users below this tier can be added, moved or edited.
-            </p>
-          </div>
-        </div>
-
-        <div className="tag-section">
-          <div className="tag-section-title">Worker management setting</div>
-          {capBoxes('Worker management setting')}
-          <p className="tag-section-hint">
-            Adding a new sign-up to their OWN team needs no tick — every leader
-            can do that. These open up the wider functions.
-          </p>
-        </div>
+        ))}
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>
           <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : grade ? 'Save tag' : 'Create tag'}
+            {saving ? 'Saving…' : grade ? 'Save changes' : 'Create tag'}
           </button>
         </div>
       </form>

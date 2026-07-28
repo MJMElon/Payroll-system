@@ -1189,10 +1189,16 @@ create policy "authenticated read teams" on public.teams
 
 -- Create / rename / remove: the tier that owns the row and every tier above
 -- it, plus the granted worker-management functions.
+-- PostgREST talks to the database as these roles: without the grants a
+-- request never reaches a policy at all.
+grant select, insert, update, delete on public.teams to authenticated;
+grant select on public.teams to anon;
+
 drop policy if exists "leaders manage teams" on public.teams;
 create policy "leaders manage teams" on public.teams
   for all using (
-    public.my_tag_tier() = 1
+    public.my_role() = 'admin'
+    or public.my_tag_tier() = 1
     or public.my_capabilities() && array['user-access', 'worker-assign-any']
     or (
       public.my_tag_tier() is not null
@@ -1201,7 +1207,8 @@ create policy "leaders manage teams" on public.teams
     )
   )
   with check (
-    public.my_tag_tier() = 1
+    public.my_role() = 'admin'
+    or public.my_tag_tier() = 1
     or public.my_capabilities() && array['user-access', 'worker-assign-any']
     or (
       public.my_tag_tier() is not null
@@ -1258,3 +1265,45 @@ drop trigger if exists trg_audit_teams on public.teams;
 create trigger trg_audit_teams
   after insert or update or delete on public.teams
   for each row execute function public.log_audit();
+
+-- ---------------------------------------------------------------------------
+-- Names, not email addresses. The signup form asks for a full name, but
+-- accounts made in the Supabase dashboard (and the app's self-heal path)
+-- used to copy the email into full_name, which left the team chart showing
+-- addresses with no way to tell a named account from an unnamed one.
+-- full_name is now NULL when no name was given, and the chart falls back to
+-- the part before the @ while flagging the account so a leader can name it
+-- in Worker Management → Profile details.
+-- ---------------------------------------------------------------------------
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  op_grade uuid;
+begin
+  -- Every new signup starts as an Operator; leaders place them from there.
+  select id into op_grade from public.grades where name = 'Operator' limit 1;
+  insert into public.access_profiles (id, full_name, email, role, grade_id)
+  values (
+    new.id,
+    nullif(btrim(coalesce(new.raw_user_meta_data ->> 'full_name', '')), ''),
+    new.email,
+    'operator',
+    op_grade
+  )
+  on conflict (id) do nothing;
+  return new;
+exception when others then
+  -- Never block a signup because profile creation failed; the app
+  -- self-heals a missing profile on first login.
+  return new;
+end;
+$$;
+
+update public.access_profiles
+  set full_name = null
+  where full_name is not null and email is not null
+    and lower(btrim(full_name)) = lower(btrim(email));

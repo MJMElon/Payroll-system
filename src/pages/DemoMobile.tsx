@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { effectiveCapabilities, MODULE_OPTIONS } from '../lib/tags'
+import { effectiveCapabilities, effectiveModules, MODULE_OPTIONS } from '../lib/tags'
 import {
   profileName,
   supabase,
@@ -233,7 +233,9 @@ export default function DemoMobile() {
   const tierCaps = effectiveCapabilities(tier)
   const canEntry = tierCaps.includes('data-entry')
   const isUpper =
-    tierCaps.includes('report-view') || tierCaps.includes('verify') || tierCaps.includes('approve')
+    effectiveModules(tier?.modules).includes('report') ||
+    tierCaps.includes('verify') ||
+    tierCaps.includes('approve')
   const myStationIds = profile?.station_ids ?? []
   const scopedStations =
     isUpper || myStationIds.length === 0
@@ -2710,8 +2712,11 @@ function ProfileTab({
     return ids.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
   })()
 
+  // Only the modules that are actually ticked per tag get named — the
+  // common ones (station status) are open to everyone and go unsaid.
   const moduleLabels = (profile?.modules ?? [])
-    .map((k) => MODULE_OPTIONS.find((m) => m.key === k)?.label ?? k)
+    .map((k) => MODULE_OPTIONS.find((m) => m.key === k)?.label)
+    .filter(Boolean)
     .join(', ')
 
   const Row = ({ label, value }: { label: string; value: string }) => (
