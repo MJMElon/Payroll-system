@@ -1222,6 +1222,24 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   text-transform: uppercase; letter-spacing: 0.07em;
 }
 
+/* Create piece rate — the window is the listing: one line per rate, so a
+   batch can be keyed in and submitted together. Wide enough for eight
+   columns, and the table itself scrolls sideways on a small screen. */
+.modal.modal-table { max-width: min(1280px, 96vw); }
+.rate-rows th, .rate-rows td { padding: 0.35rem 0.3rem; vertical-align: middle; }
+.rate-rows td select,
+.rate-rows td input { width: 100%; padding: 0.45rem 0.45rem; font-size: 0.85rem; }
+.rate-rows td input.money { text-align: right; }
+.rate-rows .c-station { min-width: 130px; }
+.rate-rows .c-tag { min-width: 125px; }
+.rate-rows .c-desc { min-width: 185px; }
+.rate-rows .c-num { min-width: 102px; }
+.rate-rows th.c-num { text-align: right; }
+.rate-rows .c-unit { min-width: 138px; }
+.rate-rows .c-date { min-width: 142px; }
+.rate-rows .c-kill { width: 34px; }
+.rate-rows .c-kill .modal-close { width: 26px; height: 26px; }
+
 /* Tag editor — titled setting sections */
 .modal.modal-wide { max-width: 640px; }
 .tag-section {
