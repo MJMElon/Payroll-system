@@ -2872,137 +2872,24 @@ function PayslipSection({ profile }: { profile: Profile | null }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* MY TEAM (leaders only): claim new sign-ups into your team and see  */
-/* who works under you — the same actions as Worker Management, on    */
-/* the phone.                                                         */
+/* TAB 4 — TEAM                                                        */
+/*                                                                     */
+/* 1. New sign ups — name only, one button to pull them into your      */
+/*    team. They land on the bottom (Operator) tier.                   */
+/* 2. Reporting line — your role, then the tier above, and the one     */
+/*    above that, stopping at Manager.                                 */
+/* 3. My team — one lane per tier. Drag a member onto the lane that    */
+/*    matches what they actually do. A leader may hand out any tier    */
+/*    BELOW their own; their own tier and anything above it is locked, */
+/*    and dropping there explains the ceiling instead of failing       */
+/*    silently.                                                        */
 /* ------------------------------------------------------------------ */
 
-function TeamSection({
-  profile,
-  grades,
-  stations,
-}: {
-  profile: Profile | null
-  grades: Grade[]
-  stations: Station[]
-}) {
-  const [people, setPeople] = useState<Profile[]>([])
-  const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+/** The chart climbs this far and stops — Management sits above it. */
+const TOP_CHART_TIER = 'Manager'
 
-  async function load() {
-    const { data } = await supabase.from('access_profiles').select('*')
-    setPeople((data ?? []) as Profile[])
-  }
-  useEffect(() => {
-    load()
-  }, [])
-
-  const gradeOf = (p: Profile) => grades.find((g) => g.id === p.grade_id)
-  const stationLabel = (p: Profile) => {
-    const ids = p.station_ids && p.station_ids.length > 0
-      ? p.station_ids
-      : p.station_id ? [p.station_id] : []
-    if (ids.length === 0) return 'All stations'
-    return ids.map((id) => stations.find((st) => st.id === id)?.name ?? '?').join(', ')
-  }
-
-  const pending = people.filter((p) => !p.tags_confirmed)
-
-  // Every team = a leader (any tier above the bottom) — labelled with the
-  // team name, the leader and their station, so a sign-up can be assigned
-  // to ANY team, not just your own.
-  const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
-  const leaders = people.filter((p) => {
-    if (!p.tags_confirmed) return false
-    const t = gradeOf(p)?.sort_order
-    return t != null && t < bottomTier
-  })
-  const teamLabel = (l: Profile) =>
-    `${l.team_name ?? `${l.full_name ?? l.email ?? '?'}'s team`} — ${l.full_name ?? l.email ?? '?'} · ${stationLabel(l)}`
-
-  async function claimTo(p: Profile, leader: Profile) {
-    setBusy(p.id)
-    setError(null)
-    const { error } = await supabase
-      .from('access_profiles')
-      .update({
-        supervisor_id: leader.id,
-        station_ids: leader.station_ids ?? [],
-        station_id: leader.station_ids?.[0] ?? leader.station_id ?? null,
-        tags_confirmed: true,
-      })
-      .eq('id', p.id)
-    setBusy(null)
-    if (error) return setError(error.message)
-    load()
-  }
-
-  function claim(p: Profile) {
-    if (profile) claimTo(p, profile)
-  }
-
-  return (
-    <div className="mob-card">
-      <div className="mob-title">
-        New sign ups{profile?.team_name ? ` — ${profile.team_name}` : ''}{' '}
-        {pending.length > 0 && <span className="mob-chip warn">{pending.length} new</span>}
-      </div>
-      {error && <div className="mob-sub" style={{ color: '#b91c1c' }}>{error}</div>}
-
-      {pending.map((p) => (
-        <div key={p.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-          <div className="mob-row">
-            <span>
-              <span className="mob-entry-name">{p.full_name ?? p.email ?? '—'}</span>
-              <span className="mob-station-meta" style={{ display: 'block' }}>
-                new sign up · waiting for a team
-              </span>
-            </span>
-            <button
-              className="mob-mini"
-              disabled={busy === p.id}
-              onClick={() => claim(p)}
-            >
-              + My team
-            </button>
-          </div>
-          <select
-            className="mob-select"
-            value=""
-            disabled={busy === p.id}
-            onChange={(e) => {
-              const leader = leaders.find((l) => l.id === e.target.value)
-              if (leader) claimTo(p, leader)
-            }}
-          >
-            <option value="">…or assign to another team</option>
-            {leaders
-              .filter((l) => l.id !== profile?.id)
-              .map((l) => (
-                <option key={l.id} value={l.id}>{teamLabel(l)}</option>
-              ))}
-          </select>
-        </div>
-      ))}
-
-      {pending.length === 0 && (
-        <div className="mob-sub">No sign ups waiting for a team.</div>
-      )}
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* TAB 4 — TEAM: who you are and who you answer to. The chart starts  */
-/* at YOUR role, then climbs one tier at a time — your direct upper,  */
-/* their upper, and so on — stopping at the Engineer tier. Below the  */
-/* chart: the people who report to you, and (for leaders) the new     */
-/* sign-ups waiting to be claimed into a team.                        */
-/* ------------------------------------------------------------------ */
-
-/** The rung the chart climbs to and stops at. */
-const TOP_CHART_TIER = 'Engineer'
+/** A new sign up joins the team on this tier until the leader moves them. */
+const INTAKE_TIER = 'Operator'
 
 function TeamTab({
   profile,
@@ -3017,18 +2904,27 @@ function TeamTab({
 }) {
   const [people, setPeople] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  // The "you can only set tier up to …" pop-out.
+  const [notice, setNotice] = useState<string | null>(null)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [overGrade, setOverGrade] = useState<string | null>(null)
 
-  useEffect(() => {
+  function load() {
     supabase
       .from('access_profiles')
       .select('*')
-      .then(({ data }) => {
-        setPeople((data ?? []) as Profile[])
+      .then(({ data, error: err }) => {
+        if (err) setError(err.message)
+        else setPeople((data ?? []) as Profile[])
         setLoading(false)
       })
+  }
+  useEffect(() => {
+    load()
   }, [])
 
-  const gradeById = (id: string | null | undefined) => grades.find((g) => g.id === id) ?? null
   const stationLabel = (p: Profile | null) => {
     if (!p) return '—'
     const ids = p.station_ids && p.station_ids.length > 0
@@ -3039,9 +2935,9 @@ function TeamTab({
   }
 
   // The real reporting chain (supervisor → their supervisor → …), keyed by
-  // the tier each person holds, so a rung of the ladder can be filled with
-  // the actual name instead of just a tier label. Capped so a bad
-  // supervisor loop in the data can never spin forever.
+  // the tier each person holds, so a rung of the chart can carry the actual
+  // name instead of just a tier label. Capped so a bad supervisor loop in
+  // the data can never spin forever.
   const chainByGrade = new Map<string, Profile>()
   {
     let cursor = profile?.supervisor_id ?? null
@@ -3065,7 +2961,7 @@ function TeamTab({
   }
 
   // Tier 1 is the highest, so "up" means a SMALLER sort_order. The chart
-  // runs from just above your tier to the Engineer tier inclusive.
+  // runs from just above your tier to the Manager tier inclusive.
   const topTier = grades.find((g) => g.name === TOP_CHART_TIER)
   const topOrder = topTier?.sort_order ?? Math.min(...grades.map((g) => g.sort_order), 1)
   const upperTiers = tier
@@ -3074,10 +2970,73 @@ function TeamTab({
         .sort((a, b) => b.sort_order - a.sort_order) // nearest upper first
     : []
 
-  const myName = profileName(profile)
-  const myTeam = people.filter((p) => p.supervisor_id === profile?.id)
   const bottomTier = Math.max(0, ...grades.map((g) => g.sort_order))
   const isLeader = tier !== null && grades.length > 0 && tier.sort_order < bottomTier
+  const intakeGrade =
+    grades.find((g) => g.name === INTAKE_TIER) ??
+    grades.find((g) => g.sort_order === bottomTier) ??
+    null
+
+  // The highest tier this leader may hand out — exactly one rung below their
+  // own. Everything at or above their own tier is off limits.
+  const nextBelow = tier
+    ? grades
+        .filter((g) => g.sort_order > tier.sort_order)
+        .sort((a, b) => a.sort_order - b.sort_order)[0] ?? null
+    : null
+  const mayAssign = (g: Grade) => tier != null && g.sort_order > tier.sort_order
+
+  const pending = people.filter((p) => !p.tags_confirmed)
+  const myTeam = people.filter((p) => p.supervisor_id === profile?.id)
+
+  /** Pull a new sign up into my team, landing them on the intake tier. */
+  async function claim(p: Profile) {
+    if (!profile) return
+    setBusy(p.id)
+    setError(null)
+    const { error: err } = await supabase
+      .from('access_profiles')
+      .update({
+        supervisor_id: profile.id,
+        grade_id: intakeGrade?.id ?? p.grade_id,
+        station_ids: profile.station_ids ?? [],
+        station_id: profile.station_ids?.[0] ?? profile.station_id ?? null,
+        tags_confirmed: true,
+      })
+      .eq('id', p.id)
+    setBusy(null)
+    if (err) return setError(err.message)
+    load()
+  }
+
+  /** Move a team member onto another tier — the drag/drop target. */
+  async function moveTo(p: Profile, g: Grade) {
+    if (p.grade_id === g.id) return
+    if (!mayAssign(g)) {
+      setNotice(
+        nextBelow
+          ? `You can only set a tier up to ${nextBelow.name}. ${g.name} is at or above your own ${tier?.name ?? ''} tier.`
+          : `You cannot set a tier from the ${tier?.name ?? 'bottom'} tier — there is nothing below you.`,
+      )
+      return
+    }
+    setBusy(p.id)
+    setError(null)
+    const { error: err } = await supabase
+      .from('access_profiles')
+      .update({ grade_id: g.id })
+      .eq('id', p.id)
+    setBusy(null)
+    if (err) return setError(err.message)
+    load()
+  }
+
+  function dropOn(g: Grade) {
+    const person = myTeam.find((p) => p.id === dragId)
+    setDragId(null)
+    setOverGrade(null)
+    if (person) moveTo(person, g)
+  }
 
   const Node = ({
     grade,
@@ -3113,9 +3072,40 @@ function TeamTab({
       <div className="mob-body">
         <div style={{ padding: '0 0.2rem' }}>
           <div className="mob-role">My team</div>
-          <div className="mob-sub">Your role and the line above you, up to {TOP_CHART_TIER}</div>
         </div>
 
+        {error && <div className="mob-card"><div className="mob-sub" style={{ color: '#b91c1c' }}>{error}</div></div>}
+
+        {/* 1 — new sign ups: the name, and one button. */}
+        {isLeader && (
+          <div className="mob-card">
+            <div className="mob-title">
+              New sign up{' '}
+              {pending.length > 0 && <span className="mob-chip warn">{pending.length} new</span>}
+            </div>
+            {loading ? (
+              <div className="mob-sub">Loading…</div>
+            ) : pending.length === 0 ? (
+              <div className="mob-sub">Nobody waiting for a team.</div>
+            ) : (
+              pending.map((p) => (
+                <div className="mob-row" key={p.id}>
+                  <span className="mob-entry-name">{profileName(p)}</span>
+                  <button className="mob-mini" disabled={busy === p.id} onClick={() => claim(p)}>
+                    + Add to my team
+                  </button>
+                </div>
+              ))
+            )}
+            {pending.length > 0 && intakeGrade && (
+              <div className="mob-sub">
+                They join on {intakeGrade.name} — drag them to the right tier below.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 2 — the reporting line, up to Manager. */}
         <div className="mob-card">
           <div className="mob-title">Reporting line</div>
           {loading ? (
@@ -3133,7 +3123,7 @@ function TeamTab({
                   />
                 )
               })}
-              <Node grade={tier} person={profile} label={myName} me />
+              <Node grade={tier} person={profile} label={profileName(profile)} me />
             </div>
           )}
           {!loading && upperTiers.length === 0 && (
@@ -3145,36 +3135,117 @@ function TeamTab({
           )}
         </div>
 
-        <div className="mob-card">
-          <div className="mob-title">
-            Reports to me <span className="mob-chip">{myTeam.length}</span>
-          </div>
-          {loading ? (
-            <div className="mob-sub">Loading…</div>
-          ) : myTeam.length === 0 ? (
-            <div className="mob-sub">Nobody reports to you yet.</div>
-          ) : (
-            myTeam.map((p) => {
-              const g = gradeById(p.grade_id)
-              return (
-                <div className="mob-row" key={p.id}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                    <span className={`tag-dot dot-${g?.color ?? 'grey'}`} aria-hidden="true" />
-                    <span>
-                      <span className="mob-entry-name">{profileName(p)}</span>
-                      <span className="mob-station-meta" style={{ display: 'block' }}>
-                        {g?.name ?? '—'} · {stationLabel(p)}
-                      </span>
-                    </span>
-                  </span>
-                </div>
-              )
-            })
-          )}
-        </div>
+        {/* 3 — the tier lanes: drag each member to what they actually do. */}
+        {isLeader ? (
+          <div className="mob-card">
+            <div className="mob-title">
+              My team <span className="mob-chip">{myTeam.length}</span>
+            </div>
+            <div className="mob-sub">
+              Drag a member onto their real tier
+              {nextBelow ? ` — you can set them as high as ${nextBelow.name}` : ''}.
+            </div>
 
-        {isLeader && <TeamSection profile={profile} grades={grades} stations={stations} />}
+            {loading ? (
+              <div className="mob-sub">Loading…</div>
+            ) : (
+              grades
+                .slice()
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map((g) => {
+                  const locked = !mayAssign(g)
+                  const members = myTeam.filter((p) => p.grade_id === g.id)
+                  return (
+                    <div
+                      key={g.id}
+                      className={`mob-lane ${locked ? 'locked' : ''} ${overGrade === g.id ? 'over' : ''}`}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        setOverGrade(g.id)
+                      }}
+                      onDragLeave={() => setOverGrade((cur) => (cur === g.id ? null : cur))}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        dropOn(g)
+                      }}
+                    >
+                      <div className="mob-lane-head">
+                        <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
+                        <span className="mob-lane-name">{g.name}</span>
+                        {locked && <span className="mob-lane-lock" aria-label="locked">🔒</span>}
+                      </div>
+                      {members.length === 0 ? (
+                        <div className="mob-lane-empty">
+                          {locked ? 'Not yours to set' : 'Drop here'}
+                        </div>
+                      ) : (
+                        members.map((p) => (
+                          <div
+                            className={`mob-member ${dragId === p.id ? 'dragging' : ''}`}
+                            key={p.id}
+                            draggable={!busy}
+                            onDragStart={(e) => {
+                              setDragId(p.id)
+                              e.dataTransfer.effectAllowed = 'move'
+                              e.dataTransfer.setData('text/plain', p.id)
+                            }}
+                            onDragEnd={() => {
+                              setDragId(null)
+                              setOverGrade(null)
+                            }}
+                          >
+                            <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>
+                            <span className="mob-org-text">
+                              <span className="mob-entry-name">{profileName(p)}</span>
+                              <span className="mob-station-meta">{stationLabel(p)}</span>
+                            </span>
+                            {/* Same rule, without a mouse: pick the tier directly. */}
+                            <select
+                              className="mob-member-pick"
+                              value={g.id}
+                              disabled={busy === p.id}
+                              onChange={(e) => {
+                                const next = grades.find((x) => x.id === e.target.value)
+                                if (next) moveTo(p, next)
+                              }}
+                            >
+                              {grades
+                                .slice()
+                                .sort((a, b) => a.sort_order - b.sort_order)
+                                .map((x) => (
+                                  <option key={x.id} value={x.id}>{x.name}</option>
+                                ))}
+                            </select>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )
+                })
+            )}
+
+            {!loading && myTeam.length === 0 && (
+              <div className="mob-sub">Nobody in your team yet — add a new sign up above.</div>
+            )}
+          </div>
+        ) : (
+          <div className="mob-card">
+            <div className="mob-title">My team</div>
+            <div className="mob-sub">Nobody reports to you.</div>
+          </div>
+        )}
       </div>
+
+      {/* The ceiling pop-out — says exactly how high this leader may go. */}
+      {notice && (
+        <div className="mob-modal-wrap" role="dialog" aria-modal="true">
+          <div className="mob-modal">
+            <div className="mob-title">Tier not allowed</div>
+            <div className="mob-sub">{notice}</div>
+            <button className="mob-btn" onClick={() => setNotice(null)}>Got it</button>
+          </div>
+        </div>
+      )}
     </>
   )
 }
