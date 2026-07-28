@@ -838,14 +838,19 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font-size: 1.15rem; font-weight: 700; color: var(--muted);
 }
 
-/* The tag IS the name field — one thing, not a box plus a preview. It
-   wears the tier's own colour and grows with what is typed. */
+/* The tag at heading size. On the view face it is a plain badge; on the
+   edit face the same pill IS the name field — one thing, not a box plus
+   a preview — wearing the tier's colour and growing with what is typed. */
+.tag-name-lg, .tag-name-input {
+  font-family: 'Montserrat', system-ui, sans-serif;
+  font-size: 1.3rem; font-weight: 800; letter-spacing: -0.01em;
+  padding: 0.35rem 1.1rem; border-radius: 999px;
+}
+.tag-name-lg { border: 2px solid transparent; }
 .tag-name-input {
   appearance: none;
   align-self: flex-start;
-  font: inherit; font-family: 'Montserrat', system-ui, sans-serif;
-  font-size: 1.3rem; font-weight: 800; letter-spacing: -0.01em;
-  padding: 0.35rem 1.1rem; border-radius: 999px;
+  font-style: inherit;
   border: 2px dashed transparent;
   min-width: 0;
 }

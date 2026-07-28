@@ -23,6 +23,10 @@ type Tab = 'tags' | 'audit'
 /** Which face of a row's pop-out is showing. */
 type Mode = 'view' | 'edit'
 
+/** What tier 1 is for, shown under its name on both faces. */
+const MANAGEMENT_NOTE =
+  'Able to create, delete and do setting of tags for tier & station.'
+
 /* Row action icons — shared by the tier tag and station tag tables. */
 const iconProps = {
   width: 15,
@@ -75,7 +79,7 @@ export default function Settings() {
 
       <div className="tabs glass">
         <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
-          Tier &amp; Station Tags setting
+          Tier &amp; Station Tags Setting
         </button>
         {canAudit && (
           <button className={`tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>
@@ -441,61 +445,66 @@ function TagsTab() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Read-only sheet of ONE tier's access — the body of the tag pop-out */
-/* in view mode, and the reason the table needs no "Can do" column.   */
+/* What a tier may open, and what it may do inside each module. The    */
+/* SAME table serves both faces of the pop-out — viewing is the edit   */
+/* form with nothing to click, so the two never drift apart.           */
 /* ------------------------------------------------------------------ */
 
-function TierAccessSheet({ grade }: { grade: Grade }) {
-  // Tier 1 is the super admin: every module, every ability, always.
-  const isSuper = grade.sort_order === 1
-  const caps = isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade.capabilities ?? [])
-  const mods = isSuper ? MODULE_OPTIONS.map((m) => m.key) : grade.modules ?? []
-  // Only the groups this tier actually holds something in, so the sheet
-  // reads as "what it CAN do" rather than a mostly-empty checklist.
-  const groups = CAPABILITY_OPTIONS.reduce<Record<string, string[]>>((acc, c) => {
-    if (!caps.includes(c.key)) return acc
-    ;(acc[c.group] ??= []).push(c.label)
-    return acc
-  }, {})
-
+function ModuleTable({
+  modules,
+  capabilities,
+  locked,
+  onToggleModule,
+  onToggleCapability,
+}: {
+  modules: string[]
+  capabilities: string[]
+  /** Read-only: the view face, and the Management tag which is fixed. */
+  locked: boolean
+  onToggleModule: (key: string) => void
+  onToggleCapability: (key: string) => void
+}) {
   return (
-    <>
-      <div className="row-form" style={{ gap: '0.5rem', alignItems: 'center' }}>
-        <span className={tagClass(grade.color)}>{grade.name}</span>
-        <span className="muted small">tier {grade.sort_order}</span>
-      </div>
-
-      <div className="tag-section">
-        <div className="tag-section-title">Access to Module</div>
-        {MODULE_OPTIONS.filter((m) => mods.includes(m.key)).length === 0 ? (
-          <span className="small muted">None</span>
-        ) : (
-          <div className="cap-cols">
-            {MODULE_OPTIONS.filter((m) => mods.includes(m.key)).map((m) => (
-              <span key={m.key} className="small">· {m.label}</span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="tag-section">
-        <div className="tag-section-title">Can do</div>
-        {caps.length === 0 ? (
-          <span className="small muted">None</span>
-        ) : (
-          <div className="cap-cols">
-            {Object.entries(groups).map(([group, labels]) => (
-              <div key={group} className="cap-group">
-                <div className="cap-group-name">{group}</div>
-                {labels.map((l) => (
-                  <span key={l} className="small">· {l}</span>
+    <div className="module-table">
+      {MODULE_OPTIONS.map((m) => {
+        const on = modules.includes(m.key)
+        const group = MODULE_GROUP[m.key]
+        const inner = group ? CAPABILITY_OPTIONS.filter((c) => c.group === group) : []
+        return (
+          <div className={`module-row ${on ? 'on' : ''}`} key={m.key}>
+            <label className="checkbox module-head">
+              <input
+                type="checkbox"
+                checked={on}
+                disabled={locked}
+                onChange={() => onToggleModule(m.key)}
+              />
+              <span className="module-name">{m.label}</span>
+              {on && inner.length > 0 && (
+                <span className="module-count">
+                  {inner.filter((c) => capabilities.includes(c.key)).length}/{inner.length}
+                </span>
+              )}
+            </label>
+            {on && inner.length > 0 && (
+              <div className="module-caps">
+                {inner.map((c) => (
+                  <label key={c.key} className="checkbox small" style={{ margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={capabilities.includes(c.key)}
+                      disabled={locked}
+                      onChange={() => onToggleCapability(c.key)}
+                    />{' '}
+                    {c.label}
+                  </label>
                 ))}
               </div>
-            ))}
+            )}
           </div>
-        )}
-      </div>
-    </>
+        )
+      })}
+    </div>
   )
 }
 
@@ -770,16 +779,35 @@ function TagModal({
     onMode('view')
   }
 
+  // The view face is the edit face with nothing to click: same title,
+  // same tier line, same module table — only the name is a badge rather
+  // than a field, and the buttons differ.
   if (mode === 'view' && grade) {
     return (
       <div className="modal-overlay" onClick={onClose}>
         <div className="modal modal-view" onClick={(e) => e.stopPropagation()}>
           <div className="row-form spread">
-            <h2>Tier access</h2>
+            <h2>Tier Tag Access Manage</h2>
             <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
           </div>
 
-          <TierAccessSheet grade={grade} />
+          <div className="tier-line">
+            <span className="tier-line-no">Tier {grade.sort_order} :</span>
+            <span className={`${tagClass(grade.color)} tag-name-lg`}>{grade.name}</span>
+          </div>
+
+          {isSuper && <span className="small muted">{MANAGEMENT_NOTE}</span>}
+
+          <div className="tag-section">
+            <div className="tag-section-title">Access to Module</div>
+            <ModuleTable
+              modules={modules}
+              capabilities={capabilities}
+              locked
+              onToggleModule={() => {}}
+              onToggleCapability={() => {}}
+            />
+          </div>
 
           {canEdit && (
             <div className="row-form" style={{ justifyContent: 'flex-end' }}>
@@ -797,7 +825,7 @@ function TagModal({
     <div className="modal-overlay" onClick={onClose}>
       <form className="modal modal-view" onClick={(e) => e.stopPropagation()} onSubmit={save}>
         <div className="row-form spread">
-          <h2>Tier Access Manage</h2>
+          <h2>Tier Tag Access Manage</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
@@ -819,63 +847,22 @@ function TagModal({
             autoFocus={!grade}
             required
           />
-          <span className="tier-line-no">Tier</span>
         </div>
 
         {/* What being tier 1 means, said where it belongs: on tier 1. */}
-        {isSuper && (
-          <span className="small muted">
-            The Management tier. Creating tier tags and station tags, setting
-            what a tier may do, and changing other users' settings are done
-            here and nowhere else — which is why nothing below can be
-            unticked.
-          </span>
-        )}
+        {isSuper && <span className="small muted">{MANAGEMENT_NOTE}</span>}
 
         {/* Tick a module and it opens to show that module's own functions,
             so what a tier may do sits under the module it belongs to. */}
         <div className="tag-section">
           <div className="tag-section-title">Access to Module</div>
-          <div className="module-table">
-            {MODULE_OPTIONS.map((m) => {
-              const on = modules.includes(m.key)
-              const group = MODULE_GROUP[m.key]
-              const inner = group ? CAPABILITY_OPTIONS.filter((c) => c.group === group) : []
-              return (
-                <div className={`module-row ${on ? 'on' : ''}`} key={m.key}>
-                  <label className="checkbox module-head">
-                    <input
-                      type="checkbox"
-                      checked={on}
-                      disabled={isSuper}
-                      onChange={() => toggleModule(m.key)}
-                    />
-                    <span className="module-name">{m.label}</span>
-                    {on && inner.length > 0 && (
-                      <span className="module-count">
-                        {inner.filter((c) => capabilities.includes(c.key)).length}/{inner.length}
-                      </span>
-                    )}
-                  </label>
-                  {on && inner.length > 0 && (
-                    <div className="module-caps">
-                      {inner.map((c) => (
-                        <label key={c.key} className="checkbox small" style={{ margin: 0 }}>
-                          <input
-                            type="checkbox"
-                            checked={capabilities.includes(c.key)}
-                            disabled={isSuper}
-                            onChange={() => toggleCapability(c.key)}
-                          />{' '}
-                          {c.label}
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
+          <ModuleTable
+            modules={modules}
+            capabilities={capabilities}
+            locked={isSuper}
+            onToggleModule={toggleModule}
+            onToggleCapability={toggleCapability}
+          />
         </div>
 
         {/* Anything that governs no single module keeps its own block. */}
@@ -889,7 +876,7 @@ function TagModal({
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={cancel}>Cancel</button>
           <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : grade ? 'Save tag' : 'Create tag'}
+            {saving ? 'Saving…' : grade ? 'Save changes' : 'Create tag'}
           </button>
         </div>
       </form>
