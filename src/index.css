@@ -1335,13 +1335,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .wm-block-foot {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.3rem;
-  margin-top: 0.25rem; min-height: 18px;
-}
-.wm-under {
-  background: var(--accent-soft); color: var(--accent-strong);
-  border-radius: 999px; padding: 0 0.45rem; font-size: 0.67rem; font-weight: 700;
-  white-space: nowrap;
+  display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem;
+  margin-top: 0.25rem;
 }
 .wm-add {
   appearance: none; cursor: pointer; font-family: inherit;
@@ -1353,8 +1348,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-add:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
 
 /* Station boxes: the floor from the station-head tier down. */
-.wm-stations { display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.5rem; }
+/* Every station is the SAME tier, so they stand side by side — stacked,
+   they read as a hierarchy that is not there. */
+.wm-stations {
+  display: flex; gap: 0.7rem; align-items: flex-start;
+  overflow-x: auto; padding: 0.5rem 0.1rem 0.3rem;
+}
 .wm-station-box {
+  flex: 0 0 auto; min-width: 300px; max-width: 430px;
   border: 1px solid var(--border); border-radius: 12px;
   background: #fafbfc; padding: 0.6rem 0.7rem 0.7rem;
 }
@@ -1371,10 +1372,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;
   margin-bottom: 0.55rem;
 }
-.wm-team-boxes { display: flex; gap: 0.6rem; align-items: flex-start; overflow-x: auto; padding-bottom: 0.2rem; }
+.wm-team-boxes { display: flex; flex-direction: column; gap: 0.5rem; }
 
 .wm-team-box {
-  flex: none; border: 1px solid var(--border); border-radius: 10px;
+  border: 1px solid var(--border); border-radius: 10px;
   background: var(--surface); padding: 0.45rem 0.5rem 0.5rem; min-width: 216px;
 }
 .wm-team-box.over { border-color: var(--accent-strong); box-shadow: 0 0 0 2px var(--accent-soft); }

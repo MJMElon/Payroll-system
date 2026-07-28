@@ -52,7 +52,6 @@ import { useAuth } from '../../context/AuthContext'
 import { effectiveCapabilities, tagClass } from '../../lib/tags'
 import { useWideShell } from '../../lib/useWideShell'
 import {
-  profileName,
   supabase,
   todayISO,
   type Grade,
@@ -279,39 +278,6 @@ export default function WorkerManagement() {
   const deepName = stationGrades[2]?.name ?? null
 
   const selected = selectedId ? profiles.find((p) => p.id === selectedId) ?? null : null
-
-  /* ---------------- the chain ---------------- */
-
-  const tree = useMemo(() => {
-    const ids = new Set(visible.map((p) => p.id))
-    const kids = new Map<string, Profile[]>()
-    const roots: Profile[] = []
-    for (const p of visible) {
-      const sup =
-        p.supervisor_id && p.supervisor_id !== p.id && ids.has(p.supervisor_id)
-          ? p.supervisor_id
-          : null
-      if (sup) kids.set(sup, [...(kids.get(sup) ?? []), p])
-      else roots.push(p)
-    }
-    const byRank = (a: Profile, b: Profile) =>
-      (tierOf(a) ?? 99) - (tierOf(b) ?? 99) || profileName(a).localeCompare(profileName(b))
-    kids.forEach((list) => list.sort(byRank))
-    roots.sort(byRank)
-    // Everyone under each person (the seen set guards a supervisor loop).
-    const total = new Map<string, number>()
-    const walk = (p: Profile, seen: Set<string>): number => {
-      if (seen.has(p.id)) return 0
-      seen.add(p.id)
-      let n = 0
-      for (const k of kids.get(p.id) ?? []) n += 1 + walk(k, seen)
-      total.set(p.id, n)
-      return n
-    }
-    roots.forEach((r) => walk(r, new Set()))
-    return { kids, roots, total }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, grades])
 
   // One row per tier, top tier first — EVERY tier, including the ones
   // nobody stands on yet, so it is obvious where a card can be dropped.
@@ -689,16 +655,22 @@ export default function WorkerManagement() {
   if (loading) return <p className="muted">Loading…</p>
 
   /** One person's block. `mini` is the compact one used deep in a team. */
-  function block(p: Profile, mini = false, hideStation = false) {
+  function block(p: Profile, mini = false, inContext = false) {
     const grade = gradeOf(p)
     const team = teamOf(p)
     const tier = tierOf(p)
-    const under = tree.total.get(p.id) ?? 0
     const isMe = p.id === profile?.id
     const key = `block:${p.id}`
     const allowed = canPlaceUnder(p)
+    // Teams are a station-floor thing, and so is the station line: the
+    // tiers above run the whole mill, so their block is just a name.
+    const onTheFloor = worksAtAStation(tier)
     const canAddTeam =
-      Boolean(grade) && tier !== null && tier < bottomTier && canOwnTeamsAt(tier, stationsOf(p)[0] ?? null)
+      Boolean(grade) &&
+      tier !== null &&
+      onTheFloor &&
+      tier < bottomTier &&
+      canOwnTeamsAt(tier, stationsOf(p)[0] ?? null)
     return (
       <article
         key={p.id}
@@ -719,27 +691,31 @@ export default function WorkerManagement() {
           {displayName(p)}
           {isMe && <span className="you-chip">you</span>}
         </span>
-        {!mini && !(hideStation && !team) && (
+        {/* Inside a station or team box the surrounding box already says
+            the station and the team, so the block is just a name. */}
+        {!mini && !inContext && onTheFloor && (
           <span className="wm-block-meta">
-            {hideStation ? team?.name : `${stationLabel(p)}${team ? ` · ${team.name}` : ''}`}
+            {stationLabel(p)}
+            {team ? ` · ${team.name}` : ''}
           </span>
         )}
-        <span className="wm-block-foot">
-          {under > 0 ? <span className="wm-under">{under} under</span> : <span />}
-          {canAddTeam && (
-            <button
-              type="button"
-              className="wm-add"
-              title={`Add a team under ${displayName(p)}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                createTeam(p)
-              }}
-            >
-              + Team
-            </button>
-          )}
-        </span>
+        {canAddTeam && (
+          <span className="wm-block-foot">
+            {
+              <button
+                type="button"
+                className="wm-add"
+                title={`Add a team under ${displayName(p)}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  createTeam(p)
+                }}
+              >
+                + Team
+              </button>
+            }
+          </span>
+        )}
       </article>
     )
   }
