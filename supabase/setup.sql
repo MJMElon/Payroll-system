@@ -162,6 +162,10 @@ create table if not exists public.jobs (
 alter table public.jobs add column if not exists grade_id uuid references public.grades (id);
 alter table public.jobs drop constraint if exists jobs_station_id_name_key;
 
+-- Written just before a proposed piece rate is deleted, so the audit log's
+-- delete entry (which snapshots the whole row) carries the reason why.
+alter table public.jobs add column if not exists delete_remark text;
+
 -- Grade tag assigned to a worker/user (their station tag is workers.station_id).
 alter table public.workers add column if not exists grade_id uuid references public.grades (id);
 
@@ -1087,6 +1091,14 @@ create policy "approvers update jobs" on public.jobs
       where p.id = auth.uid() and p.can_approve_rates
     )
     or public.my_capabilities() && array['verify', 'approve', 'rate-verify', 'rate-approve']
+  );
+
+-- Approvers may also delete a proposed rate (the View window asks for a
+-- remark first, which the audit log keeps).
+drop policy if exists "approvers delete jobs" on public.jobs;
+create policy "approvers delete jobs" on public.jobs
+  for delete using (
+    public.my_capabilities() && array['rate-verify', 'rate-approve']
   );
 
 drop policy if exists "rate creators write piece_rates" on public.piece_rates;

@@ -15,7 +15,7 @@
 // the tag's order in Settings).
 // Tables used: stations, grades, jobs, piece_rates (see supabase/setup.sql).
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import Select, { MultiSelect, type SelectOption } from '../components/Select'
 import { useAuth } from '../context/AuthContext'
@@ -74,7 +74,6 @@ export default function PieceRate() {
   const canManage = profile?.role === 'admin' || profile?.role === 'manager'
   const isAdmin = profile?.role === 'admin'
   const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
-  const [showApprovals, setShowApprovals] = useState(false)
   // The masterlist is what the module is FOR, so it leads and opens first;
   // approvals and history follow it.
   const [tab, setTab] = useState<'master' | 'approval' | 'history'>('master')
@@ -221,19 +220,9 @@ export default function PieceRate() {
           {/* The two module actions belong to the module, not to one tab —
               the masterlist is the front page now, so "create" has to be
               reachable from it as well as from the approvals tracker. */}
-          {tab !== 'history' && (canCreate || isApprover) && (
+          {tab !== 'history' && canCreate && (
             <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-              {isApprover && (
-                <button className="btn ghost badge-holder" onClick={() => setShowApprovals(true)}>
-                  Approvals
-                  {openApprovals.length > 0 && (
-                    <span className="count-badge">{openApprovals.length}</span>
-                  )}
-                </button>
-              )}
-              {canCreate && (
-                <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
-              )}
+              <button className="btn" onClick={() => setModal('create')}>+ Create new piece rate</button>
             </div>
           )}
 
@@ -248,7 +237,9 @@ export default function PieceRate() {
                   pendingCount={openApprovals.length}
                   canManage={canManage}
                   canResubmit={canManage || canCreate || isApprover}
-                  onEdit={(j) => setModal(j)}
+                  canVerify={canVerify}
+                  canFinal={canFinal}
+                  myEmail={profile?.email ?? 'unknown'}
                   onChanged={load}
                   onError={setError}
                 />
@@ -277,21 +268,6 @@ export default function PieceRate() {
           )}
         </div>
       </div>
-
-      {showApprovals && (
-        <ApprovalModal
-          items={openApprovals}
-          stations={stations}
-          grades={grades}
-          currentRate={latestRate}
-          myEmail={profile?.email ?? 'unknown'}
-          canVerify={canVerify}
-          canFinal={canFinal}
-          onClose={() => setShowApprovals(false)}
-          onChanged={load}
-          onError={setError}
-        />
-      )}
 
       {modal === 'create' && (
         <CreateRatesModal
@@ -441,118 +417,11 @@ function RateCell({ rate }: { rate: Rate | undefined }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Approvals pop-out — two-step flow: a 'verify' approver checks the   */
-/* proposal, then an 'approve' approver (management) makes it final.   */
-/* ------------------------------------------------------------------ */
-
-function ApprovalModal({
-  items,
-  stations,
-  grades,
-  currentRate,
-  myEmail,
-  canVerify,
-  canFinal,
-  onClose,
-  onChanged,
-  onError,
-}: {
-  items: Job[]
-  stations: Station[]
-  grades: Grade[]
-  currentRate: Map<string, Rate>
-  myEmail: string
-  canVerify: boolean
-  canFinal: boolean
-  onClose: () => void
-  onChanged: () => void
-  onError: (m: string | null) => void
-}) {
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
-
-  async function act(job: Job, fields: Partial<Job> & { approval_status: Job['approval_status'] }) {
-    const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
-    if (error) onError(error.message)
-    else onChanged()
-  }
-
-  const verify = (j: Job) =>
-    act(j, { approval_status: 'verified', verified_by: myEmail, verified_at: new Date().toISOString() } as never)
-  const approve = (j: Job) =>
-    act(j, { approval_status: 'approved', approved_by: myEmail, approved_at: new Date().toISOString() } as never)
-  const reject = (j: Job) =>
-    act(j, {
-      approval_status: 'rejected',
-      verified_by: null,
-      verified_at: null,
-      approved_by: null,
-      approved_at: null,
-    } as never)
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
-        <div className="row-form spread">
-          <h2>New piece rate approval</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-        <p className="muted small">
-          Flow: proposed → <strong>verified</strong> (checker) → <strong>approved</strong> (management).
-        </p>
-
-        {items.length === 0 ? (
-          <p className="muted">Nothing waiting for approval.</p>
-        ) : (
-          items.map((j) => {
-            const rate = currentRate.get(j.id)
-            const tag = gradeName(j.grade_id)
-            return (
-              <div className="approval-item" key={j.id}>
-                <div className="row-form spread">
-                  <div>
-                    <strong>{j.name}</strong>{' '}
-                    {tag && <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span>}
-                    <div className="muted small">
-                      {stationName(j.station_id)} · {j.unit} · proposed rate{' '}
-                      <RateCell rate={rate} />
-                      {rate && <> · effective {rate.effective_from}</>}
-                    </div>
-                    <div className="small approval-trail">
-                      {j.approval_status === 'pending' && <span className="badge warn">waiting verification</span>}
-                      {j.approval_status === 'verified' && <span className="badge warn">waiting approval</span>}
-                      {j.verified_by && (
-                        <span className="badge ok">verified by {j.verified_by}</span>
-                      )}
-                      {j.approved_by && (
-                        <span className="badge ok">approved by {j.approved_by}</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="row-form">
-                    {j.approval_status === 'pending' && canVerify && (
-                      <button className="btn" onClick={() => verify(j)}>Verify</button>
-                    )}
-                    {j.approval_status === 'verified' && canFinal && (
-                      <button className="btn" onClick={() => approve(j)}>Approve</button>
-                    )}
-                    {(canVerify || canFinal) && (
-                      <button className="btn ghost danger" onClick={() => reject(j)}>Reject</button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Pending Approval tracker — every piece rate not yet approved, so   */
-/* creators and approvers can see where a submission stands.          */
+/* Pending Approval tracker — every piece rate not yet approved. The   */
+/* two-step flow lives on the rows themselves: a 'verify' holder       */
+/* checks a proposal, then an 'approve' holder makes it final. View    */
+/* opens the full details, and that is where a proposal is deleted —   */
+/* with a remark saying why, kept in the audit log.                    */
 /* ------------------------------------------------------------------ */
 
 const STATUS_LABEL: Record<Job['approval_status'], string> = {
@@ -577,7 +446,9 @@ function SubmissionsList({
   pendingCount,
   canManage,
   canResubmit,
-  onEdit,
+  canVerify,
+  canFinal,
+  myEmail,
   onChanged,
   onError,
 }: {
@@ -588,21 +459,28 @@ function SubmissionsList({
   pendingCount: number
   canManage: boolean
   canResubmit: boolean
-  onEdit: (j: Job) => void
+  canVerify: boolean
+  canFinal: boolean
+  myEmail: string
   onChanged: () => void
   onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
+  const [viewing, setViewing] = useState<Job | null>(null)
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
 
-  async function remove(j: Job) {
-    if (!window.confirm(`Delete "${j.name}"? This fails if it's already used in production or payroll records.`)) return
-    const { error } = await supabase.from('jobs').delete().eq('id', j.id)
+  async function act(job: Job, fields: Partial<Job> & { approval_status: Job['approval_status'] }) {
+    const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
     if (error) onError(error.message)
     else onChanged()
   }
+
+  const verify = (j: Job) =>
+    act(j, { approval_status: 'verified', verified_by: myEmail, verified_at: new Date().toISOString() } as never)
+  const approve = (j: Job) =>
+    act(j, { approval_status: 'approved', approved_by: myEmail, approved_at: new Date().toISOString() } as never)
 
   // A rejected proposal goes back into the approval queue from the start.
   async function resubmit(j: Job) {
@@ -649,20 +527,20 @@ function SubmissionsList({
         <table className="table">
           <thead>
             <tr>
+              <th>Tier</th>
               <th>Station</th>
               <th>Work description</th>
-              <th>Position</th>
-              <th>Unit</th>
               <th className="right">Proposed rate</th>
+              <th>Unit</th>
               <th>Effective date</th>
               <th>Status</th>
-              {(canManage || canResubmit) && <th className="right">Actions</th>}
+              <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {list.length === 0 && (
               <tr>
-                <td colSpan={canManage || canResubmit ? 8 : 7} className="muted">Nothing waiting for approval.</td>
+                <td colSpan={8} className="muted">Nothing waiting for approval.</td>
               </tr>
             )}
             {list.map((j) => {
@@ -670,30 +548,27 @@ function SubmissionsList({
               const tag = gradeName(j.grade_id)
               return (
                 <tr key={j.id}>
+                  <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
                   <td>{stationName(j.station_id)}</td>
                   <td>{j.name}</td>
-                  <td>{tag ? <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>{tag}</span> : <span className="muted">—</span>}</td>
-                  <td className="muted">{j.unit}</td>
                   <td className="right">
                     {rate ? <RateCell rate={rate} /> : <span className="badge off">no rate</span>}
                   </td>
+                  <td className="muted">{j.unit}</td>
                   <td className="muted">{rate ? rate.effective_from : '—'}</td>
                   <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
-                  {(canManage || canResubmit) && (
-                    <td className="right">
-                      {j.approval_status === 'rejected' && canResubmit && (
-                        <>
-                          <button className="linkbtn" onClick={() => resubmit(j)}>Resubmit</button>{' '}
-                        </>
-                      )}
-                      {canManage && (
-                        <>
-                          <button className="linkbtn" onClick={() => onEdit(j)}>Edit</button>{' '}
-                          <button className="linkbtn danger" onClick={() => remove(j)}>Delete</button>
-                        </>
-                      )}
-                    </td>
-                  )}
+                  <td className="right">
+                    <button className="linkbtn" onClick={() => setViewing(j)}>View</button>{' '}
+                    {j.approval_status === 'pending' && canVerify && (
+                      <button className="linkbtn" onClick={() => verify(j)}>Verify</button>
+                    )}
+                    {j.approval_status === 'verified' && canFinal && (
+                      <button className="linkbtn" onClick={() => approve(j)}>Approve</button>
+                    )}
+                    {j.approval_status === 'rejected' && canResubmit && (
+                      <button className="linkbtn" onClick={() => resubmit(j)}>Resubmit</button>
+                    )}
+                  </td>
                 </tr>
               )
             })}
@@ -701,6 +576,157 @@ function SubmissionsList({
         </table>
       </div>
       <p className="muted small">{list.length} submission(s) shown.</p>
+
+      {viewing && (
+        <ViewRateModal
+          job={viewing}
+          rate={currentRate.get(viewing.id)}
+          stationName={stationName(viewing.station_id)}
+          grades={grades}
+          canDelete={canManage || canVerify || canFinal}
+          onClose={() => setViewing(null)}
+          onChanged={() => {
+            setViewing(null)
+            onChanged()
+          }}
+          onError={onError}
+        />
+      )}
+    </div>
+  )
+}
+
+/** The full details of one proposal, and the place a proposal dies: the
+ *  delete asks for a remark saying why, writes it onto the row, then
+ *  removes it — so the audit log holds both the reason and the rate. */
+function ViewRateModal({
+  job,
+  rate,
+  stationName,
+  grades,
+  canDelete,
+  onClose,
+  onChanged,
+  onError,
+}: {
+  job: Job
+  rate: Rate | undefined
+  stationName: string
+  grades: Grade[]
+  canDelete: boolean
+  onClose: () => void
+  onChanged: () => void
+  onError: (m: string | null) => void
+}) {
+  const [remark, setRemark] = useState('')
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const grade = grades.find((g) => g.id === job.grade_id)
+  const tiered = rate?.tier2_rate != null
+
+  async function destroy() {
+    if (!remark.trim()) return onError('Say why this proposed piece rate is being deleted.')
+    setDeleting(true)
+    onError(null)
+    // The remark goes onto the row first: the audit trail logs the update
+    // and then the delete, so the reason survives the row itself.
+    const { error: remarkErr } = await supabase
+      .from('jobs')
+      .update({ delete_remark: remark.trim() } as never)
+      .eq('id', job.id)
+    if (remarkErr) {
+      setDeleting(false)
+      return onError(remarkErr.message)
+    }
+    // A delete refused by row security still "succeeds" with zero rows,
+    // so ask for the ids back and treat an empty answer as a refusal.
+    const { data, error } = await supabase.from('jobs').delete().eq('id', job.id).select('id')
+    setDeleting(false)
+    if (error) {
+      onError(
+        error.message.includes('foreign key')
+          ? 'This piece rate is already used in production or payroll records, so it cannot be deleted.'
+          : error.message,
+      )
+    } else if (!data || data.length === 0) {
+      onError('You are not allowed to delete this piece rate.')
+    } else {
+      onChanged()
+    }
+  }
+
+  const Row = ({ label, children }: { label: string; children: ReactNode }) => (
+    <div className="view-row">
+      <span className="view-label">{label}</span>
+      <span className="view-value">{children}</span>
+    </div>
+  )
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="row-form spread">
+          <h2>Piece rate details</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <div className="stack" style={{ gap: '0.4rem' }}>
+          <Row label="Tier">
+            {grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : 'All positions'}
+          </Row>
+          <Row label="Station">{stationName}</Row>
+          <Row label="Work description">{job.name}</Row>
+          {tiered ? (
+            <>
+              <Row label="Tier 1 — 1st to 4th /hr">RM {Number(rate!.rate).toFixed(2)}</Row>
+              <Row label="Tier 2 — 5th onward /hr">RM {Number(rate!.tier2_rate).toFixed(2)}</Row>
+            </>
+          ) : (
+            <Row label="Proposed rate">
+              {rate ? `RM ${Number(rate.rate).toFixed(2)}` : '—'}
+            </Row>
+          )}
+          <Row label="Unit">{job.unit}</Row>
+          <Row label="Effective date">{rate ? rate.effective_from : '—'}</Row>
+          <Row label="Status">
+            <span className={STATUS_CLASS[job.approval_status]}>{STATUS_LABEL[job.approval_status]}</span>
+          </Row>
+          {job.verified_by && <Row label="Verified by">{job.verified_by}</Row>}
+          {job.approved_by && <Row label="Approved by">{job.approved_by}</Row>}
+        </div>
+
+        {canDelete && !confirming && (
+          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn ghost danger" onClick={() => setConfirming(true)}>
+              Delete piece rate
+            </button>
+          </div>
+        )}
+        {canDelete && confirming && (
+          <div className="stack" style={{ gap: '0.5rem' }}>
+            <label className="field">
+              <span>Why is this proposed piece rate being deleted?</span>
+              <textarea
+                rows={2}
+                value={remark}
+                onChange={(e) => setRemark(e.target.value)}
+                autoFocus
+              />
+            </label>
+            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+              <button className="btn ghost" onClick={() => setConfirming(false)}>Keep it</button>
+              <button
+                className="btn danger"
+                disabled={deleting || !remark.trim()}
+                onClick={destroy}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1414,6 +1440,7 @@ function CreateRatesModal({
                     onChange={(v) => patch(r.key, { gradeIds: v })}
                     options={tierOptions}
                     placeholder="All positions"
+                    selectAllLabel="All tiers"
                     ariaLabel={`Row ${i + 1} tier tag`}
                   />
                 </div>
@@ -1426,6 +1453,7 @@ function CreateRatesModal({
                     onChange={(v) => patch(r.key, { stationIds: v })}
                     options={stationChoices}
                     placeholder="Choose station tag"
+                    selectAllLabel="All stations"
                     ariaLabel={`Row ${i + 1} station tag`}
                   />
                 </div>

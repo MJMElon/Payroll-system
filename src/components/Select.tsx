@@ -33,6 +33,7 @@ export function MultiSelect({
   block = false,
   ariaLabel,
   invalid = false,
+  selectAllLabel,
 }: {
   values: string[]
   onChange: (values: string[]) => void
@@ -41,6 +42,9 @@ export function MultiSelect({
   block?: boolean
   ariaLabel?: string
   invalid?: boolean
+  /** Show a "Select All" row above the options — one tick for the lot.
+   *  The label given is what the trigger reads when everything is on. */
+  selectAllLabel?: string
 }) {
   // Where the panel sits on the screen. It is placed against the window
   // rather than inside the trigger, so a window that scrolls its own
@@ -76,7 +80,7 @@ export function MultiSelect({
     if (open) return setAt(null)
     const r = rootRef.current?.getBoundingClientRect()
     if (!r) return
-    const height = Math.min(240, options.length * 38 + 10)
+    const height = Math.min(240, (options.length + (selectAllLabel ? 1 : 0)) * 38 + 10)
     const below = window.innerHeight - r.bottom
     setAt({
       left: r.left,
@@ -86,7 +90,9 @@ export function MultiSelect({
   }
 
   const chosen = options.filter((o) => values.includes(o.value))
-  const label = chosen.map((o) => o.label).join(', ')
+  const allOn = options.length > 0 && chosen.length === options.length
+  const label =
+    allOn && selectAllLabel ? selectAllLabel : chosen.map((o) => o.label).join(', ')
 
   function toggle(value: string) {
     onChange(values.includes(value) ? values.filter((v) => v !== value) : [...values, value])
@@ -124,6 +130,23 @@ export function MultiSelect({
           style={{ left: at.left, top: at.top, minWidth: at.width }}
         >
           {options.length === 0 && <div className="ui-select-empty">Nothing to pick.</div>}
+          {selectAllLabel && options.length > 0 && (
+            <button
+              type="button"
+              role="option"
+              aria-selected={allOn}
+              className="ui-select-option select-all"
+              onClick={() => onChange(allOn ? [] : options.map((o) => o.value))}
+            >
+              <span className="ui-select-box" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m5 12 5 5 9-9" />
+                </svg>
+              </span>
+              <span className="ui-select-option-label">{selectAllLabel}</span>
+            </button>
+          )}
           {options.map((o) => (
             <button
               key={o.value}
