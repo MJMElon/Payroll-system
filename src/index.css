@@ -2408,14 +2408,17 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; align-items: center; justify-content: center;
   padding: 2rem;
 }
-.op-lightbox img {
-  max-width: min(92vw, 1100px); max-height: 86vh;
-  border-radius: 14px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
-  background: #fff;
+.op-lightbox-frame {
+  margin: 0; display: flex; flex-direction: column; max-width: min(92vw, 1100px);
+  border-radius: 14px; overflow: hidden; background: #fff;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
 }
-.op-lightbox iframe {
-  width: min(92vw, 1000px); height: 86vh; border: none;
-  border-radius: 14px; background: #fff;
+.op-lightbox-frame img { max-width: 100%; max-height: 78vh; object-fit: contain; background: #10151b; }
+.op-lightbox-frame iframe { width: min(92vw, 1000px); height: 78vh; border: none; background: #fff; }
+/* Under the photo: when it was taken, and by whom. */
+.op-lightbox-caption {
+  display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  padding: 0.65rem 0.9rem; font-size: 0.88rem; background: var(--surface);
 }
 .op-lightbox .modal-close {
   position: absolute; top: 1rem; right: 1rem;
