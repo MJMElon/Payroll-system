@@ -2182,7 +2182,7 @@ function EntryDetail({
   decide?: { canVerify: boolean; canApprove: boolean; busy: boolean; act: (next: 'verified' | 'approved' | 'rejected') => void }
   /** Why no decision is offered, when none is. The caller knows; guessing
    *  it here got it wrong and told people their tag was at fault. */
-  blocked?: 'own' | 'no-permission'
+  blocked?: 'own' | 'no-permission' | 'not-below'
 }) {
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
@@ -2321,7 +2321,9 @@ function EntryDetail({
             <div className="mob-sub">
               {blocked === 'own'
                 ? 'This is your own record — it is reviewed by somebody above you.'
-                : 'Your tier tag has no verify or approve permission. Tick one in Settings → Tags management.'}
+                : blocked === 'not-below'
+                  ? 'Verify and approve reach down the tiers. This record sits at your own tier or above it.'
+                  : 'Your tier tag has no verify or approve permission. Tick one in Settings → Tags management.'}
             </div>
           </div>
         )}
@@ -2641,6 +2643,16 @@ function MyWorkTab({
     if (mine.error) onError(mine.error.message)
     const own = (mine.data ?? []) as ProductionEntry[]
     setEntries(own)
+    // The signed-in person submitted these, so place them on the ladder
+    // too — otherwise their own records fall through the rung test.
+    if (profileId) {
+      const { data: me } = await supabase
+        .from('access_profiles')
+        .select('id, full_name, email, grade_id, station_id, station_ids')
+        .eq('id', profileId)
+        .maybeSingle()
+      if (me) setSubmitters((prev) => new Map(prev).set(profileId, me as Profile))
+    }
 
     // Never your own work — nobody verifies themselves.
     let waiting: ProductionEntry[] = []
@@ -2650,23 +2662,44 @@ function MyWorkTab({
         .select('*')
         .in('approval_status', ['pending', 'verified'])
         .order('created_at', { ascending: true })
-      waiting = ((data ?? []) as ProductionEntry[]).filter(
+      // Whose work this tier may act on is decided by the LADDER: verify
+      // and approve reach down the tiers and never sideways or up. Reading
+      // it off the account instead meant that previewing a tier could
+      // never review anything the previewer had submitted — which, on a
+      // demo driven from one login, is most of the records there are.
+      const all = (data ?? []) as ProductionEntry[]
+      const submitterIds = [...new Set(all.map((e) => e.user_id).filter(Boolean))] as string[]
+      let byId = new Map<string, Profile>()
+      if (submitterIds.length > 0) {
+        const { data: p } = await supabase
+          .from('access_profiles')
+          .select('id, full_name, email, grade_id, station_id, station_ids')
+          .in('id', submitterIds)
+        byId = new Map(((p ?? []) as Profile[]).map((x) => [x.id, x]))
+      }
+      const tierOf = (userId: string | null | undefined) => {
+        const who = userId ? byId.get(userId) : undefined
+        return who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order ?? null : null
+      }
+      const below = (e: ProductionEntry) => {
+        const order = tierOf(e.user_id)
+        // An untagged submitter cannot be placed on the ladder, so fall
+        // back to the old rule rather than hand out a review by accident.
+        if (order == null || tier == null) return e.user_id !== profileId
+        return order > tier.sort_order
+      }
+      waiting = all.filter(
         (e) =>
-          e.user_id !== profileId &&
+          below(e) &&
           ((canVerify && e.approval_status === 'pending') ||
             (canApprove && e.approval_status === 'verified')),
       )
       setQueue(waiting)
-      const ids = [...new Set(waiting.map((e) => e.user_id).filter(Boolean))] as string[]
-      if (ids.length > 0) {
-        const { data: p } = await supabase
-          .from('access_profiles')
-          .select('id, full_name, email, grade_id, station_id, station_ids')
-          .in('id', ids)
-        const rows = (p ?? []) as Profile[]
-        setNames(new Map(rows.map((x) => [x.id, profileName(x)])))
-        setSubmitters(new Map(rows.map((x) => [x.id, x])))
-      }
+      // Keep EVERY submitter seen, not just the ones still in the queue —
+      // the rung test runs against your own records too, and a map that
+      // only covers the queue leaves those unplaceable.
+      setSubmitters(byId)
+      setNames(new Map([...byId.values()].map((x) => [x.id, profileName(x)])))
     }
 
     // How many photos back each entry, so a row can say so without opening.
@@ -2746,6 +2779,19 @@ function MyWorkTab({
     load()
   }
 
+  /**
+   * May this tier act on that record? Verify and approve reach DOWN the
+   * ladder, so the test is the submitter's rung against the reader's —
+   * never the account, which on a demo driven from one login excluded
+   * nearly everything.
+   */
+  const reviewable = (e: ProductionEntry) => {
+    const who = e.user_id ? submitters.get(e.user_id) : undefined
+    const order = who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order : null
+    if (order == null || tier == null) return e.user_id !== profileId
+    return order > tier.sort_order
+  }
+
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
   const stationName = (id: string) => stations.find((st) => st.id === id)?.name ?? '?'
   const stat = (e: ProductionEntry) => e.approval_status ?? 'approved'
@@ -2771,20 +2817,21 @@ function MyWorkTab({
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
         onBack={() => setDetail(null)}
+        // The submitter's OWN tag, always — showing the previewed tier
+        // here made a record look as though it came from the rung doing
+        // the looking.
         workerTier={
-          detail.user_id && detail.user_id !== profileId
-            ? grades.find((g) => g.id === submitters.get(detail.user_id!)?.grade_id) ?? null
-            : tier
+          grades.find((g) => g.id === submitters.get(detail.user_id ?? '')?.grade_id) ?? null
         }
         blocked={
-          detail.user_id === profileId
-            ? 'own'
-            : canVerify || canApprove
+          !canVerify && !canApprove
+            ? 'no-permission'
+            : reviewable(detail)
               ? undefined
-              : 'no-permission'
+              : 'not-below'
         }
         decide={
-          detail.user_id !== profileId && (canVerify || canApprove)
+          reviewable(detail) && (canVerify || canApprove)
             ? {
                 canVerify,
                 canApprove,

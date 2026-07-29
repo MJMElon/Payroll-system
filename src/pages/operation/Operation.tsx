@@ -289,12 +289,15 @@ export default function Operation() {
     return p?.grade_id ? grades.find((g) => g.id === p.grade_id) ?? null : null
   }
 
-  // Evidence link for an entry (photo/PDF uploaded with the job record).
-  const evidenceUrl = (entryId: string) => {
+  // Evidence for an entry (photo/PDF uploaded with the job record), with
+  // when it was taken riding along for the lightbox caption.
+  const evidenceOf = (entryId: string): { url: string; takenAt: string | null } | null => {
     const rec = photos.find((p) => p.entry_id === entryId)
-    return rec?.photo_path
-      ? supabase.storage.from('records').getPublicUrl(rec.photo_path).data.publicUrl
-      : null
+    if (!rec?.photo_path) return null
+    return {
+      url: supabase.storage.from('records').getPublicUrl(rec.photo_path).data.publicUrl,
+      takenAt: rec.taken_at ?? null,
+    }
   }
 
   const stat = (e: ProductionEntry) => e.approval_status ?? 'approved'
@@ -787,7 +790,7 @@ export default function Operation() {
           amountFor={amountFor}
           groupQty={groupQty(detailGroup)}
           groupAmount={groupAmount(detailGroup)}
-          evidenceUrl={evidenceUrl}
+          evidenceOf={evidenceOf}
           actionFor={actionFor}
           busy={busy}
           badge={badge}
@@ -817,7 +820,7 @@ function GroupModal({
   amountFor,
   groupQty,
   groupAmount,
-  evidenceUrl,
+  evidenceOf,
   actionFor,
   busy,
   badge,
@@ -834,7 +837,7 @@ function GroupModal({
   amountFor: (jobId: string, qty: number) => number
   groupQty: number
   groupAmount: number
-  evidenceUrl: (entryId: string) => string | null
+  evidenceOf: (entryId: string) => { url: string; takenAt: string | null } | null
   actionFor: (e: ProductionEntry) => 'verified' | 'approved' | null
   busy: string | null
   badge: (s: string) => JSX.Element
@@ -842,8 +845,9 @@ function GroupModal({
   onActMany: (list: ProductionEntry[], next: 'verified' | 'approved') => void
 }) {
   const overlay = useOverlayClose(onClose)
-  // A clicked photo floats over the record instead of leaving for a tab.
-  const [photoView, setPhotoView] = useState<string | null>(null)
+  // A clicked photo floats over the record instead of leaving for a tab,
+  // captioned with when it was taken and by whom.
+  const [photoView, setPhotoView] = useState<{ url: string; takenAt: string | null } | null>(null)
 
   // The day's 24 hours starting at 07:00, each holding the submissions
   // that arrived in it; runs of empty hours fold into one quiet line.
@@ -868,13 +872,6 @@ function GroupModal({
   const toVerify = group.entries.filter((e) => actionFor(e) === 'verified')
   const toApprove = group.entries.filter((e) => actionFor(e) === 'approved')
 
-  // Every distinct name that has stamped an entry in this record.
-  const names = (field: 'verified_by' | 'approved_by') => {
-    const list = [...new Set(group.entries.map((e) => shortWho(e[field])).filter(Boolean))] as string[]
-    return list.length ? list.join(', ') : null
-  }
-  const verifiedBy = names('verified_by')
-  const approvedBy = names('approved_by')
 
   const timeOf = (e: ProductionEntry) =>
     new Date(e.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -885,7 +882,7 @@ function GroupModal({
 
   return (
     <div className="modal-overlay" {...overlay}>
-      <div className="modal modal-view">
+      <div className="modal modal-xwide">
         <div className="row-form spread">
           <div className="op-rec-title">
             <h2>Submitted Work Record</h2>
@@ -917,7 +914,8 @@ function GroupModal({
                   <th className="right">Rate (RM)</th>
                   <th>Photo</th>
                   <th>Status</th>
-                  <th className="right" />
+                  <th className="op-info-col" aria-label="Sign-off info" />
+                  <th className="right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -925,12 +923,12 @@ function GroupModal({
                   sl.entries.length === 0 ? (
                     <tr className="op-tl-empty" key={sl.start}>
                       <td className="op-tl-hour">{hh(DAY_START_HOUR + sl.start)} – {hh(DAY_START_HOUR + sl.end)}</td>
-                      <td colSpan={6} className="op-tl-none">—</td>
+                      <td colSpan={7} className="op-tl-none">—</td>
                     </tr>
                   ) : (
                     sl.entries.map((e, i) => {
                       const step = actionFor(e)
-                      const photo = evidenceUrl(e.id)
+                      const photo = evidenceOf(e.id)
                       return (
                         <tr key={e.id}>
                           <td className="op-tl-hour">
@@ -946,7 +944,7 @@ function GroupModal({
                                 className="op-photo-link"
                                 title="View the photo"
                                 aria-label="View the photo"
-                                onClick={() => setPhotoView(photo)}
+                                onClick={() => setPhotoView({ ...photo, takenAt: photo.takenAt ?? e.created_at })}
                               >
                                 📷
                               </button>
@@ -960,7 +958,17 @@ function GroupModal({
                           >
                             {badge(e.approval_status ?? 'approved')}
                           </td>
-                          <td className="right nowrap">
+                          <td className="op-info-col">
+                            <span
+                              className="op-info"
+                              tabIndex={0}
+                              title={`Verified by: ${shortWho(e.verified_by) ?? '—'}\nApproved by: ${shortWho(e.approved_by) ?? '—'}`}
+                              aria-label={`Verified by ${shortWho(e.verified_by) ?? 'nobody yet'}, approved by ${shortWho(e.approved_by) ?? 'nobody yet'}`}
+                            >
+                              i
+                            </span>
+                          </td>
+                          <td className="right nowrap op-tl-actions">
                             {step === 'verified' && (
                               <button className="linkbtn" disabled={busy === e.id} onClick={() => onAct(e, 'verified')}>
                                 ✓ Verify
@@ -981,6 +989,23 @@ function GroupModal({
                       )
                     })
                   ),
+                )}
+                {(toVerify.length > 0 || toApprove.length > 0) && (
+                  <tr className="op-tl-allrow">
+                    <td colSpan={7} />
+                    <td className="right nowrap op-tl-actions">
+                      {toVerify.length > 0 && (
+                        <button className="linkbtn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
+                          ✓ Verify All
+                        </button>
+                      )}
+                      {toApprove.length > 0 && (
+                        <button className="linkbtn" disabled={busy === 'bulk'} onClick={() => onActMany(toApprove, 'approved')}>
+                          ✓ Approve All
+                        </button>
+                      )}
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -1037,36 +1062,6 @@ function GroupModal({
           )}
         </div>
 
-        {/* Who has signed this record off — stamped entry by entry, read
-            here as one line each. */}
-        <div className="tag-section op-rec-sec">
-          <div className="tag-section-title">Sign-off</div>
-          <div className="op-calc-line">
-            <span>Verified by</span>
-            <span>{verifiedBy ?? '—'}</span>
-          </div>
-          <div className="op-calc-line">
-            <span>Approved by</span>
-            <span>{approvedBy ?? '—'}</span>
-          </div>
-        </div>
-
-        {/* The whole record signed off in one press — same access rules as
-            the per-entry buttons, covering every entry that is ready. */}
-        {(toVerify.length > 0 || toApprove.length > 0) && (
-          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-            {toVerify.length > 0 && (
-              <button className="btn" disabled={busy === 'bulk'} onClick={() => onActMany(toVerify, 'verified')}>
-                ✓ Verify record
-              </button>
-            )}
-            {toApprove.length > 0 && (
-              <button className="btn" disabled={busy === 'bulk'} onClick={() => onActMany(toApprove, 'approved')}>
-                ✓ Approve record
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
       {photoView && (
@@ -1079,11 +1074,22 @@ function GroupModal({
           >
             ×
           </button>
-          {photoView.toLowerCase().includes('.pdf') ? (
-            <iframe src={photoView} title="Attached document" onClick={(e) => e.stopPropagation()} />
-          ) : (
-            <img src={photoView} alt="Photo evidence" onClick={(e) => e.stopPropagation()} />
-          )}
+          <figure className="op-lightbox-frame" onClick={(e) => e.stopPropagation()}>
+            {photoView.url.toLowerCase().includes('.pdf') ? (
+              <iframe src={photoView.url} title="Attached document" />
+            ) : (
+              <img src={photoView.url} alt="Photo evidence" />
+            )}
+            <figcaption className="op-lightbox-caption">
+              <span>
+                📷 Taken{' '}
+                {photoView.takenAt
+                  ? `${fmtDate(photoView.takenAt.slice(0, 10))} · ${new Date(photoView.takenAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}`
+                  : '—'}
+              </span>
+              <span>by <strong>{workerName}</strong></span>
+            </figcaption>
+          </figure>
         </div>
       )}
     </div>
