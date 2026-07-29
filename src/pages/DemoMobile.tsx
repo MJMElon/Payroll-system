@@ -2165,7 +2165,6 @@ function EntryDetail({
   onBack,
   workerTier,
   decide,
-  blocked,
 }: {
   entry: ProductionEntry
   myName: string
@@ -2180,9 +2179,6 @@ function EntryDetail({
   workerTier?: Grade | null
   /** Shown only when the viewer's tag grants the step this record is at. */
   decide?: { canVerify: boolean; canApprove: boolean; busy: boolean; act: (next: 'verified' | 'approved' | 'rejected') => void }
-  /** Why no decision is offered, when none is. The caller knows; guessing
-   *  it here got it wrong and told people their tag was at fault. */
-  blocked?: 'own' | 'no-permission' | 'not-below'
 }) {
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
@@ -2316,24 +2312,6 @@ function EntryDetail({
         {/* An absent button is indistinguishable from a broken one, so the
             reason is stated: your own work, a tag without the permission,
             or a record already past the step you hold. */}
-        {blocked && ['pending', 'verified'].includes(status) && (
-          <div className="mob-card">
-            <div className="mob-sub">
-              {blocked === 'own'
-                ? 'This is your own record — it is reviewed by somebody above you.'
-                : blocked === 'not-below'
-                  ? 'Verify and approve reach down the tiers. This record sits at your own tier or above it.'
-                  : 'Your tier tag has no verify or approve permission. Tick one in Settings → Tags management.'}
-            </div>
-          </div>
-        )}
-        {decide && !decide.canVerify && !decide.canApprove && (
-          <div className="mob-card">
-            <div className="mob-sub">
-              Your tier tag has no verify or approve permission.
-            </div>
-          </div>
-        )}
         {decide && (decide.canVerify || decide.canApprove) && (
           <>
             <div className="row-form" style={{ gap: '0.5rem' }}>
@@ -2350,11 +2328,6 @@ function EntryDetail({
                   onClick={() => decide.act('rejected')}>✗ Reject</button>
               )}
             </div>
-            {decide.canVerify && !decide.canApprove && status === 'verified' && (
-              <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
-                Already verified — a final approver takes it from here.
-              </div>
-            )}
           </>
         )}
 
@@ -2682,10 +2655,10 @@ function MyWorkTab({
         return who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order ?? null : null
       }
       const below = (e: ProductionEntry) => {
+        if (tier == null) return false
+        if (e.user_id === profileId) return true // previewing — see above
         const order = tierOf(e.user_id)
-        // An untagged submitter cannot be placed on the ladder, so fall
-        // back to the old rule rather than hand out a review by accident.
-        if (order == null || tier == null) return e.user_id !== profileId
+        if (order == null) return true
         return order > tier.sort_order
       }
       waiting = all.filter(
@@ -2786,9 +2759,19 @@ function MyWorkTab({
    * nearly everything.
    */
   const reviewable = (e: ProductionEntry) => {
+    if (tier == null) return false
+    // This page is a preview: one login standing in for every tier. The
+    // records to hand were nearly all made by that login, and its own tag
+    // may sit anywhere on the ladder — tagged Management, as here, and
+    // NOTHING is reviewable from any rung. So while previewing, your own
+    // records are open to whichever tier you are standing in. Everyone
+    // else's follow the real rule.
+    if (e.user_id === profileId) return true
     const who = e.user_id ? submitters.get(e.user_id) : undefined
     const order = who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order : null
-    if (order == null || tier == null) return e.user_id !== profileId
+    // An untagged submitter cannot be placed on the ladder; let the tag's
+    // permission decide rather than refuse on a missing field.
+    if (order == null) return true
     return order > tier.sort_order
   }
 
@@ -2822,13 +2805,6 @@ function MyWorkTab({
         // the looking.
         workerTier={
           grades.find((g) => g.id === submitters.get(detail.user_id ?? '')?.grade_id) ?? null
-        }
-        blocked={
-          !canVerify && !canApprove
-            ? 'no-permission'
-            : reviewable(detail)
-              ? undefined
-              : 'not-below'
         }
         decide={
           reviewable(detail) && (canVerify || canApprove)
