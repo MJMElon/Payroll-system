@@ -2283,6 +2283,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   cursor: help; user-select: none;
 }
 .op-info:hover, .op-info:focus-visible { border-color: var(--accent-strong); color: var(--accent-strong); }
+.op-info { appearance: none; background: none; padding: 0; cursor: pointer; }
+/* Clicked open, the "i" answers in a small floating card. */
+.op-info-col { position: relative; }
+.op-info-pop {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 5;
+  min-width: 200px; padding: 0.5rem 0.65rem; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(25, 35, 50, 0.2);
+  font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.25rem;
+  white-space: nowrap;
+}
+.op-info-pop .muted { display: inline-block; min-width: 88px; }
 /* The closing row that signs off everything still waiting. */
 .op-tl-allrow td { border-top: 2px solid var(--accent); padding-top: 0.55rem; }
 .op-tl-allrow .linkbtn { font-weight: 700; }
