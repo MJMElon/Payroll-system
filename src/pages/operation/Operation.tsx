@@ -20,13 +20,15 @@
 // grant can verify, an 'approve' grant can do both, and entries inside a
 // finalized payroll period are frozen (the database enforces that too).
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import Select from '../../components/Select'
 import { useAuth } from '../../context/AuthContext'
 import { useOverlayClose } from '../../lib/useOverlayClose'
 import { useWideShell } from '../../lib/useWideShell'
 import { effectiveCapabilities, tagClass } from '../../lib/tags'
 import {
+  profileName,
   supabase,
   todayISO,
   type Grade,
@@ -82,6 +84,29 @@ function chunk<T>(list: T[], size: number): T[][] {
   const out: T[][] = []
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size))
   return out
+}
+
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
+
+// Camera photos are several MB; shrink to a sensible size before uploading.
+async function compressImage(file: File): Promise<Blob> {
+  try {
+    const MAX = 1600
+    const bitmap = await createImageBitmap(file)
+    const scale = Math.min(1, MAX / Math.max(bitmap.width, bitmap.height))
+    if (scale === 1 && file.size < 800_000) return file
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(bitmap.width * scale)
+    canvas.height = Math.round(bitmap.height * scale)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return file
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close()
+    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.82))
+    return blob && blob.size < file.size ? blob : file
+  } catch {
+    return file
+  }
 }
 
 /* Row action icons — the same set the Settings tables use. */
@@ -157,6 +182,7 @@ export default function Operation() {
   // The open row, by its group key — derived fresh each render so a verify
   // inside the pop-out shows its new status without closing anything.
   const [detailKey, setDetailKey] = useState<string | null>(null)
+  const [showAdd, setShowAdd] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -730,7 +756,9 @@ export default function Operation() {
                 there, waiting to be verified. */}
             {tab === 'open' && (
               <div className="row-form op-tabbar" style={{ justifyContent: 'flex-end' }}>
-                <Link to="/operation/add" className="btn">+ Add Job Record</Link>
+                <button type="button" className="btn" onClick={() => setShowAdd(true)}>
+                  + Add Job Record
+                </button>
               </div>
             )}
 
@@ -777,6 +805,25 @@ export default function Operation() {
           </div>
         </div>
       </div>
+
+      {showAdd && (
+        <AddRecordModal
+          stations={stations}
+          jobs={jobs}
+          people={people}
+          bestRate={bestRate}
+          amountFor={amountFor}
+          lockedPeriods={lockedPeriods}
+          presetStationId={scope !== 'all' ? scope : null}
+          myId={profile?.id ?? null}
+          onClose={() => setShowAdd(false)}
+          onSaved={async () => {
+            setShowAdd(false)
+            setNotice('Job record saved — waiting for verification.')
+            await loadEntries()
+          }}
+        />
+      )}
 
       {detailGroup && (
         <GroupModal
@@ -848,6 +895,8 @@ function GroupModal({
   // A clicked photo floats over the record instead of leaving for a tab,
   // captioned with when it was taken and by whom.
   const [photoView, setPhotoView] = useState<{ url: string; takenAt: string | null } | null>(null)
+  // Which row's "i" is open, answering who verified and who approved it.
+  const [infoFor, setInfoFor] = useState<string | null>(null)
 
   // The day's 24 hours starting at 07:00, each holding the submissions
   // that arrived in it; runs of empty hours fold into one quiet line.
@@ -959,14 +1008,21 @@ function GroupModal({
                             {badge(e.approval_status ?? 'approved')}
                           </td>
                           <td className="op-info-col">
-                            <span
+                            <button
+                              type="button"
                               className="op-info"
-                              tabIndex={0}
-                              title={`Verified by: ${shortWho(e.verified_by) ?? '—'}\nApproved by: ${shortWho(e.approved_by) ?? '—'}`}
-                              aria-label={`Verified by ${shortWho(e.verified_by) ?? 'nobody yet'}, approved by ${shortWho(e.approved_by) ?? 'nobody yet'}`}
+                              aria-expanded={infoFor === e.id}
+                              aria-label="Who verified and approved this row"
+                              onClick={() => setInfoFor(infoFor === e.id ? null : e.id)}
                             >
                               i
-                            </span>
+                            </button>
+                            {infoFor === e.id && (
+                              <div className="op-info-pop" role="dialog">
+                                <div><span className="muted">Verified by</span> {shortWho(e.verified_by) ?? '—'}</div>
+                                <div><span className="muted">Approved by</span> {shortWho(e.approved_by) ?? '—'}</div>
+                              </div>
+                            )}
                           </td>
                           <td className="right nowrap op-tl-actions">
                             {step === 'verified' && (
@@ -1092,6 +1148,283 @@ function GroupModal({
           </figure>
         </div>
       )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Add Job Record — the pop-out. Work date, station, work description,  */
+/* who did it and how much; the calculation reads back from the piece   */
+/* rate masterlist; an optional photo or PDF rides along on save.       */
+/* ------------------------------------------------------------------ */
+
+function AddRecordModal({
+  stations,
+  jobs,
+  people,
+  bestRate,
+  amountFor,
+  lockedPeriods,
+  presetStationId,
+  myId,
+  onClose,
+  onSaved,
+}: {
+  stations: Station[]
+  jobs: Job[]
+  people: Profile[]
+  bestRate: Map<string, PieceRate>
+  amountFor: (jobId: string, qty: number) => number
+  lockedPeriods: { period_start: string; period_end: string }[]
+  presetStationId: string | null
+  myId: string | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const overlay = useOverlayClose(onClose)
+  const [workDate, setWorkDate] = useState(todayISO())
+  const [stationId, setStationId] = useState(presetStationId ?? '')
+  const [jobId, setJobId] = useState('')
+  const [employeeId, setEmployeeId] = useState('')
+  const [quantity, setQuantity] = useState('')
+  const [photo, setPhoto] = useState<File | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  // Only approved, active contracts of the chosen station are offered.
+  const stationJobs = jobs.filter(
+    (j) => j.station_id === stationId && j.active && j.approval_status === 'approved',
+  )
+  const job = jobs.find((j) => j.id === jobId) ?? null
+  const rate = jobId ? bestRate.get(jobId) ?? null : null
+
+  // People tagged to this station come first in spirit: tagged-elsewhere
+  // accounts are excluded, untagged ones may work anywhere.
+  const stationPeople = people.filter((u) => {
+    const tags = u.station_ids && u.station_ids.length > 0 ? u.station_ids : u.station_id ? [u.station_id] : []
+    return tags.length === 0 || (stationId ? tags.includes(stationId) : false)
+  })
+
+  const qty = Number(quantity) || 0
+  const amount = jobId ? amountFor(jobId, qty) : 0
+  const t1 = Math.min(qty, TIER1_UNIT_CAP)
+  const t2 = Math.max(0, qty - TIER1_UNIT_CAP)
+
+  function pickPhoto(ev: ChangeEvent<HTMLInputElement>) {
+    const file = ev.target.files?.[0]
+    ev.target.value = ''
+    if (!file) return
+    if (file.size > MAX_ATTACHMENT_BYTES) return setError('Attachment must be 5MB or smaller.')
+    setError(null)
+    setPhoto(file)
+  }
+
+  async function save(ev: FormEvent) {
+    ev.preventDefault()
+    setError(null)
+    if (!stationId) return setError('Pick a station.')
+    if (!jobId) return setError('Pick a work description.')
+    if (!employeeId) return setError('Choose a name.')
+    if (quantity.trim() === '' || !Number.isFinite(qty) || qty <= 0) {
+      return setError('Work done must be a positive number.')
+    }
+    if (workDate > todayISO()) return setError('Work date cannot be in the future.')
+    if (lockedPeriods.some((pd) => pd.period_start <= workDate && workDate <= pd.period_end)) {
+      return setError('That work date falls in a finalized payroll period and is locked.')
+    }
+    if (qty > 200 && !window.confirm(`Work done ${qty} looks unusually large. Save anyway?`)) return
+    setSaving(true)
+    try {
+      const { data, error: insErr } = await supabase
+        .from('production_entries')
+        .insert({
+          work_date: workDate,
+          station_id: stationId,
+          job_id: jobId,
+          user_id: employeeId,
+          quantity: qty,
+          created_by: myId,
+          // Desktop entries join the same verify -> approve queue as
+          // mobile ones.
+          approval_status: 'pending',
+        })
+        .select()
+        .single()
+      if (insErr) throw new Error(insErr.message)
+
+      if (photo && data) {
+        const isImage = photo.type.startsWith('image/')
+        const body = isImage ? await compressImage(photo) : photo
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const ext = photo.type === 'application/pdf' ? 'pdf' : 'jpg'
+        const path = `${stationId}/entry-${stamp}.${ext}`
+        const { error: upErr } = await supabase.storage
+          .from('records')
+          .upload(path, body, { contentType: photo.type || 'image/jpeg' })
+        if (upErr) throw new Error(`Record saved, but the attachment failed to upload: ${upErr.message}`)
+        const { error: prErr } = await supabase
+          .from('photo_records')
+          .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
+        if (prErr) throw new Error(`Record saved, but the attachment couldn't be linked: ${prErr.message}`)
+      }
+      onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay" {...overlay}>
+      <form className="modal modal-view" onSubmit={save}>
+        <div className="row-form spread">
+          <h2>Add Job Record</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        <div className="row-form">
+          <label className="field inline">
+            <span>Work Date</span>
+            <input type="date" value={workDate} max={todayISO()} onChange={(e) => setWorkDate(e.target.value)} required />
+          </label>
+          <div className="field inline grow">
+            <span>Station</span>
+            <Select
+              block
+              value={stationId}
+              onChange={(v) => { setStationId(v); setJobId(''); setEmployeeId('') }}
+              options={stations.map((st) => ({ value: st.id, label: st.name }))}
+              placeholder="Pick a station…"
+              ariaLabel="Station"
+            />
+          </div>
+        </div>
+
+        <div className="field">
+          <span>Work Description</span>
+          <Select
+            block
+            value={jobId}
+            onChange={setJobId}
+            options={stationJobs.map((j) => ({ value: j.id, label: j.name }))}
+            placeholder={stationId ? 'Pick the work…' : 'Pick a station first…'}
+            disabled={!stationId}
+            ariaLabel="Work description"
+          />
+        </div>
+
+        <div className="row-form">
+          <div className="field inline grow">
+            <span>Name</span>
+            <Select
+              block
+              value={employeeId}
+              onChange={setEmployeeId}
+              options={stationPeople.map((u) => ({
+                value: u.id,
+                label: `${profileName(u)}${u.employee_code ? ` (${u.employee_code})` : ''}`,
+              }))}
+              placeholder={stationId ? 'Choose who did it…' : 'Pick a station first…'}
+              disabled={!stationId}
+              ariaLabel="Name"
+            />
+          </div>
+          <label className="field inline">
+            <span>Work Done {job?.unit ? `(${job.unit})` : ''}</span>
+            <input
+              inputMode="decimal"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              required
+            />
+          </label>
+        </div>
+
+        {/* The calculation, straight off the piece rate masterlist. */}
+        <div className="tag-section">
+          <div className="tag-section-title">The calculation</div>
+          {!jobId ? (
+            <p className="muted small" style={{ margin: 0 }}>Pick the work to load its rate.</p>
+          ) : !rate ? (
+            <p className="muted small" style={{ margin: 0 }}>No effective piece rate found for this work.</p>
+          ) : (
+            <div className="board-scroll">
+              <table className="table op-contract-table">
+                <thead>
+                  <tr>
+                    <th>Piece rate criteria</th>
+                    <th className="right">Qty count</th>
+                    <th className="right">Piece rate (RM)</th>
+                    <th className="right">Total (RM)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rate.tier2_rate == null ? (
+                    <tr>
+                      <td>Flat rate · {job?.unit ?? 'unit'}</td>
+                      <td className="right">{qty}</td>
+                      <td className="right">{Number(rate.rate).toFixed(2)}</td>
+                      <td className="right">{(qty * Number(rate.rate)).toFixed(2)}</td>
+                    </tr>
+                  ) : (
+                    <>
+                      <tr>
+                        <td>1st–4th unit of the hour</td>
+                        <td className="right">{t1}</td>
+                        <td className="right">{Number(rate.rate).toFixed(2)}</td>
+                        <td className="right">{(t1 * Number(rate.rate)).toFixed(2)}</td>
+                      </tr>
+                      <tr>
+                        <td>5th unit onward</td>
+                        <td className="right">{t2}</td>
+                        <td className="right">{Number(rate.tier2_rate).toFixed(2)}</td>
+                        <td className="right">{(t2 * Number(rate.tier2_rate)).toFixed(2)}</td>
+                      </tr>
+                    </>
+                  )}
+                  <tr className="total-row">
+                    <td colSpan={3}>Total amount</td>
+                    <td className="right">{amount.toFixed(2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+          {rate && <p className="small muted" style={{ margin: 0 }}>🔒 Rate effective from {rate.effective_from}</p>}
+        </div>
+
+        <div className="tag-section">
+          <div className="tag-section-title">Attachment (optional)</div>
+          {photo ? (
+            <div className="row-form spread">
+              <span className="small">{photo.name}</span>
+              <button type="button" className="linkbtn danger" onClick={() => setPhoto(null)}>Remove</button>
+            </div>
+          ) : (
+            <div className="row-form">
+              <label className="btn ghost">
+                📷 Take Photo
+                <input type="file" accept="image/*" capture="environment" onChange={pickPhoto} hidden />
+              </label>
+              <label className="btn ghost">
+                ⬆ Upload File
+                <input type="file" accept="image/*,.pdf" onChange={pickPhoto} hidden />
+              </label>
+            </div>
+          )}
+          <p className="small muted" style={{ margin: 0 }}>JPG, PNG, PDF (max 5MB).</p>
+        </div>
+
+        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn" type="submit" disabled={saving}>
+            {saving ? 'Saving…' : '💾 Save Record'}
+          </button>
+        </div>
+      </form>
     </div>
   )
 }
