@@ -307,6 +307,55 @@ export default function PieceRate() {
 /* Sidebar icons                                                      */
 /* ------------------------------------------------------------------ */
 
+function IconEye() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  )
+}
+
+function IconCheck() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m4 12.5 5 5L20 6.5" />
+    </svg>
+  )
+}
+
+function IconDoubleCheck() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m2 13 4 4L14 8" />
+      <path d="m11 13 4 4L23 8" />
+    </svg>
+  )
+}
+
+function IconCross() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 6l12 12" />
+      <path d="M18 6 6 18" />
+    </svg>
+  )
+}
+
+function IconRedo() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  )
+}
+
 function IconApproval() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -467,6 +516,8 @@ function SubmissionsList({
 }) {
   const [stationFilter, setStationFilter] = useState('')
   const [viewing, setViewing] = useState<Job | null>(null)
+  // The double-check window: which proposal, and what the click meant.
+  const [confirm, setConfirm] = useState<{ job: Job; mode: 'verify' | 'approve' | 'reject' } | null>(null)
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
@@ -481,6 +532,14 @@ function SubmissionsList({
     act(j, { approval_status: 'verified', verified_by: myEmail, verified_at: new Date().toISOString() } as never)
   const approve = (j: Job) =>
     act(j, { approval_status: 'approved', approved_by: myEmail, approved_at: new Date().toISOString() } as never)
+  const reject = (j: Job) =>
+    act(j, {
+      approval_status: 'rejected',
+      verified_by: null,
+      verified_at: null,
+      approved_by: null,
+      approved_at: null,
+    } as never)
 
   // A rejected proposal goes back into the approval queue from the start.
   async function resubmit(j: Job) {
@@ -558,16 +617,62 @@ function SubmissionsList({
                   <td className="muted">{rate ? rate.effective_from : '—'}</td>
                   <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
                   <td className="right">
-                    <button className="linkbtn" onClick={() => setViewing(j)}>View</button>{' '}
-                    {j.approval_status === 'pending' && canVerify && (
-                      <button className="linkbtn" onClick={() => verify(j)}>Verify</button>
-                    )}
-                    {j.approval_status === 'verified' && canFinal && (
-                      <button className="linkbtn" onClick={() => approve(j)}>Approve</button>
-                    )}
-                    {j.approval_status === 'rejected' && canResubmit && (
-                      <button className="linkbtn" onClick={() => resubmit(j)}>Resubmit</button>
-                    )}
+                    <span className="row-actions">
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="View details"
+                        aria-label={`View ${j.name}`}
+                        onClick={() => setViewing(j)}
+                      >
+                        <IconEye />
+                      </button>
+                      {j.approval_status === 'pending' && canVerify && (
+                        <button
+                          type="button"
+                          className="icon-btn ok"
+                          title="Verify"
+                          aria-label={`Verify ${j.name}`}
+                          onClick={() => setConfirm({ job: j, mode: 'verify' })}
+                        >
+                          <IconCheck />
+                        </button>
+                      )}
+                      {j.approval_status === 'verified' && canFinal && (
+                        <button
+                          type="button"
+                          className="icon-btn ok"
+                          title="Approve"
+                          aria-label={`Approve ${j.name}`}
+                          onClick={() => setConfirm({ job: j, mode: 'approve' })}
+                        >
+                          <IconDoubleCheck />
+                        </button>
+                      )}
+                      {(j.approval_status === 'pending' || j.approval_status === 'verified') &&
+                        (canVerify || canFinal) && (
+                          <button
+                            type="button"
+                            className="icon-btn danger"
+                            title="Reject"
+                            aria-label={`Reject ${j.name}`}
+                            onClick={() => setConfirm({ job: j, mode: 'reject' })}
+                          >
+                            <IconCross />
+                          </button>
+                        )}
+                      {j.approval_status === 'rejected' && canResubmit && (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="Resubmit for approval"
+                          aria-label={`Resubmit ${j.name}`}
+                          onClick={() => resubmit(j)}
+                        >
+                          <IconRedo />
+                        </button>
+                      )}
+                    </span>
                   </td>
                 </tr>
               )
@@ -576,6 +681,30 @@ function SubmissionsList({
         </table>
       </div>
       <p className="muted small">{list.length} submission(s) shown.</p>
+
+      {confirm && (
+        <ConfirmActionModal
+          job={confirm.job}
+          mode={confirm.mode}
+          rate={currentRate.get(confirm.job.id)}
+          stationName={stationName(confirm.job.station_id)}
+          grades={grades}
+          canReject={canVerify || canFinal}
+          onClose={() => setConfirm(null)}
+          onConfirm={() => {
+            const { job, mode } = confirm
+            setConfirm(null)
+            if (mode === 'verify') verify(job)
+            else if (mode === 'approve') approve(job)
+            else reject(job)
+          }}
+          onReject={() => {
+            const { job } = confirm
+            setConfirm(null)
+            reject(job)
+          }}
+        />
+      )}
 
       {viewing && (
         <ViewRateModal
@@ -592,6 +721,107 @@ function SubmissionsList({
           onError={onError}
         />
       )}
+    </div>
+  )
+}
+
+/** One question before the pen moves: shows the proposal being acted on
+ *  and asks for a yes. Approving and verifying also offer Reject here, so
+ *  a checker who spots a wrong rate turns it away in the same window. */
+function ConfirmActionModal({
+  job,
+  mode,
+  rate,
+  stationName,
+  grades,
+  canReject,
+  onClose,
+  onConfirm,
+  onReject,
+}: {
+  job: Job
+  mode: 'verify' | 'approve' | 'reject'
+  rate: Rate | undefined
+  stationName: string
+  grades: Grade[]
+  canReject: boolean
+  onClose: () => void
+  onConfirm: () => void
+  onReject: () => void
+}) {
+  const grade = grades.find((g) => g.id === job.grade_id)
+  const tiered = rate?.tier2_rate != null
+  const titles = {
+    verify: 'Verify this piece rate?',
+    approve: 'Approve this piece rate?',
+    reject: 'Reject this piece rate?',
+  }
+  const yes = { verify: 'Yes, verify', approve: 'Yes, approve', reject: 'Yes, reject' }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="row-form spread">
+          <h2>{titles[mode]}</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <div className="stack" style={{ gap: '0.4rem' }}>
+          <div className="view-row">
+            <span className="view-label">Tier</span>
+            <span className="view-value">
+              {grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : 'All positions'}
+            </span>
+          </div>
+          <div className="view-row">
+            <span className="view-label">Station</span>
+            <span className="view-value">{stationName}</span>
+          </div>
+          <div className="view-row">
+            <span className="view-label">Work description</span>
+            <span className="view-value">{job.name}</span>
+          </div>
+          {tiered ? (
+            <>
+              <div className="view-row">
+                <span className="view-label">Tier 1 — 1st to 4th /hr</span>
+                <span className="view-value">RM {Number(rate!.rate).toFixed(2)}</span>
+              </div>
+              <div className="view-row">
+                <span className="view-label">Tier 2 — 5th onward /hr</span>
+                <span className="view-value">RM {Number(rate!.tier2_rate).toFixed(2)}</span>
+              </div>
+            </>
+          ) : (
+            <div className="view-row">
+              <span className="view-label">Proposed rate</span>
+              <span className="view-value">{rate ? `RM ${Number(rate.rate).toFixed(2)}` : '—'}</span>
+            </div>
+          )}
+          <div className="view-row">
+            <span className="view-label">Unit</span>
+            <span className="view-value">{job.unit}</span>
+          </div>
+          <div className="view-row">
+            <span className="view-label">Effective date</span>
+            <span className="view-value">{rate ? rate.effective_from : '—'}</span>
+          </div>
+        </div>
+
+        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          {mode !== 'reject' && canReject && (
+            <button type="button" className="btn ghost danger" onClick={onReject}>Reject</button>
+          )}
+          <button
+            type="button"
+            className={mode === 'reject' ? 'btn danger' : 'btn'}
+            onClick={onConfirm}
+          >
+            {yes[mode]}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
