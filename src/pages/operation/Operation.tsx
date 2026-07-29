@@ -289,12 +289,15 @@ export default function Operation() {
     return p?.grade_id ? grades.find((g) => g.id === p.grade_id) ?? null : null
   }
 
-  // Evidence link for an entry (photo/PDF uploaded with the job record).
-  const evidenceUrl = (entryId: string) => {
+  // Evidence for an entry (photo/PDF uploaded with the job record), with
+  // when it was taken riding along for the lightbox caption.
+  const evidenceOf = (entryId: string): { url: string; takenAt: string | null } | null => {
     const rec = photos.find((p) => p.entry_id === entryId)
-    return rec?.photo_path
-      ? supabase.storage.from('records').getPublicUrl(rec.photo_path).data.publicUrl
-      : null
+    if (!rec?.photo_path) return null
+    return {
+      url: supabase.storage.from('records').getPublicUrl(rec.photo_path).data.publicUrl,
+      takenAt: rec.taken_at ?? null,
+    }
   }
 
   const stat = (e: ProductionEntry) => e.approval_status ?? 'approved'
@@ -787,7 +790,7 @@ export default function Operation() {
           amountFor={amountFor}
           groupQty={groupQty(detailGroup)}
           groupAmount={groupAmount(detailGroup)}
-          evidenceUrl={evidenceUrl}
+          evidenceOf={evidenceOf}
           actionFor={actionFor}
           busy={busy}
           badge={badge}
@@ -817,7 +820,7 @@ function GroupModal({
   amountFor,
   groupQty,
   groupAmount,
-  evidenceUrl,
+  evidenceOf,
   actionFor,
   busy,
   badge,
@@ -834,7 +837,7 @@ function GroupModal({
   amountFor: (jobId: string, qty: number) => number
   groupQty: number
   groupAmount: number
-  evidenceUrl: (entryId: string) => string | null
+  evidenceOf: (entryId: string) => { url: string; takenAt: string | null } | null
   actionFor: (e: ProductionEntry) => 'verified' | 'approved' | null
   busy: string | null
   badge: (s: string) => JSX.Element
@@ -842,8 +845,9 @@ function GroupModal({
   onActMany: (list: ProductionEntry[], next: 'verified' | 'approved') => void
 }) {
   const overlay = useOverlayClose(onClose)
-  // A clicked photo floats over the record instead of leaving for a tab.
-  const [photoView, setPhotoView] = useState<string | null>(null)
+  // A clicked photo floats over the record instead of leaving for a tab,
+  // captioned with when it was taken and by whom.
+  const [photoView, setPhotoView] = useState<{ url: string; takenAt: string | null } | null>(null)
 
   // The day's 24 hours starting at 07:00, each holding the submissions
   // that arrived in it; runs of empty hours fold into one quiet line.
@@ -924,7 +928,7 @@ function GroupModal({
                   ) : (
                     sl.entries.map((e, i) => {
                       const step = actionFor(e)
-                      const photo = evidenceUrl(e.id)
+                      const photo = evidenceOf(e.id)
                       return (
                         <tr key={e.id}>
                           <td className="op-tl-hour">
@@ -940,7 +944,7 @@ function GroupModal({
                                 className="op-photo-link"
                                 title="View the photo"
                                 aria-label="View the photo"
-                                onClick={() => setPhotoView(photo)}
+                                onClick={() => setPhotoView({ ...photo, takenAt: photo.takenAt ?? e.created_at })}
                               >
                                 📷
                               </button>
@@ -1070,11 +1074,22 @@ function GroupModal({
           >
             ×
           </button>
-          {photoView.toLowerCase().includes('.pdf') ? (
-            <iframe src={photoView} title="Attached document" onClick={(e) => e.stopPropagation()} />
-          ) : (
-            <img src={photoView} alt="Photo evidence" onClick={(e) => e.stopPropagation()} />
-          )}
+          <figure className="op-lightbox-frame" onClick={(e) => e.stopPropagation()}>
+            {photoView.url.toLowerCase().includes('.pdf') ? (
+              <iframe src={photoView.url} title="Attached document" />
+            ) : (
+              <img src={photoView.url} alt="Photo evidence" />
+            )}
+            <figcaption className="op-lightbox-caption">
+              <span>
+                📷 Taken{' '}
+                {photoView.takenAt
+                  ? `${fmtDate(photoView.takenAt.slice(0, 10))} · ${new Date(photoView.takenAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}`
+                  : '—'}
+              </span>
+              <span>by <strong>{workerName}</strong></span>
+            </figcaption>
+          </figure>
         </div>
       )}
     </div>
