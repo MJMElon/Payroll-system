@@ -1,3 +1,6 @@
+// First import on purpose: it lifts the tokens out of a password-reset link
+// before the Supabase client or HashRouter can touch the URL.
+import './lib/authLink'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'

@@ -57,6 +57,26 @@ Both are safe in the browser — access is protected by RLS.
 The app uses `HashRouter` and a relative asset base (`base: './'`), so it works on
 Pages without any repo-name configuration or 404 redirect tricks.
 
+## 5. Point the auth emails at your site
+
+Do this once, or every password-reset link will open a page that does not exist —
+on a phone that shows up as *"Safari cannot connect to the server"*.
+
+In Supabase, open **Authentication → URL Configuration** and set:
+
+- **Site URL** — `https://<your-username>.github.io/<repo-name>/`
+  (it starts as `http://localhost:3000`, which no phone can reach)
+- **Redirect URLs** — add both of these, one per line:
+  - `https://<your-username>.github.io/<repo-name>/`
+  - `http://localhost:5173/` (only if you also want reset links to work in dev)
+
+Supabase ignores any `redirectTo` that is not on the Redirect URLs list and quietly
+falls back to the Site URL, so a missing entry looks exactly like a broken link.
+
+The emailed link comes back with its tokens in the URL fragment, which is also where
+`HashRouter` keeps its routes. [`src/lib/authLink.ts`](src/lib/authLink.ts) reads them
+out before the router starts, and `ResetPasswordGate` then asks for the new password.
+
 ## Project structure
 
 ```
