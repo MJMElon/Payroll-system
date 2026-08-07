@@ -751,6 +751,11 @@ alter table public.access_profiles add column if not exists employee_code text;
 create unique index if not exists access_profiles_employee_code_idx
   on public.access_profiles (employee_code) where employee_code is not null;
 
+-- Where a block sits among its row/cell mates on the Team Manage chart —
+-- set by dragging a name onto a teammate. Lower comes first; null queues
+-- at the end, so a fresh placement lands last until it is hand-ordered.
+alter table public.access_profiles add column if not exists chart_pos int;
+
 -- ---------------------------------------------------------------------------
 -- Tiered hourly piece rates (e.g. cage tipping): a job's rate can pay one
 -- rate for the first 4 units done in an hour and a second, higher rate for

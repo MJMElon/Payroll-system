@@ -57,6 +57,9 @@ export interface Profile {
   employee_code?: string | null
   // When the account signed up (drives the Pending Allocation order).
   created_at?: string | null
+  // Where this block sits among its row/cell mates on the team chart —
+  // set by dragging it onto a teammate; lower comes first, null queues last.
+  chart_pos?: number | null
   // Direct upper this user reports to (must be a strictly higher tier).
   supervisor_id?: string | null
   // Per-user grant of the mobile Approvals screen (null = no access).
