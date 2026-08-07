@@ -284,6 +284,23 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
 .ui-select-option[aria-selected='true'] .ui-select-box {
   background: var(--accent); border-color: var(--accent); color: #fff;
 }
+/* Sub-headings inside the All station performance card: the board's
+   name on the left, the week/month chevrons on the right. */
+.board-sub {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.6rem; margin-top: 0.35rem;
+}
+.board-sub h4 {
+  margin: 0; font-size: 0.78rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.board-range-nav { display: inline-flex; gap: 0.3rem; }
+.board-range-nav .icon-btn { width: 28px; height: 28px; border-radius: 8px; }
+.board-range-nav .icon-btn:disabled {
+  opacity: 0.35; cursor: default; border-color: var(--border);
+  color: var(--muted); background: var(--surface);
+}
+
 /* Row actions as square icon blocks — view, verify, approve, reject —
    readable at a glance where text links used to blur together. */
 .row-actions { display: inline-flex; gap: 0.35rem; vertical-align: middle; }
