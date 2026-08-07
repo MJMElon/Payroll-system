@@ -55,6 +55,8 @@ export interface Profile {
   modules?: string[] | null
   tags_confirmed?: boolean
   employee_code?: string | null
+  // When the account signed up (drives the Pending Allocation order).
+  created_at?: string | null
   // Direct upper this user reports to (must be a strictly higher tier).
   supervisor_id?: string | null
   // Per-user grant of the mobile Approvals screen (null = no access).

@@ -88,6 +88,29 @@ function displayName(p: Profile | undefined | null): string {
   return local || p.id.slice(0, 8)
 }
 
+/**
+ * Chart order: the staff no. the user typed in (EMP001, EMP002, …) decides a
+ * block's position; people without one queue after, by name. Numeric-aware,
+ * so EMP2 sits before EMP10.
+ */
+function byStaffNo(a: Profile, b: Profile): number {
+  const ca = a.employee_code?.trim() ?? ''
+  const cb = b.employee_code?.trim() ?? ''
+  if (ca && cb) {
+    return (
+      ca.localeCompare(cb, undefined, { numeric: true, sensitivity: 'base' }) ||
+      displayName(a).localeCompare(displayName(b))
+    )
+  }
+  if (ca !== cb) return ca ? -1 : 1
+  return displayName(a).localeCompare(displayName(b))
+}
+
+/** Pending Allocation order: first signed up, first in line to be placed. */
+function bySignup(a: Profile, b: Profile): number {
+  return (a.created_at ?? '').localeCompare(b.created_at ?? '')
+}
+
 /** First unused "Team A", "Team B", … for a bracket just added. */
 function nextTeamName(taken: string[]): string {
   for (let i = 0; i < 26; i++) {
@@ -190,8 +213,8 @@ export default function WorkerManagement() {
   const stationInScope = (id: string | null) =>
     id === null || seesAll || myStationIds.length === 0 || myStationIds.includes(id)
 
-  const confirmed = profiles.filter((p) => p.tags_confirmed)
-  const pending = profiles.filter((p) => !p.tags_confirmed)
+  const confirmed = profiles.filter((p) => p.tags_confirmed).sort(byStaffNo)
+  const pending = profiles.filter((p) => !p.tags_confirmed).sort(bySignup)
 
   // My branch: me + everyone whose reporting chain reaches me.
   const inMyBranch = (p: Profile): boolean => {
@@ -282,9 +305,7 @@ export default function WorkerManagement() {
         .filter((g) => g.sort_order !== 1)
         .map((g) => ({
         grade: g,
-        people: visible
-          .filter((p) => p.grade_id === g.id)
-          .sort((a, b) => displayName(a).localeCompare(displayName(b))),
+        people: visible.filter((p) => p.grade_id === g.id).sort(byStaffNo),
       })),
     [grades, visible],
   )
@@ -1373,8 +1394,8 @@ function WorkerPanel({
           {canEditProfile ? (
             <>
               <Row label="Tier" value={tierChip} />
-              <EditRow label="Name" value={form.full_name} onChange={set('full_name')} placeholder="Full name" />
-              <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} placeholder="EMP001" />
+              <EditRow label="Name" value={form.full_name} onChange={set('full_name')} />
+              <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} />
               <Row label="Station" value={stationText} />
               <Row label="Team" value={team?.name} />
               <Row label="Email" value={person.email} />
