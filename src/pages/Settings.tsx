@@ -710,7 +710,6 @@ function EntitlementTable({
               <input type="checkbox" checked={on} disabled={locked} onChange={() => onToggle(e.key)} />
               <span className="module-name">{e.label}</span>
             </label>
-            <p className="module-note">{e.hint}</p>
           </div>
         )
       })}
