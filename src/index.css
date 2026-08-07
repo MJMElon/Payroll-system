@@ -1965,6 +1965,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   flex: none; width: 9rem; padding-top: 0.3rem;
   color: var(--muted); font-size: 0.72rem; font-weight: 700;
 }
+/* The head count after a tier label. Half-transparent on purpose: it is
+   there when you look for it and silent when you are not — and at zero it
+   is not rendered at all. */
+.wm-srow-count {
+  margin-left: 0.3rem; opacity: 0.45;
+  font-size: 0.66rem; font-weight: 700; font-variant-numeric: tabular-nums;
+}
 .wm-srow-body {
   flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center;
   border: 1px dashed transparent; border-radius: 9px; padding: 0.15rem;

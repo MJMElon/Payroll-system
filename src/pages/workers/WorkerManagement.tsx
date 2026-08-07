@@ -835,6 +835,11 @@ export default function WorkerManagement() {
 
   if (loading) return <p className="muted">Loading…</p>
 
+  /** The head count beside a tier label — faint, and silent at zero. */
+  function countChip(n: number) {
+    return n > 0 ? <span className="wm-srow-count">{n}</span> : null
+  }
+
   /** The dashed slot that says a name may be dropped here. */
   function addSlot(canDrop: boolean) {
     if (!canDrop) return null
@@ -979,7 +984,7 @@ export default function WorkerManagement() {
 
         {/* The station head runs every team here, so they sit above the grid. */}
         <div className="wm-srow">
-          <span className="wm-srow-label">{headGrade.name} :</span>
+          <span className="wm-srow-label">{headGrade.name} :{countChip(heads.length)}</span>
           <div
             className={`wm-srow-body ${dropKey === headRowKey ? 'over' : ''}`}
             onDragOver={(e) => {
@@ -1096,7 +1101,9 @@ export default function WorkerManagement() {
             {/* One row per tier below the head. */}
             {lowerGrades.map((g) => (
               <Fragment key={g.id}>
-                <span className="wm-srow-label">{g.name} :</span>
+                <span className="wm-srow-label">
+                  {g.name} :{countChip(below.filter((p) => p.grade_id === g.id).length)}
+                </span>
                 {columns.map((t, col) => {
                   const cellKey = `cell:${key}:${g.id}:${t?.id ?? 'none'}`
                   const people = below.filter(
@@ -1157,7 +1164,9 @@ export default function WorkerManagement() {
     const canDropHere = Boolean(grade) && canPlaceOnTier(grade as Grade)
     return (
       <div className="wm-srow" key={grade?.id ?? 'untagged'}>
-        <span className="wm-srow-label">{grade?.name ?? 'No tier tag'} :</span>
+        <span className="wm-srow-label">
+          {grade?.name ?? 'No tier tag'} :{countChip(people.length)}
+        </span>
         <div
           className={`wm-srow-body ${dropKey === rowKey ? 'over' : ''}`}
           onDragOver={(e) => {
