@@ -1748,6 +1748,53 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-block.me { background: #f4fbf7; }
 .wm-block.dragging { opacity: 0.4; }
 .wm-block.over { border-color: var(--accent-strong); border-style: dashed; background: var(--accent-soft); }
+
+/* The whole block wears its tier's colour — the same palette as the tier
+   chips — so a row reads by colour at a glance, not by a hairline on top.
+   These sit after the state rules above, so the fill also holds on "me". */
+.wm-block.fill-blue { background: #dbeafe; border-color: #b3ccf5; }
+.wm-block.fill-blue .wm-block-name { color: #1d4ed8; }
+.wm-block.fill-yellow { background: #fef9c3; border-color: #f3e394; }
+.wm-block.fill-yellow .wm-block-name { color: #a16207; }
+.wm-block.fill-red { background: #fee2e2; border-color: #f6c1c1; }
+.wm-block.fill-red .wm-block-name { color: #b91c1c; }
+.wm-block.fill-green { background: #dcfce7; border-color: #b5ecc9; }
+.wm-block.fill-green .wm-block-name { color: #15803d; }
+.wm-block.fill-grey { background: #eef0f3; border-color: #d8dde3; }
+.wm-block.fill-grey .wm-block-name { color: #4b5563; }
+.wm-block.fill-purple { background: #ede9fe; border-color: #d8cef7; }
+.wm-block.fill-purple .wm-block-name { color: #6d28d9; }
+.wm-block.fill-teal { background: #ccfbf1; border-color: #a2ecdd; }
+.wm-block.fill-teal .wm-block-name { color: #0f766e; }
+.wm-block.fill-orange { background: #ffedd5; border-color: #f8d6ac; }
+.wm-block.fill-orange .wm-block-name { color: #c2410c; }
+.wm-block.fill-pink { background: #fce7f3; border-color: #f5c6df; }
+.wm-block.fill-pink .wm-block-name { color: #be185d; }
+.wm-block.fill-silver {
+  background: linear-gradient(160deg, #f8fafc, #e2e8f0); border-color: #c6d0dc;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 1px 2px rgba(25, 32, 42, 0.06);
+}
+.wm-block.fill-silver .wm-block-name { color: #334155; }
+.wm-block.fill-gold {
+  background: linear-gradient(160deg, #fffbeb, #fde68a); border-color: #ecc75c;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 2px rgba(25, 32, 42, 0.06);
+}
+.wm-block.fill-gold .wm-block-name { color: #713f12; }
+.wm-block.fill-diamond {
+  background: linear-gradient(160deg, #f0f9ff 10%, #ffffff 45%, #dbeffd 90%);
+  border-color: #a8ddf7;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 0 8px rgba(125, 211, 252, 0.45);
+}
+.wm-block.fill-diamond .wm-block-name { color: #0369a1; }
+/* On a tinted block the small print needs a touch more weight to read. */
+.wm-block[class*='fill-'] .wm-block-meta { color: #55606c; }
+/* The states must still show through the colour. */
+.wm-block[class*='fill-'].selected {
+  border-color: var(--accent-strong); box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.wm-block[class*='fill-'].over {
+  border-color: var(--accent-strong); border-style: dashed; background: var(--accent-soft);
+}
 .wm-block-name {
   margin-top: 0.15rem; font-weight: 700; font-size: 0.85rem;
   display: flex; align-items: center; gap: 0.3rem;
@@ -1773,7 +1820,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    is the SAME tier, so they stand side by side — stacked, they read as a
    hierarchy that is not there. */
 .wm-stations { display: flex; gap: 0.7rem; align-items: flex-start; overflow-x: auto; }
-.wm-all-stations { max-width: none; }
+/* The all-stations box must never outgrow the formation column: capped to
+   its width, its rows WRAP into a second and third line of names instead
+   of running on under the Profile details panel. */
+.wm-station-box.wm-all-stations { width: auto; min-width: 0; max-width: 100%; }
 .wm-station-box {
   flex: 0 0 auto; width: max-content; min-width: 360px; max-width: none;
   border: 1px solid var(--border); border-radius: 12px;
