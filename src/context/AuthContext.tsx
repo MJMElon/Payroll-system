@@ -7,6 +7,7 @@ import {
 } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, type Profile } from '../lib/supabase'
+import { authLink } from '../lib/authLink'
 
 interface AuthValue {
   session: Session | null
@@ -16,6 +17,10 @@ interface AuthValue {
   // new password (cleared once they have).
   passwordRecovery: boolean
   clearPasswordRecovery: () => void
+  // Set when an emailed link could not be used (expired, already spent), so
+  // the sign-in screen can say so instead of looking like nothing happened.
+  linkError: string | null
+  clearLinkError: () => void
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
 }
@@ -27,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [passwordRecovery, setPasswordRecovery] = useState(false)
+  const [linkError, setLinkError] = useState<string | null>(authLink?.error ?? null)
 
   // Load the access_profiles row (role, station, worker link) for a user id.
   async function loadProfile(userId: string) {
@@ -70,12 +76,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    // Get the current session on first load.
-    supabase.auth.getSession().then(async ({ data }) => {
+    ;(async () => {
+      // A password-reset link arrives with its tokens in the URL. authLink
+      // took them out of the address bar before the router could clear it,
+      // so sign the user in with them here.
+      if (authLink?.accessToken && authLink.refreshToken) {
+        const { error } = await supabase.auth.setSession({
+          access_token: authLink.accessToken,
+          refresh_token: authLink.refreshToken,
+        })
+        if (error) setLinkError(error.message)
+        else if (authLink.type === 'recovery') setPasswordRecovery(true)
+      }
+      const { data } = await supabase.auth.getSession()
       setSession(data.session)
       if (data.session) await loadProfile(data.session.user.id)
       setLoading(false)
-    })
+    })()
 
     // React to sign in / sign out.
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, next) => {
@@ -108,6 +125,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         passwordRecovery,
         clearPasswordRecovery: () => setPasswordRecovery(false),
+        linkError,
+        clearLinkError: () => setLinkError(null),
         signIn,
         signOut,
       }}

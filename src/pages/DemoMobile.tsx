@@ -5,8 +5,9 @@
 //
 // COMMON to EVERY tier — same layout, same five tabs, same screens:
 //   Performance · My work · [ + ] · Team · Profile
-// Only the PERFORMANCE tab changes what it shows per tier (an Operator sees
-// their own output; verify/approve tiers also get the management dashboard).
+// Only the PERFORMANCE tab changes what it shows per tier, and which of the
+// two dashboards it draws — the mill's output or the tier's own KPIs — is a
+// setting on the tier tag (Settings → Tags management → Entitled Function).
 // My work, Team and Profile are identical for everyone — they just read that
 // person's own data.
 // ---------------------------------------------------------------------------
@@ -16,8 +17,7 @@ import { useAuth } from '../context/AuthContext'
 import {
   effectiveCapabilities,
   effectiveModules,
-  runsWholeMill,
-  stationTierOf,
+  isEntitled,
   tagClass,
 } from '../lib/tags'
 import {
@@ -945,10 +945,15 @@ function PerformanceTab({
   const monthLabel = new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
   const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
 
-  // "Admin tier and above" is the tiers that run the WHOLE mill — above
-  // the station-head tier — so the same line Settings draws, read from the
-  // tag names rather than named here.
-  const millWide = tier != null && runsWholeMill(tier.sort_order, stationTierOf(grades))
+  // WHICH dashboard this tab shows is set per tier, in Settings → Tags
+  // management → Entitled Function. Both may be on: the mill reads first
+  // and the tier's own numbers follow underneath. A tag nobody has set
+  // keeps the old answer — the tiers above the station head read the mill,
+  // everyone else reads their own KPIs.
+  const showMill = isEntitled(tier, 'mill-dashboard', grades)
+  // Somebody with no tier tag at all has no setting to read, so they keep
+  // the plain face they have always had rather than an empty tab.
+  const showKpi = tier == null || isEntitled(tier, 'kpi-dashboard', grades)
 
   return (
     <>
@@ -962,11 +967,23 @@ function PerformanceTab({
           <div className="mob-sub">{monthLabel} · {scoped ? 'your stations' : 'all stations'}</div>
         </div>
 
+        {/* Both dashboards can be switched off, and a blank tab would look
+            broken rather than configured. Say which setting emptied it. */}
+        {!showMill && !showKpi && (
+          <div className="mob-card">
+            <div className="mob-title">No dashboard switched on</div>
+            <div className="mob-sub">
+              This tier has neither the mill output nor the KPI dashboard ticked under
+              Settings → Tags management → Entitled Function.
+            </div>
+          </div>
+        )}
+
         {/* Admin tier and above read the mill first: what each station has
             put out this month, then the week, then who is on, then what it
             costs. The same cards appear once only — they are skipped in
             their old places below. */}
-        {millWide && (
+        {showMill && (
           <>
             <div className="mob-card">
               <div className="mob-card-label">Mill performance · {monthLabel}</div>
@@ -1044,7 +1061,7 @@ function PerformanceTab({
         {/* 2 — my own scorecard: everything I submit should end up approved.
             Above the station tiers this reads as review, not as my own
             work, so it moves to My work with the rest of the review. */}
-        {canEntry && !millWide && (
+        {canEntry && showKpi && (
           <div className="mob-card">
             <div className="mob-card-label">My work done</div>
             <div className="mob-sub">Target 100% approved</div>
@@ -1066,7 +1083,7 @@ function PerformanceTab({
               </button>
             )}
 
-            {!millWide && (
+            {showKpi && (
               <div className="mob-card">
                 <div className="mob-title">Daily quantity — this week</div>
                 <div className="mob-bars">
@@ -1091,7 +1108,7 @@ function PerformanceTab({
 
         {/* 3 — what is still out, and what came back. At station level the
             tab ends here: this is the day's own work, not the mill's. */}
-        {!millWide && (
+        {showKpi && (
           <div className="mob-grid2">
             <button className="mob-card tapcard" onClick={() => (reviews > 0 ? setShowApprovals(true) : onMyWork())}>
               <span className="mob-field-label">Pending verify</span>
@@ -1110,7 +1127,7 @@ function PerformanceTab({
           </div>
         )}
 
-        {(canVerify || canFinal) && millWide && (
+        {(canVerify || canFinal) && showMill && (
           <>
             <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Management dashboard</div>
 
@@ -1143,7 +1160,7 @@ function PerformanceTab({
               </div>
             </div>
 
-            {stationPct.length > 0 && !millWide && (
+            {stationPct.length > 0 && !showMill && (
               <div className="mob-card">
                 <div className="mob-title">Approval completion by station</div>
                 <div className="mob-bars">
@@ -1160,7 +1177,7 @@ function PerformanceTab({
               </div>
             )}
 
-            {!millWide && (
+            {!showMill && (
               <div className="mob-card">
                 <div className="mob-title">Payroll cost trend (6 months)</div>
                 <div className="mob-bars">
@@ -1177,7 +1194,7 @@ function PerformanceTab({
               </div>
             )}
 
-            {!millWide && (
+            {!showMill && (
               <div className="mob-card">
                 <div className="mob-title">Exception flags</div>
                 {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
@@ -1190,7 +1207,7 @@ function PerformanceTab({
               </div>
             )}
 
-            {!millWide && (
+            {!showMill && (
               <div className="mob-card">
                 <div className="mob-title">Workforce</div>
                 <div className="mob-breakrow">
@@ -1210,7 +1227,7 @@ function PerformanceTab({
           </>
         )}
 
-        {millWide && (
+        {showMill && (
           <div className="mob-grid2">
             <div className="mob-card">
               <div className="mob-field-label">Output this month</div>
@@ -1225,7 +1242,7 @@ function PerformanceTab({
 
         {/* The way into a station's own records. Above the station tiers
             the Mill performance card at the top already lists them. */}
-        {!millWide && stations.length > 0 && (
+        {showKpi && stations.length > 0 && (
         <div className="mob-card">
           <div className="mob-card-label">Station records</div>
           {stations.map((s) => {
@@ -2165,7 +2182,6 @@ function EntryDetail({
   onBack,
   workerTier,
   decide,
-  blocked,
 }: {
   entry: ProductionEntry
   myName: string
@@ -2180,9 +2196,6 @@ function EntryDetail({
   workerTier?: Grade | null
   /** Shown only when the viewer's tag grants the step this record is at. */
   decide?: { canVerify: boolean; canApprove: boolean; busy: boolean; act: (next: 'verified' | 'approved' | 'rejected') => void }
-  /** Why no decision is offered, when none is. The caller knows; guessing
-   *  it here got it wrong and told people their tag was at fault. */
-  blocked?: 'own' | 'no-permission' | 'not-below'
 }) {
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
@@ -2316,24 +2329,6 @@ function EntryDetail({
         {/* An absent button is indistinguishable from a broken one, so the
             reason is stated: your own work, a tag without the permission,
             or a record already past the step you hold. */}
-        {blocked && ['pending', 'verified'].includes(status) && (
-          <div className="mob-card">
-            <div className="mob-sub">
-              {blocked === 'own'
-                ? 'This is your own record — it is reviewed by somebody above you.'
-                : blocked === 'not-below'
-                  ? 'Verify and approve reach down the tiers. This record sits at your own tier or above it.'
-                  : 'Your tier tag has no verify or approve permission. Tick one in Settings → Tags management.'}
-            </div>
-          </div>
-        )}
-        {decide && !decide.canVerify && !decide.canApprove && (
-          <div className="mob-card">
-            <div className="mob-sub">
-              Your tier tag has no verify or approve permission.
-            </div>
-          </div>
-        )}
         {decide && (decide.canVerify || decide.canApprove) && (
           <>
             <div className="row-form" style={{ gap: '0.5rem' }}>
@@ -2350,11 +2345,6 @@ function EntryDetail({
                   onClick={() => decide.act('rejected')}>✗ Reject</button>
               )}
             </div>
-            {decide.canVerify && !decide.canApprove && status === 'verified' && (
-              <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
-                Already verified — a final approver takes it from here.
-              </div>
-            )}
           </>
         )}
 
@@ -2626,9 +2616,10 @@ function MyWorkTab({
   // a tier and that tier verifies; tick approve and it approves. A tier
   // holding both sees both.
   const caps = effectiveCapabilities(tier)
-  // The tiers above the station-head tier read the review here, since
-  // their Performance tab is given over to the mill.
-  const millWide = tier != null && runsWholeMill(tier.sort_order, stationTierOf(grades))
+  // A tier whose Performance tab is given over to the mill dashboard reads
+  // the review here instead — the same entitlement, read the other way, so
+  // the review can never land on both tabs or on neither.
+  const showMill = isEntitled(tier, 'mill-dashboard', grades)
   const canVerify = caps.includes('verify')
   const canApprove = caps.includes('approve')
 
@@ -2682,10 +2673,10 @@ function MyWorkTab({
         return who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order ?? null : null
       }
       const below = (e: ProductionEntry) => {
+        if (tier == null) return false
+        if (e.user_id === profileId) return true // previewing — see above
         const order = tierOf(e.user_id)
-        // An untagged submitter cannot be placed on the ladder, so fall
-        // back to the old rule rather than hand out a review by accident.
-        if (order == null || tier == null) return e.user_id !== profileId
+        if (order == null) return true
         return order > tier.sort_order
       }
       waiting = all.filter(
@@ -2786,9 +2777,19 @@ function MyWorkTab({
    * nearly everything.
    */
   const reviewable = (e: ProductionEntry) => {
+    if (tier == null) return false
+    // This page is a preview: one login standing in for every tier. The
+    // records to hand were nearly all made by that login, and its own tag
+    // may sit anywhere on the ladder — tagged Management, as here, and
+    // NOTHING is reviewable from any rung. So while previewing, your own
+    // records are open to whichever tier you are standing in. Everyone
+    // else's follow the real rule.
+    if (e.user_id === profileId) return true
     const who = e.user_id ? submitters.get(e.user_id) : undefined
     const order = who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order : null
-    if (order == null || tier == null) return e.user_id !== profileId
+    // An untagged submitter cannot be placed on the ladder; let the tag's
+    // permission decide rather than refuse on a missing field.
+    if (order == null) return true
     return order > tier.sort_order
   }
 
@@ -2822,13 +2823,6 @@ function MyWorkTab({
         // the looking.
         workerTier={
           grades.find((g) => g.id === submitters.get(detail.user_id ?? '')?.grade_id) ?? null
-        }
-        blocked={
-          !canVerify && !canApprove
-            ? 'no-permission'
-            : reviewable(detail)
-              ? undefined
-              : 'not-below'
         }
         decide={
           reviewable(detail) && (canVerify || canApprove)
@@ -2867,7 +2861,7 @@ function MyWorkTab({
           <div className="mob-sub">Everything you recorded and where it stands</div>
         </div>
 
-        {millWide && (
+        {showMill && (
           <ReviewSections stations={stations} profileId={profileId} onError={onError} />
         )}
 

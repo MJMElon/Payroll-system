@@ -20,7 +20,7 @@ import { Link } from 'react-router-dom'
 import Select, { MultiSelect, type SelectOption } from '../components/Select'
 import { useAuth } from '../context/AuthContext'
 import { useOverlayClose } from '../lib/useOverlayClose'
-import { effectiveCapabilities, stationTierOf, tagClass } from '../lib/tags'
+import { effectiveCapabilities, isEntitled, tagClass } from '../lib/tags'
 import {
   supabase,
   todayISO,
@@ -49,11 +49,22 @@ function stationOptions(stations: Station[]): SelectOption[] {
   return stations.map((s) => ({ value: s.id, label: s.name }))
 }
 
-/** The tier tags a piece rate may be paid to: Station Head and every tier
- *  below it. The tiers above run the whole mill, never a piece of work. */
-function tierTagOptions(grades: Grade[]): SelectOption[] {
-  const floor = stationTierOf(grades)
-  return tagOptions(grades.filter((g) => floor === null || g.sort_order >= floor))
+/**
+ * The tier tags a piece rate may be written for.
+ *
+ * Set per tag in Settings → Tags management → Entitled Function. A tag
+ * nobody has touched falls back to the old rule — Station Head and every
+ * tier below it, since the tiers above run the whole mill rather than a
+ * piece of work — so this list only changes once somebody unticks a box.
+ *
+ * `keep` is the tag a row already carries: an existing contract keeps
+ * showing its own tier even after that tier stops being entitled, so
+ * editing something else about the row cannot silently re-tag it.
+ */
+function tierTagOptions(grades: Grade[], keep?: string | null): SelectOption[] {
+  return tagOptions(
+    grades.filter((g) => g.id === keep || isEntitled(g, 'piece-rate', grades)),
+  )
 }
 
 function tagOptions(grades: Grade[]): SelectOption[] {
@@ -1921,7 +1932,10 @@ function ContractModal({
             block
             value={gradeId}
             onChange={setGradeId}
-            options={[{ value: '', label: 'All positions' }, ...tagOptions(grades)]}
+            options={[
+              { value: '', label: 'All positions' },
+              ...tierTagOptions(grades, job.grade_id),
+            ]}
             placeholder="Choose tier tag…"
             ariaLabel="Tier tag"
           />

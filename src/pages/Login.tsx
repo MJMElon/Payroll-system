@@ -1,12 +1,12 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { siteUrl, supabase } from '../lib/supabase'
 
 type Mode = 'signin' | 'signup' | 'forgot'
 
 export default function Login() {
-  const { session, signIn, loading } = useAuth()
+  const { session, signIn, loading, linkError, clearLinkError } = useAuth()
   const [mode, setMode] = useState<Mode>('signin')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -21,10 +21,11 @@ export default function Login() {
     e.preventDefault()
     setError(null)
     setInfo(null)
+    clearLinkError()
     setSubmitting(true)
     if (mode === 'forgot') {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin + window.location.pathname,
+        redirectTo: siteUrl(),
       })
       if (error) setError(error.message)
       else setInfo('Reset link sent — check your email, open the link, then set a new password.')
@@ -35,7 +36,7 @@ export default function Login() {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { full_name: name.trim() } },
+        options: { data: { full_name: name.trim() }, emailRedirectTo: siteUrl() },
       })
       if (error) {
         setError(error.message)
@@ -52,6 +53,7 @@ export default function Login() {
     setMode(next)
     setError(null)
     setInfo(null)
+    clearLinkError()
   }
 
   return (
@@ -109,6 +111,11 @@ export default function Login() {
           />
         )}
 
+        {linkError && (
+          <div className="login-msg error">
+            That link could not be used ({linkError}). Reset links expire — send a new one.
+          </div>
+        )}
         {error && <div className="login-msg error">{error}</div>}
         {info && <div className="login-msg info">{info}</div>}
 
