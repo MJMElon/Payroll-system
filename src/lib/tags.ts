@@ -93,6 +93,18 @@ export const ENTITLEMENT_OPTIONS: { key: string; label: string; hint: string }[]
     label: 'Entitled for piece rate contract',
     hint: 'A piece rate may be written for this tier. Switch it off and the tag stops being offered when a new piece rate is created.',
   },
+  // The mobile Performance tab is drawn from these two. Both may be on —
+  // the mill reads first, the tier's own numbers follow underneath.
+  {
+    key: 'mill-dashboard',
+    label: 'Mill output dashboard on the Performance tab',
+    hint: 'The phone opens on what the whole mill produced: output per station, the week, workforce and payroll cost.',
+  },
+  {
+    key: 'kpi-dashboard',
+    label: 'KPI dashboard on the Performance tab',
+    hint: "The phone opens on this tier's own numbers instead: work done against target, the week, what is waiting and what came back.",
+  },
 ]
 
 export const ALL_ENTITLEMENTS: string[] = ENTITLEMENT_OPTIONS.map((e) => e.key)
@@ -100,18 +112,21 @@ export const ALL_ENTITLEMENTS: string[] = ENTITLEMENT_OPTIONS.map((e) => e.key)
 /**
  * What a tag that has never been asked is entitled to.
  *
- * Before this setting existed, the piece-rate pickers worked the answer out
- * from the tag NAMES: the station tier and everything below it does the
- * piece work, the tiers above run the whole mill. Tags saved before the
- * setting arrived keep exactly that answer, so switching this on changes
- * nothing until somebody actually unticks a box.
+ * Before this setting existed, both answers were worked out from the tag
+ * NAMES: the station tier and everything below it does the piece work and
+ * reads its own KPIs, while the tiers above run the whole mill and read the
+ * mill dashboard. Tags saved before the setting arrived keep exactly that,
+ * so switching this on changes nothing until somebody unticks a box.
  */
 export function defaultEntitlements(
   sortOrder: number,
   allGrades: { name: string; sort_order: number }[],
 ): string[] {
   const floor = stationTierOf(allGrades)
-  return floor === null || sortOrder >= floor ? ['piece-rate'] : []
+  return [
+    ...(floor === null || sortOrder >= floor ? ['piece-rate'] : []),
+    ...(runsWholeMill(sortOrder, floor) ? ['mill-dashboard'] : ['kpi-dashboard']),
+  ]
 }
 
 /** What this tier is entitled to, falling back to the name-based default. */
