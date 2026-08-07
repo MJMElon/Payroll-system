@@ -171,6 +171,31 @@ async function compressImage(file: File): Promise<Blob> {
   }
 }
 
+/** One attendance stamp: clocked in at, and clocked out at once it ends. */
+interface Shift {
+  id: string
+  clock_in: string
+  clock_out: string | null
+}
+
+/** Stand-in id for a shift the database refused — preview only, never saved. */
+const LOCAL_SHIFT = 'not-saved'
+
+/** Time of day as the phone would show it, e.g. "07:45". */
+function clockTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+/**
+ * The one failure worth spelling out: the attendance table does not exist
+ * yet, which is a migration to run rather than anything the user did wrong.
+ */
+function clockHelp(message: string) {
+  return /attendance/i.test(message) && /(does not exist|schema cache|relation)/i.test(message)
+    ? 'Clock in/out has nowhere to save yet — run supabase/setup.sql to create the attendance table.'
+    : `Clock in/out failed: ${message}`
+}
+
 export default function DemoMobile() {
   const { profile } = useAuth()
   const [grades, setGrades] = useState<Grade[]>([])
@@ -186,6 +211,8 @@ export default function DemoMobile() {
   // been run — probe once so the mobile view can fall back to the plain
   // stamp card (no job/rate) instead of erroring when it hasn't been applied.
   const [jobColumnReady, setJobColumnReady] = useState(false)
+  const [shift, setShift] = useState<Shift | null>(null)
+  const [clocking, setClocking] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -283,6 +310,64 @@ export default function DemoMobile() {
     const t = setInterval(run, 30_000)
     return () => clearInterval(t)
   }, [profile?.id, jobColumnReady, hourlyStationIds])
+
+  // The shift that is currently OPEN — clocked in with no clock out yet.
+  // Null means clocked out, which is what the float reads off to decide
+  // whether it offers "Clock in" or "Clock out".
+  useEffect(() => {
+    if (!profile?.id) return
+    let cancelled = false
+    supabase
+      .from('attendance')
+      .select('id, clock_in, clock_out')
+      .eq('user_id', profile.id)
+      .is('clock_out', null)
+      .order('clock_in', { ascending: false })
+      .limit(1)
+      .then(({ data }) => {
+        if (!cancelled && data && data.length > 0) setShift(data[0] as Shift)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [profile?.id])
+
+  async function toggleClock() {
+    if (!profile?.id || clocking) return
+    setClocking(true)
+    setError(null)
+    const now = new Date().toISOString()
+    if (shift) {
+      if (shift.id !== LOCAL_SHIFT) {
+        const { error: err } = await supabase
+          .from('attendance')
+          .update({ clock_out: now })
+          .eq('id', shift.id)
+        if (err) setError(clockHelp(err.message))
+      }
+      setShift(null)
+    } else {
+      const { data, error: err } = await supabase
+        .from('attendance')
+        .insert({
+          user_id: profile.id,
+          station_id: scopedStations.length === 1 ? scopedStations[0].id : null,
+          work_date: todayISO(),
+          clock_in: now,
+        })
+        .select('id, clock_in, clock_out')
+        .single()
+      // Not saved is still worth showing: the preview flips so the design
+      // can be walked through, and the message says exactly why.
+      if (err) {
+        setError(clockHelp(err.message))
+        setShift({ id: LOCAL_SHIFT, clock_in: now, clock_out: null })
+      } else {
+        setShift(data as Shift)
+      }
+    }
+    setClocking(false)
+  }
 
   return (
     <div className="stack">
@@ -421,6 +506,9 @@ export default function DemoMobile() {
                 <TabBar
                   tab={tab}
                   onTab={setTab}
+                  clockedInAt={shift?.clock_in ?? null}
+                  clocking={clocking}
+                  onClock={toggleClock}
                 />
               )}
             </div>
@@ -441,13 +529,20 @@ export default function DemoMobile() {
 function TabBar({
   tab,
   onTab,
+  clockedInAt,
+  clocking,
+  onClock,
 }: {
   tab: Tab
   onTab: (t: Tab) => void
+  clockedInAt: string | null
+  clocking: boolean
+  onClock: () => void
 }) {
-  // Five slots, identical for every tier: the "+" (add a new entry) sits
+  // Five slots, identical for every tier: "+ Record" (add a new entry) sits
   // EXACTLY in the centre with two tabs flexing on each side —
-  // Performance · My work · [ + ] · Team · Profile.
+  // Performance · My work · [+ Record] · Team · Profile. The clock float
+  // rides above it, since attendance belongs to no single tab.
   return (
     <div className="mob-tabbar centered">
       <div className="mob-tab-side">
@@ -467,16 +562,33 @@ function TabBar({
           <span>My work</span>
         </button>
       </div>
-      <button
-        className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
-        onClick={() => onTab('record')}
-        aria-label="Add new entry"
-      >
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          strokeWidth="2.6" strokeLinecap="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-      </button>
+      <div className="mob-tab-center">
+        <button
+          className={`mob-clockfab ${clockedInAt ? 'on' : ''}`}
+          onClick={onClock}
+          disabled={clocking}
+          title={clockedInAt ? `Clocked in at ${clockTime(clockedInAt)}` : 'Start your shift'}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          <span>{clockedInAt ? 'Clock out' : 'Clock in'}</span>
+          {clockedInAt && <em>{clockTime(clockedInAt)}</em>}
+        </button>
+        <button
+          className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
+          onClick={() => onTab('record')}
+          aria-label="Add new entry"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2.8" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span>Record</span>
+        </button>
+      </div>
       <div className="mob-tab-side">
         <button className={`mob-tab ${tab === 'team' ? 'active' : ''}`} onClick={() => onTab('team')}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"

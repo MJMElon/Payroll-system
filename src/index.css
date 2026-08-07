@@ -784,14 +784,19 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 /* Centered bottom bar: two tabs each side flex equally around the centre
    "+" — Performance · My work · [ + ] · Team · Profile. */
-.mob-tabbar.centered { display: flex; align-items: flex-end; justify-content: center; gap: 0.1rem; }
+/* The centre button carries a word now, so the four tabs share what is left
+   of a 360px screen — trimmed here so "Performance" still reads in full. */
+.mob-tabbar.centered {
+  display: flex; align-items: flex-end; justify-content: center; gap: 0.1rem;
+  padding-left: 0.5rem; padding-right: 0.5rem;
+}
 .mob-tab-side {
   flex: 1 1 0; min-width: 0;
   display: flex; align-items: flex-end; justify-content: space-evenly; gap: 0.1rem;
 }
 .mob-tabbar.centered .mob-tab {
   flex: 1 1 0; width: auto; min-width: 0; max-width: none;
-  padding: 0.35rem 0.1rem 0.3rem; font-size: 0.55rem; letter-spacing: -0.01em;
+  padding: 0.35rem 0.05rem 0.3rem; font-size: 0.52rem; letter-spacing: -0.02em;
 }
 .mob-tabbar.centered .mob-tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mob-tabbar.centered .mob-tab-badge { right: 4px; }
@@ -1230,11 +1235,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   color: #a16207;
   background: linear-gradient(180deg, #fdf4e3, #fbeccb);
 }
+/* The raised centre button. It says what it does — "+ Record" — rather than
+   leaving a bare plus to be guessed at, so it is a pill rather than a disc. */
 .mob-tab-main {
   appearance: none; border: 4px solid #f1f5f3; cursor: pointer;
-  width: 58px; height: 58px; border-radius: 50%; margin-top: -30px;
+  height: 54px; padding: 0 0.6rem 0 0.45rem; border-radius: 999px; margin-top: -26px;
   background: linear-gradient(180deg, #566270, #333c47); color: #fff;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: center; justify-content: center; gap: 2px;
+  font-size: 0.66rem; font-weight: 800; letter-spacing: -0.02em; white-space: nowrap;
   box-shadow: 0 8px 18px rgba(35, 45, 58, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
@@ -1244,6 +1252,26 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   box-shadow: 0 0 0 2px #eab308, 0 8px 18px rgba(150, 100, 10, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
+
+/* Clocking in is not a tab — it is one tap that must be reachable from any
+   screen — so it rides as a float just above and beside "+ Record". The
+   label is the NEXT action: "Clock in" while you are out, "Clock out" once
+   you are in, with the time you started underneath. */
+.mob-tab-center { position: relative; display: flex; align-items: flex-end; }
+.mob-clockfab {
+  position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(36px);
+  appearance: none; cursor: pointer; white-space: nowrap;
+  display: flex; align-items: center; gap: 4px;
+  padding: 0.3rem 0.55rem; border-radius: 999px;
+  border: 1px solid #a7e8bf; background: linear-gradient(180deg, #f2fdf6, #d9f7e3);
+  color: #15803d; font-size: 0.62rem; font-weight: 800; letter-spacing: -0.01em;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.18);
+}
+.mob-clockfab.on {
+  border-color: #f6bdbd; background: linear-gradient(180deg, #fff4f4, #fde0e0); color: #b91c1c;
+}
+.mob-clockfab em { font-style: normal; font-weight: 700; font-size: 0.56rem; opacity: 0.72; }
+.mob-clockfab:disabled { opacity: 0.55; cursor: default; }
 
 /* Record form fields */
 .mob-field-label {
