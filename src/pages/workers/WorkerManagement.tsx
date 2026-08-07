@@ -794,6 +794,7 @@ export default function WorkerManagement() {
         key={p.id}
         className={[
           'wm-block',
+          `fill-${grade?.color ?? 'grey'}`,
           mini ? 'mini' : '',
           selectedId === p.id ? 'selected' : '',
           dragId === p.id ? 'dragging' : '',
