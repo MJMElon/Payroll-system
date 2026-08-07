@@ -87,24 +87,14 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
  * That is why these are not lumped in with the capabilities, and why tier 1
  * does NOT get them all automatically the way it gets every ability.
  */
-export const ENTITLEMENT_OPTIONS: { key: string; label: string; hint: string }[] = [
-  {
-    key: 'piece-rate',
-    label: 'Entitled for piece rate contract',
-    hint: 'A piece rate may be written for this tier. Switch it off and the tag stops being offered when a new piece rate is created.',
-  },
+export const ENTITLEMENT_OPTIONS: { key: string; label: string }[] = [
+  // Unticking this takes the tag out of the picker when a new piece rate
+  // is created.
+  { key: 'piece-rate', label: 'Entitled for piece rate contract' },
   // The mobile Performance tab is drawn from these two. Both may be on —
   // the mill reads first, the tier's own numbers follow underneath.
-  {
-    key: 'mill-dashboard',
-    label: 'Mill output dashboard on the Performance tab',
-    hint: 'The phone opens on what the whole mill produced: output per station, the week, workforce and payroll cost.',
-  },
-  {
-    key: 'kpi-dashboard',
-    label: 'KPI dashboard on the Performance tab',
-    hint: "The phone opens on this tier's own numbers instead: work done against target, the week, what is waiting and what came back.",
-  },
+  { key: 'mill-dashboard', label: 'Mill output dashboard on the Performance tab' },
+  { key: 'kpi-dashboard', label: 'KPI dashboard on the Performance tab' },
 ]
 
 export const ALL_ENTITLEMENTS: string[] = ENTITLEMENT_OPTIONS.map((e) => e.key)
