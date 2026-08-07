@@ -857,12 +857,12 @@ export default function WorkerManagement() {
     const isMe = p.id === profile?.id
     const key = `block:${p.id}`
     // A drop is welcome to place someone UNDER this block, or — when the
-    // dragged name already stands in the same row/cell — to reorder onto it.
+    // dragged name already stands in the same row/cell — to SWAP with it.
     const dragged = dragId ? profiles.find((x) => x.id === dragId) : null
-    const allowed =
-      dragged && dragged.id !== p.id && dragged.tags_confirmed && slotKey(dragged) === slotKey(p)
-        ? canMove(dragged)
-        : canPlaceUnder(p)
+    const swapping = Boolean(
+      dragged && dragged.id !== p.id && dragged.tags_confirmed && slotKey(dragged) === slotKey(p),
+    )
+    const allowed = swapping ? canMove(dragged!) : canPlaceUnder(p)
     // The station line only means something on the floor: the tiers above
     // run the whole mill, so their block is just a name.
     const onTheFloor = worksAtAStation(tier)
@@ -883,6 +883,11 @@ export default function WorkerManagement() {
         {...dropProps(key, p, team, allowed)}
       >
         <span className={`wm-block-bar dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
+        {/* Hovering a teammate while dragging: the ⇄ says "these two will
+            swap places", so the drop is never a guess. */}
+        {swapping && dropKey === key && (
+          <span className="wm-swap-mark" aria-hidden="true">⇄</span>
+        )}
         <span className="wm-block-name" title={displayName(p)}>
           {displayName(p)}
           {isMe && <span className="you-chip">you</span>}
