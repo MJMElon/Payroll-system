@@ -78,6 +78,61 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
 ]
 
+/**
+ * What a tier is ENTITLED to — a separate question from what it may do.
+ *
+ * "Can do" is about the buttons a person gets. An entitlement is about what
+ * the tier IS: a Station Head does piece work and so a piece rate may be
+ * written for that tag, while Management runs the mill and never earns one.
+ * That is why these are not lumped in with the capabilities, and why tier 1
+ * does NOT get them all automatically the way it gets every ability.
+ */
+export const ENTITLEMENT_OPTIONS: { key: string; label: string; hint: string }[] = [
+  {
+    key: 'piece-rate',
+    label: 'Entitled for piece rate contract',
+    hint: 'A piece rate may be written for this tier. Switch it off and the tag stops being offered when a new piece rate is created.',
+  },
+]
+
+export const ALL_ENTITLEMENTS: string[] = ENTITLEMENT_OPTIONS.map((e) => e.key)
+
+/**
+ * What a tag that has never been asked is entitled to.
+ *
+ * Before this setting existed, the piece-rate pickers worked the answer out
+ * from the tag NAMES: the station tier and everything below it does the
+ * piece work, the tiers above run the whole mill. Tags saved before the
+ * setting arrived keep exactly that answer, so switching this on changes
+ * nothing until somebody actually unticks a box.
+ */
+export function defaultEntitlements(
+  sortOrder: number,
+  allGrades: { name: string; sort_order: number }[],
+): string[] {
+  const floor = stationTierOf(allGrades)
+  return floor === null || sortOrder >= floor ? ['piece-rate'] : []
+}
+
+/** What this tier is entitled to, falling back to the name-based default. */
+export function effectiveEntitlements(
+  grade: { sort_order: number; entitlements?: string[] | null } | null | undefined,
+  allGrades: { name: string; sort_order: number }[],
+): string[] {
+  if (!grade) return []
+  // Null is "never asked", which is not the same as "entitled to nothing".
+  if (grade.entitlements == null) return defaultEntitlements(grade.sort_order, allGrades)
+  return ALL_ENTITLEMENTS.filter((k) => grade.entitlements!.includes(k))
+}
+
+export function isEntitled(
+  grade: { sort_order: number; entitlements?: string[] | null } | null | undefined,
+  key: string,
+  allGrades: { name: string; sort_order: number }[],
+): boolean {
+  return effectiveEntitlements(grade, allGrades).includes(key)
+}
+
 export const ALL_CAPABILITIES: string[] = CAPABILITY_OPTIONS.map((c) => c.key)
 export const CAPABILITY_GROUPS: string[] = Array.from(new Set(CAPABILITY_OPTIONS.map((c) => c.group)))
 

@@ -318,6 +318,13 @@ alter table public.grades add column if not exists modules text[] not null
 --   approve:    approve work entries of all tiers below
 alter table public.grades add column if not exists capabilities text[] not null default '{}';
 
+-- What each tag is ENTITLED to, which is a different question from what it
+-- may do: "piece-rate" means a piece rate contract may be written for this
+-- tier. Deliberately NULLable with no default — null means the tag predates
+-- this setting, and the app then falls back to the old rule (the station
+-- tier and everything below it), so nothing changes until somebody sets it.
+alter table public.grades add column if not exists entitlements text[];
+
 -- Sensible defaults for the seeded tags (only fills empty ones).
 update public.grades set capabilities = '{data-entry}'
   where name in ('Operator', 'Assistant Station Head', 'Station Head', 'General Worker')

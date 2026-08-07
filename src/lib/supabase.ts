@@ -131,6 +131,10 @@ export interface Grade {
   ability: string | null
   modules: string[]
   capabilities: string[]
+  // What this tier is entitled to (see ENTITLEMENT_OPTIONS in lib/tags).
+  // Null on a tag saved before the setting existed — read it through
+  // effectiveEntitlements(), which fills in the old name-based answer.
+  entitlements?: string[] | null
 }
 
 export interface Job {
