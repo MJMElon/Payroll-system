@@ -4,14 +4,18 @@ import { useAuth } from '../context/AuthContext'
 import { supabase, type Grade, type Station } from '../lib/supabase'
 import {
   ALL_CAPABILITIES,
+  ALL_ENTITLEMENTS,
   CAPABILITY_GROUPS,
   CAPABILITY_OPTIONS,
   DEFAULT_MODULES,
+  ENTITLEMENT_OPTIONS,
   GROUP_MODULE,
   MANAGEMENT_ONLY_GROUPS,
   MODULE_GROUP,
   MODULE_OPTIONS,
   canGiveTier,
+  defaultEntitlements,
+  effectiveEntitlements,
   nextTagColor,
   roleForTier,
   runsWholeMill,
@@ -679,6 +683,41 @@ function ModuleTable({
 }
 
 /* ------------------------------------------------------------------ */
+/* What the tier is ENTITLED to, as opposed to what it may do. Reads   */
+/* like the module sheet above it, one row per entitlement, so the two */
+/* sections are learnt once. Unlike the module sheet this one is NOT   */
+/* locked on tier 1: Management runs the mill and is normally the one  */
+/* tag you would switch the piece rate contract off for.               */
+/* ------------------------------------------------------------------ */
+
+function EntitlementTable({
+  entitlements,
+  locked,
+  onToggle,
+}: {
+  entitlements: string[]
+  /** Read-only: the view face of the pop-out. */
+  locked: boolean
+  onToggle: (key: string) => void
+}) {
+  return (
+    <div className="module-table">
+      {ENTITLEMENT_OPTIONS.map((e) => {
+        const on = entitlements.includes(e.key)
+        return (
+          <div className={`module-row ${on ? 'on' : ''}`} key={e.key}>
+            <label className="checkbox module-head">
+              <input type="checkbox" checked={on} disabled={locked} onChange={() => onToggle(e.key)} />
+              <span className="module-name">{e.label}</span>
+            </label>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* Tag edit pop-out: name, colour plate, what it can see, what it can */
 /* do.                                                                */
 /* ------------------------------------------------------------------ */
@@ -929,6 +968,12 @@ function TagModal({
   const [capabilities, setCapabilities] = useState<string[]>(
     isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade?.capabilities ?? ['data-entry']),
   )
+  // Entitlements are set on every tag, tier 1 included — see EntitlementTable.
+  const [entitlements, setEntitlements] = useState<string[]>(
+    grade
+      ? effectiveEntitlements(grade, allGrades)
+      : defaultEntitlements(nextTier, allGrades),
+  )
   const ability = grade?.ability ?? ''
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -936,6 +981,10 @@ function TagModal({
   function toggleCapability(key: string) {
     if (isSuper) return
     setCapabilities((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]))
+  }
+
+  function toggleEntitlement(key: string) {
+    setEntitlements((e) => (e.includes(key) ? e.filter((k) => k !== key) : [...e, key]))
   }
 
   function toggleModule(key: string) {
@@ -965,11 +1014,29 @@ function TagModal({
       ? MODULE_OPTIONS.map((m) => m.key)
       : MODULE_OPTIONS.map((m) => m.key).filter((k) => modules.includes(k))
     const fields = { name: name.trim(), color, modules: mods, capabilities: caps, ability: ability || null }
-    const { error } = grade
-      ? await supabase.from('grades').update(fields).eq('id', grade.id)
-      : await supabase.from('grades').insert({ ...fields, sort_order: nextTier })
+    const ents = ALL_ENTITLEMENTS.filter((k) => entitlements.includes(k))
+    const write = (f: Record<string, unknown>) =>
+      grade
+        ? supabase.from('grades').update(f).eq('id', grade.id)
+        : supabase.from('grades').insert({ ...f, sort_order: nextTier })
+
+    const first = await write({ ...fields, entitlements: ents })
+    // "Entitled Function" needs a column that arrived after the first
+    // release. On a database that has not had supabase/setup.sql re-run,
+    // save everything else rather than losing the whole edit, and say
+    // plainly what is missing instead of showing a Postgres error.
+    if (first.error && /entitlements/i.test(first.error.message)) {
+      const { error } = await write(fields)
+      setSaving(false)
+      if (error) return setError(saveError(error, 'tier tag', name))
+      return setError(
+        'Saved — except "Entitled Function", which needs one line of SQL. In Supabase → ' +
+          'SQL editor run:  alter table public.grades add column if not exists entitlements text[];  ' +
+          'then set it again.',
+      )
+    }
     setSaving(false)
-    if (error) return setError(saveError(error, 'tier tag', name))
+    if (first.error) return setError(saveError(first.error, 'tier tag', name))
     onSaved()
   }
 
@@ -1003,6 +1070,7 @@ function TagModal({
     setCapabilities(
       isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade.capabilities ?? ['data-entry']),
     )
+    setEntitlements(effectiveEntitlements(grade, allGrades))
     setError(null)
     onMode('view')
   }
@@ -1035,6 +1103,11 @@ function TagModal({
               onToggleModule={() => {}}
               onToggleCapability={() => {}}
             />
+          </div>
+
+          <div className="tag-section">
+            <div className="tag-section-title">Entitled Function</div>
+            <EntitlementTable entitlements={entitlements} locked onToggle={() => {}} />
           </div>
 
           {/* Only the tiers that run the whole mill are listed here.
@@ -1097,6 +1170,18 @@ function TagModal({
             locked={isSuper}
             onToggleModule={toggleModule}
             onToggleCapability={toggleCapability}
+          />
+        </div>
+
+        {/* What the tier IS, rather than what it may press. Every tag gets
+            this, tier 1 included — Management is usually the tag you would
+            switch the piece rate contract off for. */}
+        <div className="tag-section">
+          <div className="tag-section-title">Entitled Function</div>
+          <EntitlementTable
+            entitlements={entitlements}
+            locked={false}
+            onToggle={toggleEntitlement}
           />
         </div>
 

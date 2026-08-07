@@ -318,6 +318,13 @@ alter table public.grades add column if not exists modules text[] not null
 --   approve:    approve work entries of all tiers below
 alter table public.grades add column if not exists capabilities text[] not null default '{}';
 
+-- What each tag is ENTITLED to, which is a different question from what it
+-- may do: "piece-rate" means a piece rate contract may be written for this
+-- tier. Deliberately NULLable with no default — null means the tag predates
+-- this setting, and the app then falls back to the old rule (the station
+-- tier and everything below it), so nothing changes until somebody sets it.
+alter table public.grades add column if not exists entitlements text[];
+
 -- Sensible defaults for the seeded tags (only fills empty ones).
 update public.grades set capabilities = '{data-entry}'
   where name in ('Operator', 'Assistant Station Head', 'Station Head', 'General Worker')
@@ -743,6 +750,11 @@ alter table public.production_entries add constraint production_entries_shift_ch
 alter table public.access_profiles add column if not exists employee_code text;
 create unique index if not exists access_profiles_employee_code_idx
   on public.access_profiles (employee_code) where employee_code is not null;
+
+-- Where a block sits among its row/cell mates on the Team Manage chart —
+-- set by dragging a name onto a teammate. Lower comes first; null queues
+-- at the end, so a fresh placement lands last until it is hand-ordered.
+alter table public.access_profiles add column if not exists chart_pos int;
 
 -- ---------------------------------------------------------------------------
 -- Tiered hourly piece rates (e.g. cage tipping): a job's rate can pay one
