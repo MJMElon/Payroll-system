@@ -722,12 +722,12 @@ export default function WorkerManagement() {
   }
 
   /**
-   * Drop a block on a TEAMMATE in the same row/cell: it takes that spot —
-   * the left half of the block means "in front of them", the right half
-   * "behind them" — and the whole slot is renumbered 0,1,2… so the order
-   * the user put stays put.
+   * Drop a block on a TEAMMATE in the same row/cell: the two names SWAP —
+   * the dragged name takes the target's spot and the target moves to where
+   * the dragged name stood. Nobody else in the row shifts. The whole slot
+   * is renumbered 0,1,2… so the order the user put stays put.
    */
-  async function reorderBeside(person: Profile, target: Profile, after: boolean) {
+  async function swapBlocks(person: Profile, target: Profile) {
     if (person.id === target.id) return
     if (person.id === profile?.id) {
       return setError('You cannot move yourself on the chart — someone above you has to do that.')
@@ -738,10 +738,11 @@ export default function WorkerManagement() {
       )
     }
     setError(null)
-    const slot = visible.filter((p) => slotKey(p) === slotKey(target)).sort(byChartPos)
-    const order = slot.filter((p) => p.id !== person.id)
-    const at = order.findIndex((p) => p.id === target.id) + (after ? 1 : 0)
-    order.splice(at, 0, person)
+    const order = visible.filter((p) => slotKey(p) === slotKey(target)).sort(byChartPos)
+    const i = order.findIndex((p) => p.id === person.id)
+    const j = order.findIndex((p) => p.id === target.id)
+    if (i < 0 || j < 0) return
+    ;[order[i], order[j]] = [order[j], order[i]]
     // Show the new order at once; the writes then make it stick.
     const pos = new Map(order.map((p, i) => [p.id, i]))
     setProfiles((cur) => cur.map((p) => (pos.has(p.id) ? { ...p, chart_pos: pos.get(p.id)! } : p)))
@@ -763,7 +764,7 @@ export default function WorkerManagement() {
       )
     } else if (results.length > 0 && results.every((r) => !r.data || r.data.length === 0)) {
       setError(
-        `The database would not let you reorder ${displayName(person)} — that needs a higher tier.`,
+        `The database would not let you swap ${displayName(person)} — that needs a higher tier.`,
       )
     }
     load()
@@ -789,11 +790,9 @@ export default function WorkerManagement() {
     setDragId(null)
     setDropKey(null)
     if (!dragged || dragged.id === leader.id) return
-    // Same row/cell: this is a reorder, and which half of the block was hit
-    // says which side of it the dragged name lands on.
+    // Same row/cell: the two names swap places.
     if (dragged.tags_confirmed && slotKey(dragged) === slotKey(leader)) {
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-      void reorderBeside(dragged, leader, e.clientX > rect.left + rect.width / 2)
+      void swapBlocks(dragged, leader)
       return
     }
     placeUnder(dragged, leader, team)
