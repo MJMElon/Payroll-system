@@ -1291,7 +1291,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 /* Folded down once the day is stamped: a clock chip that opens the card
    again, and the history button beside it holding the week. */
-.mob-clockmini { display: flex; align-items: center; gap: 0.5rem; }
+/* In, out and the week's "V" on one line. Everything here is sized to
+   survive a 360px screen — the row used to run the V out past the card's
+   own edge when the times, the labels and the button all turned up. */
+.mob-clockmini {
+  display: flex; align-items: center; gap: 0.4rem;
+  flex-wrap: wrap; row-gap: 0.4rem; max-width: 100%;
+}
 .mob-clockchip {
   appearance: none; cursor: pointer; flex: 1 1 auto; min-width: 0;
   display: flex; align-items: center; gap: 6px;
@@ -1309,19 +1315,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    done, so it presses. */
 .mob-clockpair {
   appearance: none; background: none; border: none; padding: 0; cursor: pointer;
-  display: flex; align-items: center; gap: 0.35rem; flex: none; min-width: 0;
+  display: flex; align-items: center; gap: 0.25rem; flex: none; min-width: 0;
 }
 .mob-clockpair.as-row { cursor: default; }
-.mob-clockpair .t { font-size: 0.95rem; font-weight: 800; letter-spacing: -0.02em; }
+.mob-clockpair .mob-field-label { font-size: 0.55rem; letter-spacing: 0.04em; }
+.mob-clockpair .t { font-size: 0.88rem; font-weight: 800; letter-spacing: -0.02em; }
 .mob-clockoutmini {
   appearance: none; cursor: pointer; flex: none;
   border: 1px solid #f6bdbd; border-radius: 999px;
   background: linear-gradient(180deg, #fff4f4, #fde0e0); color: #b91c1c;
-  padding: 0.3rem 0.8rem; font-size: 0.74rem; font-weight: 800;
+  padding: 0.28rem 0.6rem; font-size: 0.7rem; font-weight: 800; white-space: nowrap;
 }
 .mob-clockoutmini:disabled { opacity: 0.55; cursor: default; }
 /* The "V" that opens the week — flipped over while the week is out. */
-.mob-clockmini > .week-toggle { margin-left: auto; }
+.mob-clockmini > .week-toggle { margin-left: auto; width: 26px; height: 26px; }
 .mob-icon-btn.week-toggle svg { transition: transform 0.15s; }
 .mob-icon-btn.week-toggle.on svg { transform: rotate(180deg); }
 
@@ -1622,12 +1629,22 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; justify-content: center; align-items: center;
   padding: 0.5rem 1.1rem 0.8rem;
 }
-.mob-role { font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif; }
-/* The screen title with its trailing action (e.g. the history clock). */
+.mob-role {
+  font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif;
+  text-align: center;
+}
+/* A tab's own title block, centred under the brand — the same place a
+   sub-page's title sits, so moving between them does not shift the eye. */
+.mob-pagehead { padding: 0 0.2rem; text-align: center; }
+/* The screen title with its trailing action (e.g. the history clock).
+   Three columns so the title stays centred on the screen rather than
+   centred on whatever is left over beside the button. */
 .mob-rolebar {
-  display: flex; align-items: center; justify-content: space-between;
+  display: grid; grid-template-columns: 30px 1fr 30px; align-items: center;
   gap: 0.6rem; padding: 0 0.2rem;
 }
+.mob-rolebar > :first-child { grid-column: 2; text-align: center; min-width: 0; }
+.mob-rolebar > :last-child { grid-column: 3; }
 /* Range picker — Today / 7 days / 30 days, one segment lit at a time. */
 .mob-seg { display: flex; gap: 0.4rem; }
 .mob-seg button {

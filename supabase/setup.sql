@@ -1690,3 +1690,16 @@ alter table public.attendance add column if not exists accuracy_m double precisi
 -- rejection somebody has to fix.
 -- ---------------------------------------------------------------------------
 alter table public.production_entries add column if not exists rejected_by text;
+
+-- ---------------------------------------------------------------------------
+-- Clocking OUT is witnessed too. It was one tap at first, on the reasoning
+-- that nobody fakes leaving — but the hours between the two stamps are what
+-- gets paid, so an unwitnessed out is as good as an unwitnessed in. Same
+-- three facts, same nullability, same reasons: location can be refused and
+-- an upload can die on a bad signal, and losing the shift over either helps
+-- nobody.
+-- ---------------------------------------------------------------------------
+alter table public.attendance add column if not exists out_photo_path text;
+alter table public.attendance add column if not exists out_latitude double precision;
+alter table public.attendance add column if not exists out_longitude double precision;
+alter table public.attendance add column if not exists out_accuracy_m double precision;
