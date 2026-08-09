@@ -1523,6 +1523,23 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   padding: 0.5rem 1.1rem 0.8rem;
 }
 .mob-role { font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif; }
+/* The screen title with its trailing action (e.g. the history clock). */
+.mob-rolebar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.6rem; padding: 0 0.2rem;
+}
+/* Range picker — Today / 7 days / 30 days, one segment lit at a time. */
+.mob-seg { display: flex; gap: 0.4rem; }
+.mob-seg button {
+  appearance: none; cursor: pointer; flex: 1;
+  border: 1px solid var(--border); border-radius: 10px; background: #fff;
+  padding: 0.42rem 0; font-size: 0.78rem; font-weight: 700; color: var(--muted);
+}
+.mob-seg button.on {
+  background: linear-gradient(180deg, #566270, #333c47); color: #fff;
+  border-color: transparent;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
 .mob-sub { color: var(--muted); font-size: 0.75rem; }
 /* Top-bar tier badge — the user's tag spelled out in full. */
 .mob-tier {
@@ -1551,13 +1568,17 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-chip.ok { background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
 .mob-chip.warn { background: #fdeeda; color: #b45309; font-weight: 600; }
 .mob-btn {
-  appearance: none; border: none; cursor: pointer;
+  appearance: none; cursor: pointer;
   background: linear-gradient(180deg, #566270, #333c47); color: #fff;
   border-radius: 11px; padding: 0.65rem; font-weight: 700; font-size: 0.85rem;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 5px 14px rgba(35, 45, 58, 0.30); margin-top: 0.2rem;
+  /* Every mob-btn is the same box — a transparent border on the filled
+     face keeps it exactly as tall as the bordered ghost beside it. */
+  border: 1px solid transparent; width: 100%; min-height: 2.8rem;
 }
 .mob-btn.ghost {
   background: #eef0f4; color: var(--accent-strong); box-shadow: none;
+  border-color: #dfe3e9;
 }
 .mob-mini {
   appearance: none; border: none; cursor: pointer;

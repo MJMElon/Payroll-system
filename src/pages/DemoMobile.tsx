@@ -493,7 +493,7 @@ function TabBar({
       <button
         className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
         onClick={() => onTab('record')}
-        aria-label="Add new entry"
+        aria-label="New work record"
       >
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           strokeWidth="2.6" strokeLinecap="round">
@@ -1429,12 +1429,15 @@ function StationWorkPanel({
     ? Math.min(station.hourly_target ?? 6, HOURLY_PHOTO_CAP)
     : station.hourly_target ?? 6
 
-  // Jobs this tier may record at this station, priced at an APPROVED rate only.
+  // Jobs this tier may record at this station, priced at an APPROVED rate
+  // only, and ticked as a JOB RECORD — incentives and other support rates
+  // are paid but never offered as a record to submit.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
   const approvedJobs = jobs.filter(
     (j) =>
       j.station_id === station.id &&
       j.approval_status === 'approved' &&
+      j.record_job !== false &&
       (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
   )
 
@@ -1589,7 +1592,7 @@ function StationWorkPanel({
                     <select className="mob-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
                       <option value="">Choose job…</option>
                       {approvedJobs.map((j) => (
-                        <option key={j.id} value={j.id}>{j.name} · {rateLabel(j.id)}{j.unit}</option>
+                        <option key={j.id} value={j.id}>{j.name}</option>
                       ))}
                     </select>
                   </>
@@ -1896,8 +1899,10 @@ function RecordTab({
   onError: (m: string | null) => void
 }) {
   const [myStationId, setMyStationId] = useState('')
-  const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
+  // The screen behind the clock button: everything already submitted,
+  // by range. The form itself stays clean.
+  const [view, setView] = useState<'form' | 'history'>('form')
   const [stationId, setStationId] = useState('')
   const [jobId, setJobId] = useState('')
   const [qty, setQty] = useState('')
@@ -1925,22 +1930,6 @@ function RecordTab({
   const [pulledQty, setPulledQty] = useState(0)
   const [pulling, setPulling] = useState(false)
 
-  async function loadEntries() {
-    if (!profileId) return
-    const { data, error } = await supabase
-      .from('production_entries')
-      .select('*')
-      .eq('user_id', profileId)
-      .order('created_at', { ascending: false })
-      .limit(12)
-    if (error) onError(error.message)
-    else setEntries(data ?? [])
-  }
-  useEffect(() => {
-    loadEntries()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId])
-
   // Nothing to choose at station level — the form is already on the right
   // station before it is opened.
   useEffect(() => {
@@ -1949,11 +1938,14 @@ function RecordTab({
   }, [atStationLevel, ownStation?.id])
 
   // Jobs at the chosen station this TIER may record — own tier and below
-  // (a job with no tag is open to everyone).
+  // (a job with no tag is open to everyone). Only contracts ticked as a
+  // JOB RECORD are offered: incentives and other support rates are priced
+  // for payroll but are not a record anyone submits.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
   const stationJobs = jobs.filter(
     (j) =>
       j.station_id === stationId &&
+      j.record_job !== false &&
       (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
   )
   const job = jobs.find((j) => j.id === jobId)
@@ -2053,7 +2045,6 @@ function RecordTab({
       setQty('')
       setDutyShift('')
       setPhotos([])
-      await loadEntries()
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -2077,13 +2068,24 @@ function RecordTab({
     )
   }
 
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
-
   // Operators record work by taking photos at their own station, merged
   // directly into this tab — no manual station/job/quantity form.
   const isOperator = tier?.name === 'Operator'
   const myStation = myStations.find((s) => s.id === myStationId) ?? myStations[0] ?? null
+
+  if (view === 'history') {
+    return (
+      <RecordHistory
+        profileId={profileId}
+        tier={tier}
+        stations={stations}
+        jobs={jobs}
+        amountFor={amountFor}
+        onOpen={setDetail}
+        onBack={() => setView('form')}
+      />
+    )
+  }
 
   if (isOperator) {
     return (
@@ -2094,9 +2096,19 @@ function RecordTab({
         </div>
 
         <div className="mob-body">
-          <div style={{ padding: '0 0.2rem' }}>
-            <div className="mob-role">Add new entry</div>
-            {myStation && <div className="mob-sub">{myStation.name}</div>}
+          <div className="mob-rolebar">
+            <div>
+              <div className="mob-role">New Work Record</div>
+              {myStation && <div className="mob-sub">{myStation.name}</div>}
+            </div>
+            <button
+              className="mob-icon-btn"
+              onClick={() => setView('history')}
+              title="Work record history"
+              aria-label="Work record history"
+            >
+              <IconHistory />
+            </button>
           </div>
 
           <ClockCard
@@ -2161,7 +2173,17 @@ function RecordTab({
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Add new entry</div>
+        <div className="mob-rolebar">
+          <div className="mob-role">New Work Record</div>
+          <button
+            className="mob-icon-btn"
+            onClick={() => setView('history')}
+            title="Work record history"
+            aria-label="Work record history"
+          >
+            <IconHistory />
+          </button>
+        </div>
 
         <ClockCard
           profileId={profileId}
@@ -2211,10 +2233,10 @@ function RecordTab({
               disabled={!stationId}
             >
               <option value="">{stationId ? 'Choose job…' : 'Pick a station first'}</option>
+              {/* The list is the job names alone — the rate arithmetic
+                  belongs to the breakdown below, not to the choosing. */}
               {stationJobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.name} · {rateLabelFor(rateFor, tier2RateFor, j.id)}{j.unit}
-                </option>
+                <option key={j.id} value={j.id}>{j.name}</option>
               ))}
             </select>
 
@@ -2352,27 +2374,142 @@ function RecordTab({
           </div>
         )}
 
-        {/* Just-submitted confirmation — the full history lives in My work. */}
-        <div className="mob-card">
-          <div className="mob-title">Recently submitted</div>
-          {entries.length === 0 && <div className="mob-sub">Nothing submitted yet.</div>}
-          {entries.slice(0, 5).map((e) => (
-            <button className="mob-entry" key={e.id} onClick={() => setDetail(e)}>
-              <span className="mob-entry-main">
-                <span className="mob-entry-name">{jobName(e.job_id)}</span>
-                <span className="mob-station-meta">
-                  {stationName(e.station_id)} · {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                </span>
-              </span>
-              <span className="mob-entry-side">
-                <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-                {statusChip(e.approval_status)}
-              </span>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Work record history — behind the clock button beside the New Work   */
+/* Record title. Opens on today's submissions; the ranges widen from   */
+/* there. Tapping a row opens the full submitted record.               */
+/* ------------------------------------------------------------------ */
+
+const HISTORY_RANGES = [
+  { key: 'today', label: 'Today', days: 0 },
+  { key: '7d', label: '7 days', days: 6 },
+  { key: '30d', label: '30 days', days: 29 },
+] as const
+
+function RecordHistory({
+  profileId,
+  tier,
+  stations,
+  jobs,
+  amountFor,
+  onOpen,
+  onBack,
+}: {
+  profileId: string | null
+  tier: Grade | null
+  stations: Station[]
+  jobs: Job[]
+  amountFor: (jobId: string, quantity: number) => number
+  onOpen: (e: ProductionEntry) => void
+  onBack: () => void
+}) {
+  const [rangeKey, setRangeKey] = useState<(typeof HISTORY_RANGES)[number]['key']>('today')
+  const [rows, setRows] = useState<ProductionEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!profileId) return
+    const range = HISTORY_RANGES.find((r) => r.key === rangeKey)!
+    const d = new Date()
+    d.setDate(d.getDate() - range.days)
+    const since = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+    setLoading(true)
+    supabase
+      .from('production_entries')
+      .select('*')
+      .eq('user_id', profileId)
+      .gte('work_date', since)
+      .order('created_at', { ascending: false })
+      .limit(200)
+      .then(({ data }) => {
+        setRows(data ?? [])
+        setLoading(false)
+      })
+  }, [profileId, rangeKey])
+
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
+
+  return (
+    <>
+      <div className="mob-header">
+        <button className="mob-back" onClick={onBack}>‹ Record</button>
+        <span className="mob-brand">MJM</span>
+        <TierBadge tier={tier} />
+      </div>
+
+      <div className="mob-body">
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Work Record History</div>
+
+        <div className="mob-seg" role="tablist">
+          {HISTORY_RANGES.map((r) => (
+            <button
+              key={r.key}
+              role="tab"
+              aria-selected={rangeKey === r.key}
+              className={rangeKey === r.key ? 'on' : ''}
+              onClick={() => setRangeKey(r.key)}
+            >
+              {r.label}
             </button>
           ))}
         </div>
+
+        <div className="mob-card">
+          {loading ? (
+            <div className="mob-sub">Loading…</div>
+          ) : rows.length === 0 ? (
+            <div className="mob-sub">
+              {rangeKey === 'today' ? 'Nothing submitted today.' : 'Nothing submitted in this range.'}
+            </div>
+          ) : (
+            rows.map((e) => (
+              <button className="mob-entry" key={e.id} onClick={() => onOpen(e)}>
+                <span className="mob-entry-main">
+                  <span className="mob-entry-name">{jobName(e.job_id)}</span>
+                  <span className="mob-station-meta">
+                    {stationName(e.station_id)} ·{' '}
+                    {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+                      day: '2-digit', month: 'short',
+                    })}
+                  </span>
+                </span>
+                <span className="mob-entry-side">
+                  <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                  {statusChip(e.approval_status)}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
       </div>
     </>
+  )
+}
+
+/** The history mark: a clock face swept by a turning-back arrow. */
+function IconHistory() {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 12a9 9 0 1 0 2.6-6.4" />
+      <path d="M3 4v4h4" />
+      <path d="M12 8v4l3 2" />
+    </svg>
   )
 }
 
