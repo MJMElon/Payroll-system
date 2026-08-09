@@ -1074,6 +1074,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   overflow-x: auto; padding-bottom: 0.35rem;
   scroll-snap-type: x mandatory; margin: 0 -0.1rem;
 }
+/* While a name is being dragged the snap lets go, so the strip can slide
+   toward the next team under the held name instead of bouncing back. */
+.mob-teamscroll.free { scroll-snap-type: none; }
 /* One team fills the width, with the add block beside it as the only
    thing peeking — a half-shown second team read as a layout fault. */
 .mob-teamcol {
@@ -1440,6 +1443,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: linear-gradient(90deg, #566270, #8d959f);
 }
 .mob-bartrack > div.best { background: linear-gradient(90deg, #b98a1d, #e3b34c); }
+/* A day's bar carrying its statuses side by side — the same colours the
+   score meter and its key use, so one legend serves the whole card. */
+.mob-bartrack.split { display: flex; }
+/* height:auto so the default flex stretch sizes the segments — the base
+   rule's height:100% computes to 0 for flex items here. */
+.mob-bartrack.split > div { border-radius: 0; height: auto; flex: none; }
+.mob-bartrack.split > div:first-child { border-radius: 999px 0 0 999px; }
+.mob-bartrack.split > div:last-child { border-radius: 0 999px 999px 0; }
+.mob-bartrack.split > div:only-child { border-radius: 999px; }
+.mob-bartrack.split > .done { background: linear-gradient(90deg, #15803d, #22c55e); }
+.mob-bartrack.split > .bad { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+.mob-bartrack.split > .wait { background: #cbd2da; }
 .mob-barrow .lbl.wide {
   width: 76px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -1568,8 +1583,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   padding: 0.55rem 1.1rem 0.3rem; font-size: 0.7rem; color: var(--muted);
   letter-spacing: 0.05em;
 }
+/* The brand sits dead centre; a back button, when there is one, floats
+   at the left edge without pushing the brand off centre. */
 .mob-header {
-  display: flex; justify-content: space-between; align-items: center;
+  position: relative;
+  display: flex; justify-content: center; align-items: center;
   padding: 0.5rem 1.1rem 0.8rem;
 }
 .mob-role { font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif; }

@@ -389,7 +389,6 @@ export default function DemoMobile() {
                 ) : tab === 'performance' ? (
                   <PerformanceTab
                     stations={scopedStations}
-                    scoped={scopedStations.length !== stations.length}
                     tier={tier}
                     grades={grades}
                     jobs={jobs}
@@ -533,11 +532,6 @@ function TabBar({
       </div>
     </div>
   )
-}
-
-/** Top-bar badge: the previewed tier's name spelled out in full. */
-function TierBadge({ tier }: { tier: Grade | null }) {
-  return <span className="mob-tier">{tier?.name ?? '—'}</span>
 }
 
 /**
@@ -758,7 +752,6 @@ function statusChip(status: string | undefined) {
 
 function PerformanceTab({
   stations,
-  scoped,
   tier,
   grades,
   jobs,
@@ -774,7 +767,6 @@ function PerformanceTab({
   onError,
 }: {
   stations: Station[]
-  scoped: boolean
   tier: Grade | null
   grades: Grade[]
   jobs: Job[]
@@ -850,8 +842,10 @@ function PerformanceTab({
 
   const needsFix = myEntries.filter((e) => e.approval_status === 'rejected').length
 
-  // This week's daily quantity (Mon–Sun).
-  const myWeek: { label: string; iso: string; qty: number }[] = []
+  // This week's daily quantity (Mon–Sun), split by where each unit stands
+  // in approval — the bar carries all of it, coloured by status, so the
+  // chart and the scorecard read as one picture.
+  const myWeek: { label: string; iso: string; appr: number; rej: number; wait: number }[] = []
   const todayDate = new Date()
   const monday = new Date(todayDate)
   monday.setDate(todayDate.getDate() - ((todayDate.getDay() + 6) % 7))
@@ -861,20 +855,26 @@ function PerformanceTab({
     myWeek.push({
       label: d.toLocaleDateString(undefined, { weekday: 'short' }),
       iso: dayISO(d),
-      qty: 0,
+      appr: 0,
+      rej: 0,
+      wait: 0,
     })
   }
   for (const e of myEntries) {
     const slot = myWeek.find((w) => w.iso === e.work_date)
-    if (slot) slot.qty += e.quantity
+    if (!slot) continue
+    const st = e.approval_status ?? 'approved'
+    if (st === 'approved') slot.appr += e.quantity
+    else if (st === 'rejected') slot.rej += e.quantity
+    else slot.wait += e.quantity
   }
-  const myMaxQty = Math.max(1, ...myWeek.map((w) => w.qty))
-  const myBestIso = myWeek.reduce((a, b) => (b.qty > a.qty ? b : a), myWeek[0])?.iso
+  const myQty = (w: (typeof myWeek)[number]) => w.appr + w.rej + w.wait
+  const myMaxQty = Math.max(1, ...myWeek.map(myQty))
 
   // The same week, but the whole mill's approved output rather than one
   // person's — an Admin reading the mill dashboard has few records of
   // their own, so their personal chart would sit empty.
-  const millWeek = myWeek.map((w) => ({ ...w, qty: 0 }))
+  const millWeek = myWeek.map((w) => ({ label: w.label, iso: w.iso, qty: 0 }))
   for (const e of entries) {
     if ((e.approval_status ?? 'approved') !== 'approved') continue
     if (!stations.some((st) => st.id === e.station_id)) continue
@@ -966,7 +966,6 @@ function PerformanceTab({
     return (
       <RecordHistory
         profileId={profileId}
-        tier={tier}
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
@@ -1031,7 +1030,6 @@ function PerformanceTab({
   // Whether this tier reviews anyone else's work at all.
   const reviews = canVerify || canFinal ? 1 : 0
 
-  const myToday = scoreOver(myEntries.filter((e) => e.work_date === todayISO()))
   const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
   const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
   const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
@@ -1053,12 +1051,15 @@ function PerformanceTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
       <div className="mob-body">
         <div style={{ padding: '0 0.2rem' }}>
-          <div className="mob-role">Performance dashboard</div>
-          <div className="mob-sub">{monthLabel} · {scoped ? 'your stations' : 'all stations'}</div>
+          {/* The title names the dashboard this tier was given (Settings →
+              Tags management → Entitled Function). The mill reads first
+              when both are on. */}
+          <div className="mob-role">
+            {showMill ? 'Mill Performance Dashboard' : showKpi ? 'KPI Dashboard' : 'Performance dashboard'}
+          </div>
         </div>
 
         {/* Both dashboards can be switched off, and a blank tab would look
@@ -1155,6 +1156,11 @@ function PerformanceTab({
         {/* 2 — my own scorecard: everything I submit should end up approved.
             Above the station tiers this reads as review, not as my own
             work, so it moves to My work with the rest of the review. */}
+        {/* My work done — the whole week in one card. One bar per day,
+            Mon to Sun, carrying EVERYTHING recorded that day coloured by
+            where it stands (approved / rejected / waiting), and under the
+            Sunday bar the week's percentage — the same colours adding
+            themselves up. */}
         {canEntry && showKpi && (
           <div
             className="mob-card tapcard block"
@@ -1164,8 +1170,23 @@ function PerformanceTab({
             onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && setSub('history')}
           >
             <div className="mob-card-label">My work done</div>
-            <div className="mob-sub">Target 100% approved · tap for the record</div>
-            <ScoreMeter label="Today" score={myToday} />
+            <div className="mob-sub">Tap for the work record</div>
+            <div className="mob-bars">
+              {myWeek.map((w) => {
+                const total = myQty(w)
+                return (
+                  <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
+                    <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
+                    <span className="mob-bartrack split">
+                      {w.appr > 0 && <div className="done" style={{ width: `${(w.appr / myMaxQty) * 100}%` }} />}
+                      {w.rej > 0 && <div className="bad" style={{ width: `${(w.rej / myMaxQty) * 100}%` }} />}
+                      {w.wait > 0 && <div className="wait" style={{ width: `${(w.wait / myMaxQty) * 100}%` }} />}
+                    </span>
+                    <span className="val">{total > 0 ? fmtQty(total) : '·'}</span>
+                  </div>
+                )
+              })}
+            </div>
             <ScoreMeter label="This week" score={myThisWeek} />
             <div className="mob-scorekey">
               <span><i className="dot done" />Work done</span>
@@ -1175,35 +1196,10 @@ function PerformanceTab({
           </div>
         )}
 
-        {canEntry && (
-          <>
-            {needsFix > 0 && (
-              <button className="mob-alert" onClick={onMyWork}>
-                ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
-              </button>
-            )}
-
-            {showKpi && (
-              <div className="mob-card">
-                <div className="mob-title">Daily quantity — this week</div>
-                <div className="mob-bars">
-                  {myWeek.map((w) => (
-                    <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
-                      <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
-                      <span className="mob-bartrack">
-                        <div
-                          className={w.iso === myBestIso && w.qty > 0 ? 'best' : ''}
-                          style={{ width: `${(w.qty / myMaxQty) * 100}%` }}
-                        />
-                      </span>
-                      <span className="val">{w.qty > 0 ? w.qty : '·'}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-          </>
+        {canEntry && needsFix > 0 && (
+          <button className="mob-alert" onClick={onMyWork}>
+            ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
+          </button>
         )}
 
         {/* 3 — what is still out, and what came back. At station level the
@@ -1421,7 +1417,6 @@ function StationScreen({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -2404,7 +2399,6 @@ function RecordTab({
     return (
       <RecordHistory
         profileId={profileId}
-        tier={tier}
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
@@ -2419,7 +2413,6 @@ function RecordTab({
       <>
         <div className="mob-header">
           <span className="mob-brand">MJM</span>
-          <TierBadge tier={tier} />
         </div>
 
         <div className="mob-body">
@@ -2496,7 +2489,6 @@ function RecordTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -2720,7 +2712,6 @@ const HISTORY_RANGES = [
 
 function RecordHistory({
   profileId,
-  tier,
   stations,
   jobs,
   amountFor,
@@ -2728,7 +2719,6 @@ function RecordHistory({
   onBack,
 }: {
   profileId: string | null
-  tier: Grade | null
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
@@ -2766,7 +2756,6 @@ function RecordHistory({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -2934,7 +2923,6 @@ function EntryDetail({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -3522,7 +3510,6 @@ function MyWorkTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -3929,7 +3916,6 @@ function QueueScreen({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -4051,7 +4037,6 @@ function ProfileTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -4614,6 +4599,25 @@ function TeamTab({
   const [pickedStation, setPickedStation] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
+  // While a held name hovers near the strip's edge, the strip slides
+  // itself toward the next team — the finger is busy holding the name,
+  // so the scrolling has to be done for it.
+  const slideDir = useRef(0)
+  const slideTimer = useRef<number | null>(null)
+  function setSlide(dir: number) {
+    slideDir.current = dir
+    if (dir === 0) {
+      if (slideTimer.current != null) {
+        window.clearInterval(slideTimer.current)
+        slideTimer.current = null
+      }
+    } else if (slideTimer.current == null) {
+      slideTimer.current = window.setInterval(() => {
+        scrollRef.current?.scrollBy({ left: slideDir.current * 14 })
+      }, 24)
+    }
+  }
+  useEffect(() => () => setSlide(0), [])
   // Moving is a MODE, entered from the move button beside +. Inside it a
   // name drags straight away and nothing is written until Save, so a
   // reshuffle is one decision rather than a write per drag.
@@ -5059,6 +5063,7 @@ function TeamTab({
               onDragEnd={() => {
                 setDragId(null)
                 setOverGrade(null)
+                setSlide(0)
               }}
             >
               {moveMode && <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>}
@@ -5170,7 +5175,24 @@ function TeamTab({
 
       {runsTeams ? (
         <>
-          <div className="mob-teamscroll" ref={scrollRef}>
+          <div
+            /* Snap is released while a name is held — mandatory snapping
+               would pull the strip straight back mid-slide. It returns on
+               drop, settling the strip on the nearest column. */
+            className={`mob-teamscroll ${dragId ? 'free' : ''}`}
+            ref={scrollRef}
+            onDragOver={(e) => {
+              // Lanes preventDefault and let the event bubble here, so the
+              // edge check runs wherever the name is held.
+              const el = scrollRef.current
+              if (!el) return
+              const r = el.getBoundingClientRect()
+              const EDGE = 56
+              setSlide(e.clientX < r.left + EDGE ? -1 : e.clientX > r.right - EDGE ? 1 : 0)
+            }}
+            onDragLeave={() => setSlide(0)}
+            onDrop={() => setSlide(0)}
+          >
             {teamColumns.map((col) => (
               <div className="mob-teamcol" key={col.key}>
                 <div className="mob-teamcol-name">{col.name}</div>
@@ -5263,7 +5285,6 @@ function TeamTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">

@@ -738,7 +738,16 @@ function TierPeople({
   /** The viewer's own tier — what they may hand out is measured from it. */
   viewerTier: number | null
 }) {
-  type Person = { id: string; full_name: string | null; email: string | null; grade_id: string | null }
+  type Person = {
+    id: string
+    full_name: string | null
+    email: string | null
+    grade_id: string | null
+    chart_pos?: number | null
+    team_id?: string | null
+    station_id?: string | null
+    station_ids?: string[] | null
+  }
   const [people, setPeople] = useState<Person[]>([])
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<Person[] | null>(null)
@@ -752,12 +761,42 @@ function TierPeople({
   const tierOf = (p: Person) => grades.find((g) => g.id === p.grade_id) ?? null
 
   async function loadPeople() {
-    const { data } = await supabase
-      .from('access_profiles')
-      .select('id, full_name, email, grade_id')
-      .eq('grade_id', grade.id)
-      .order('full_name')
-    setPeople((data ?? []) as Person[])
+    // The list reads in the same sequence Team Manage draws this tier:
+    // station boxes left to right, team columns inside them, and inside a
+    // cell exactly where each block was dragged (chart_pos), names only
+    // for anyone never hand-ordered. select('*') because chart_pos may
+    // not exist yet on an older database.
+    const [pd, st, tm] = await Promise.all([
+      supabase.from('access_profiles').select('*').eq('grade_id', grade.id),
+      supabase.from('stations').select('id, sort_order'),
+      supabase.from('teams').select('id, sort_order'),
+    ])
+    const stationRank = (p: Person) => {
+      const ids =
+        p.station_ids && p.station_ids.length > 0
+          ? p.station_ids
+          : p.station_id
+            ? [p.station_id]
+            : []
+      if (ids.length === 0) return -1 // across all stations — drawn first
+      return Math.min(
+        ...ids.map(
+          (id) => (st.data ?? []).find((x) => x.id === id)?.sort_order ?? Number.POSITIVE_INFINITY,
+        ),
+      )
+    }
+    const teamRank = (p: Person) =>
+      (tm.data ?? []).find((t) => t.id === p.team_id)?.sort_order ?? Number.POSITIVE_INFINITY
+    const pos = (p: Person) => p.chart_pos ?? Number.POSITIVE_INFINITY
+    setPeople(
+      (((pd.data ?? []) as Person[]) ?? []).sort(
+        (a, b) =>
+          stationRank(a) - stationRank(b) ||
+          teamRank(a) - teamRank(b) ||
+          pos(a) - pos(b) ||
+          label(a).localeCompare(label(b)),
+      ),
+    )
     setLoading(false)
   }
 
