@@ -211,8 +211,6 @@ export default function DemoMobile() {
   // been run — probe once so the mobile view can fall back to the plain
   // stamp card (no job/rate) instead of erroring when it hasn't been applied.
   const [jobColumnReady, setJobColumnReady] = useState(false)
-  const [shift, setShift] = useState<Shift | null>(null)
-  const [clocking, setClocking] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -311,64 +309,6 @@ export default function DemoMobile() {
     return () => clearInterval(t)
   }, [profile?.id, jobColumnReady, hourlyStationIds])
 
-  // The shift that is currently OPEN — clocked in with no clock out yet.
-  // Null means clocked out, which is what the float reads off to decide
-  // whether it offers "Clock in" or "Clock out".
-  useEffect(() => {
-    if (!profile?.id) return
-    let cancelled = false
-    supabase
-      .from('attendance')
-      .select('id, clock_in, clock_out')
-      .eq('user_id', profile.id)
-      .is('clock_out', null)
-      .order('clock_in', { ascending: false })
-      .limit(1)
-      .then(({ data }) => {
-        if (!cancelled && data && data.length > 0) setShift(data[0] as Shift)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [profile?.id])
-
-  async function toggleClock() {
-    if (!profile?.id || clocking) return
-    setClocking(true)
-    setError(null)
-    const now = new Date().toISOString()
-    if (shift) {
-      if (shift.id !== LOCAL_SHIFT) {
-        const { error: err } = await supabase
-          .from('attendance')
-          .update({ clock_out: now })
-          .eq('id', shift.id)
-        if (err) setError(clockHelp(err.message))
-      }
-      setShift(null)
-    } else {
-      const { data, error: err } = await supabase
-        .from('attendance')
-        .insert({
-          user_id: profile.id,
-          station_id: scopedStations.length === 1 ? scopedStations[0].id : null,
-          work_date: todayISO(),
-          clock_in: now,
-        })
-        .select('id, clock_in, clock_out')
-        .single()
-      // Not saved is still worth showing: the preview flips so the design
-      // can be walked through, and the message says exactly why.
-      if (err) {
-        setError(clockHelp(err.message))
-        setShift({ id: LOCAL_SHIFT, clock_in: now, clock_out: null })
-      } else {
-        setShift(data as Shift)
-      }
-    }
-    setClocking(false)
-  }
-
   return (
     <div className="stack">
       <header className="module-bar">
@@ -444,7 +384,9 @@ export default function DemoMobile() {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
+                    profile={profile}
                     profileId={profile?.id ?? null}
+                    myStationIds={myStationIds}
                     myEmail={profile?.email ?? 'unknown'}
                     jobColumnReady={jobColumnReady}
                     onMyWork={() => setTab('mywork')}
@@ -493,10 +435,6 @@ export default function DemoMobile() {
                     tier={tier}
                     grades={grades}
                     stations={stations}
-                    jobs={jobs}
-                    rateFor={rateFor}
-                    amountFor={amountFor}
-                    tier2RateFor={tier2RateFor}
                     onError={setError}
                   />
                 )}
@@ -506,9 +444,6 @@ export default function DemoMobile() {
                 <TabBar
                   tab={tab}
                   onTab={setTab}
-                  clockedInAt={shift?.clock_in ?? null}
-                  clocking={clocking}
-                  onClock={toggleClock}
                 />
               )}
             </div>
@@ -529,20 +464,13 @@ export default function DemoMobile() {
 function TabBar({
   tab,
   onTab,
-  clockedInAt,
-  clocking,
-  onClock,
 }: {
   tab: Tab
   onTab: (t: Tab) => void
-  clockedInAt: string | null
-  clocking: boolean
-  onClock: () => void
 }) {
-  // Five slots, identical for every tier: "+ Record" (add a new entry) sits
+  // Five slots, identical for every tier: the "+" (add a new entry) sits
   // EXACTLY in the centre with two tabs flexing on each side —
-  // Performance · My work · [+ Record] · Team · Profile. The clock float
-  // rides above it, since attendance belongs to no single tab.
+  // Performance · My work · [ + ] · Team · Profile.
   return (
     <div className="mob-tabbar centered">
       <div className="mob-tab-side">
@@ -562,33 +490,16 @@ function TabBar({
           <span>My work</span>
         </button>
       </div>
-      <div className="mob-tab-center">
-        <button
-          className={`mob-clockfab ${clockedInAt ? 'on' : ''}`}
-          onClick={onClock}
-          disabled={clocking}
-          title={clockedInAt ? `Clocked in at ${clockTime(clockedInAt)}` : 'Start your shift'}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 7v5l3 2" />
-          </svg>
-          <span>{clockedInAt ? 'Clock out' : 'Clock in'}</span>
-          {clockedInAt && <em>{clockTime(clockedInAt)}</em>}
-        </button>
-        <button
-          className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
-          onClick={() => onTab('record')}
-          aria-label="Add new entry"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="2.8" strokeLinecap="round">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-          <span>Record</span>
-        </button>
-      </div>
+      <button
+        className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
+        onClick={() => onTab('record')}
+        aria-label="Add new entry"
+      >
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.6" strokeLinecap="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
       <div className="mob-tab-side">
         <button className={`mob-tab ${tab === 'team' ? 'active' : ''}`} onClick={() => onTab('team')}>
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -824,7 +735,9 @@ function PerformanceTab({
   rateFor,
   amountFor,
   tier2RateFor,
+  profile,
   profileId,
+  myStationIds,
   myEmail,
   jobColumnReady,
   onMyWork,
@@ -838,7 +751,9 @@ function PerformanceTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  profile: Profile | null
   profileId: string | null
+  myStationIds: string[]
   myEmail: string
   jobColumnReady: boolean
   onMyWork: () => void
@@ -1237,6 +1152,28 @@ function PerformanceTab({
               </span>
             </button>
           </div>
+        )}
+
+        {/* 4 — what the work paid. This month's own numbers, the payslips
+            they add up to, and the rates behind both. They used to live on
+            the Profile tab, which made Profile a pay screen and left the
+            KPI dashboard as a chart with no money on it. They belong to the
+            KPI dashboard, so they follow the same setting as the rest of
+            it rather than a rung test of their own. */}
+        {showKpi && (
+          <>
+            <MyNumbersSection profileId={profileId} amountFor={amountFor} />
+            <PayslipSection profile={profile} />
+            <ContractSection
+              tier={tier}
+              grades={grades}
+              jobs={jobs}
+              stations={stations}
+              myStationIds={myStationIds}
+              rateFor={rateFor}
+              tier2RateFor={tier2RateFor}
+            />
+          </>
         )}
 
         {(canVerify || canFinal) && showMill && (
@@ -1780,6 +1717,152 @@ function StationWorkPanel({
 }
 
 /* ------------------------------------------------------------------ */
+/* Today's attendance, at the head of the Record tab. Clocking in is    */
+/* the first thing done on a shift and the record screen is where the   */
+/* day's work is entered, so the two belong on one page.                */
+/*                                                                      */
+/* One row per stamp: the in time, and the out time beside it — blank   */
+/* until it is clocked, so the row itself shows whether the shift is    */
+/* still running. Closed shifts add up into the day's hours.            */
+/* ------------------------------------------------------------------ */
+
+function ClockCard({
+  profileId,
+  stationId,
+  onError,
+}: {
+  profileId: string | null
+  stationId: string | null
+  onError: (m: string | null) => void
+}) {
+  const [shifts, setShifts] = useState<Shift[]>([])
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!profileId) return
+    let cancelled = false
+    supabase
+      .from('attendance')
+      .select('id, clock_in, clock_out')
+      .eq('user_id', profileId)
+      .eq('work_date', todayISO())
+      .order('clock_in')
+      .then(({ data }) => {
+        if (!cancelled && data) setShifts(data as Shift[])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [profileId])
+
+  // The shift still running, if any. Its absence is what makes the button
+  // read "Clock in" rather than "Clock out".
+  const open = shifts.find((s) => s.clock_out == null) ?? null
+  const closed = shifts.filter((s) => s.clock_out != null)
+  const hoursToday = closed.reduce(
+    (t, s) => t + (new Date(s.clock_out!).getTime() - new Date(s.clock_in).getTime()) / 3_600_000,
+    0,
+  )
+
+  async function stamp() {
+    if (!profileId || busy) return
+    setBusy(true)
+    onError(null)
+    const now = new Date().toISOString()
+    if (open) {
+      if (!open.id.startsWith(LOCAL_SHIFT)) {
+        const { error } = await supabase
+          .from('attendance')
+          .update({ clock_out: now })
+          .eq('id', open.id)
+        if (error) onError(clockHelp(error.message))
+      }
+      setShifts((rows) => rows.map((r) => (r.id === open.id ? { ...r, clock_out: now } : r)))
+    } else {
+      const { data, error } = await supabase
+        .from('attendance')
+        .insert({
+          user_id: profileId,
+          station_id: stationId,
+          work_date: todayISO(),
+          clock_in: now,
+        })
+        .select('id, clock_in, clock_out')
+        .single()
+      // Not saved is still worth showing: the card stamps so the screen can
+      // be walked through, and the message says exactly why it did not save.
+      if (error) {
+        onError(clockHelp(error.message))
+        setShifts((rows) => [
+          ...rows,
+          { id: `${LOCAL_SHIFT}-${rows.length}`, clock_in: now, clock_out: null },
+        ])
+      } else {
+        setShifts((rows) => [...rows, data as Shift])
+      }
+    }
+    setBusy(false)
+  }
+
+  const blank = <span className="t empty">--:--</span>
+
+  return (
+    <div className="mob-card">
+      <div className="mob-card-label">Today's attendance</div>
+      <div className="mob-sub">
+        {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}
+      </div>
+
+      {shifts.length === 0 ? (
+        <div className="mob-clockrow">
+          <div className="mob-clockcell">
+            <span className="mob-field-label">Clock in</span>
+            {blank}
+          </div>
+          <div className="mob-clockcell">
+            <span className="mob-field-label">Clock out</span>
+            {blank}
+          </div>
+        </div>
+      ) : (
+        shifts.map((s) => (
+          <div className={`mob-clockrow ${s.clock_out ? '' : 'open'}`} key={s.id}>
+            <div className="mob-clockcell">
+              <span className="mob-field-label">Clock in</span>
+              <span className="t">{clockTime(s.clock_in)}</span>
+            </div>
+            <div className="mob-clockcell">
+              <span className="mob-field-label">Clock out</span>
+              {s.clock_out ? <span className="t">{clockTime(s.clock_out)}</span> : blank}
+            </div>
+          </div>
+        ))
+      )}
+
+      <button
+        className={`mob-clockbtn ${open ? 'out' : ''}`}
+        onClick={stamp}
+        disabled={busy || !profileId}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </svg>
+        {busy ? 'Saving…' : open ? 'Clock out' : 'Clock in'}
+      </button>
+
+      {closed.length > 0 && (
+        <div className="mob-breakrow total">
+          <span>Hours today</span>
+          <span className="mob-entry-amt">{hoursToday.toFixed(2)} h</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* TAB 2 — RECORD: submit a work record → pending → verify → approve  */
 /* ------------------------------------------------------------------ */
 
@@ -2016,6 +2099,12 @@ function RecordTab({
             {myStation && <div className="mob-sub">{myStation.name}</div>}
           </div>
 
+          <ClockCard
+            profileId={profileId}
+            stationId={myStation?.id ?? null}
+            onError={onError}
+          />
+
           {!canEntry ? (
             <div className="mob-card">
               <div className="mob-sub">
@@ -2073,6 +2162,12 @@ function RecordTab({
 
       <div className="mob-body">
         <div className="mob-role" style={{ padding: '0 0.2rem' }}>Add new entry</div>
+
+        <ClockCard
+          profileId={profileId}
+          stationId={ownStation?.id ?? null}
+          onError={onError}
+        />
 
         {!canEntry ? (
           <div className="mob-card">
@@ -3454,12 +3549,14 @@ function ApprovalDetail({
 }
 
 /* ------------------------------------------------------------------ */
-/* TAB 5 — PROFILE. Same layout for every tier, top to bottom:        */
+/* TAB 5 — PROFILE. Who you are, and nothing else. Same layout for     */
+/* every tier, top to bottom:                                          */
 /*   1  selfie (uploadable), name, tier, station                      */
 /*   2  personal details — collapsed until asked for                  */
-/*   3  this month's own numbers                                      */
-/*   4  the last three months of payslips                             */
-/*   5  the piece-rate contract: your tier, then the tiers below      */
+/*                                                                     */
+/* This month's numbers, the payslips and the rate contract used to    */
+/* sit under them. They are pay, not identity, and they now make up    */
+/* the KPI dashboard on the Performance tab.                           */
 /* ------------------------------------------------------------------ */
 
 function ProfileTab({
@@ -3467,20 +3564,12 @@ function ProfileTab({
   tier,
   grades,
   stations,
-  jobs,
-  rateFor,
-  amountFor,
-  tier2RateFor,
   onError,
 }: {
   profile: Profile | null
   tier: Grade | null
   grades: Grade[]
   stations: Station[]
-  jobs: Job[]
-  rateFor: (jobId: string) => number
-  amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
   onError: (m: string | null) => void
 }) {
   const [showDetails, setShowDetails] = useState(false)
@@ -3638,24 +3727,6 @@ function ProfileTab({
           )}
         </div>
 
-        {/* 3, 4, 5 — this month, the payslips it feeds, and the rates
-            behind both. All three are about being paid by the piece, so
-            they are absent for the tiers that are not. */}
-        {isPaidByPiece && (
-          <>
-            <MyNumbersSection profileId={profile?.id ?? null} amountFor={amountFor} />
-            <PayslipSection profile={profile} />
-            <ContractSection
-              tier={tier}
-              grades={grades}
-              jobs={jobs}
-              stations={stations}
-              myStationIds={myStationIds}
-              rateFor={rateFor}
-              tier2RateFor={tier2RateFor}
-            />
-          </>
-        )}
       </div>
     </>
   )
