@@ -380,7 +380,6 @@ export default function DemoMobile() {
                 ) : tab === 'performance' ? (
                   <PerformanceTab
                     stations={scopedStations}
-                    scoped={scopedStations.length !== stations.length}
                     tier={tier}
                     grades={grades}
                     jobs={jobs}
@@ -727,7 +726,6 @@ function statusChip(status: string | undefined) {
 
 function PerformanceTab({
   stations,
-  scoped,
   tier,
   grades,
   jobs,
@@ -743,7 +741,6 @@ function PerformanceTab({
   onError,
 }: {
   stations: Station[]
-  scoped: boolean
   tier: Grade | null
   grades: Grade[]
   jobs: Job[]
@@ -816,8 +813,10 @@ function PerformanceTab({
 
   const needsFix = myEntries.filter((e) => e.approval_status === 'rejected').length
 
-  // This week's daily quantity (Mon–Sun).
-  const myWeek: { label: string; iso: string; qty: number }[] = []
+  // This week's daily quantity (Mon–Sun), split by where each unit stands
+  // in approval — the bar carries all of it, coloured by status, so the
+  // chart and the scorecard read as one picture.
+  const myWeek: { label: string; iso: string; appr: number; rej: number; wait: number }[] = []
   const todayDate = new Date()
   const monday = new Date(todayDate)
   monday.setDate(todayDate.getDate() - ((todayDate.getDay() + 6) % 7))
@@ -827,20 +826,26 @@ function PerformanceTab({
     myWeek.push({
       label: d.toLocaleDateString(undefined, { weekday: 'short' }),
       iso: dayISO(d),
-      qty: 0,
+      appr: 0,
+      rej: 0,
+      wait: 0,
     })
   }
   for (const e of myEntries) {
     const slot = myWeek.find((w) => w.iso === e.work_date)
-    if (slot) slot.qty += e.quantity
+    if (!slot) continue
+    const st = e.approval_status ?? 'approved'
+    if (st === 'approved') slot.appr += e.quantity
+    else if (st === 'rejected') slot.rej += e.quantity
+    else slot.wait += e.quantity
   }
-  const myMaxQty = Math.max(1, ...myWeek.map((w) => w.qty))
-  const myBestIso = myWeek.reduce((a, b) => (b.qty > a.qty ? b : a), myWeek[0])?.iso
+  const myQty = (w: (typeof myWeek)[number]) => w.appr + w.rej + w.wait
+  const myMaxQty = Math.max(1, ...myWeek.map(myQty))
 
   // The same week, but the whole mill's approved output rather than one
   // person's — an Admin reading the mill dashboard has few records of
   // their own, so their personal chart would sit empty.
-  const millWeek = myWeek.map((w) => ({ ...w, qty: 0 }))
+  const millWeek = myWeek.map((w) => ({ label: w.label, iso: w.iso, qty: 0 }))
   for (const e of entries) {
     if ((e.approval_status ?? 'approved') !== 'approved') continue
     if (!stations.some((st) => st.id === e.station_id)) continue
@@ -962,7 +967,6 @@ function PerformanceTab({
   // Whether this tier reviews anyone else's work at all.
   const reviews = canVerify || canFinal ? 1 : 0
 
-  const myToday = scoreOver(myEntries.filter((e) => e.work_date === todayISO()))
   const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
   const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
   const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
@@ -993,7 +997,6 @@ function PerformanceTab({
           <div className="mob-role">
             {showMill ? 'Mill Performance Dashboard' : showKpi ? 'KPI Dashboard' : 'Performance dashboard'}
           </div>
-          <div className="mob-sub">{monthLabel} · {scoped ? 'your stations' : 'all stations'}</div>
         </div>
 
         {/* Both dashboards can be switched off, and a blank tab would look
@@ -1090,11 +1093,30 @@ function PerformanceTab({
         {/* 2 — my own scorecard: everything I submit should end up approved.
             Above the station tiers this reads as review, not as my own
             work, so it moves to My work with the rest of the review. */}
+        {/* My work done — the whole week in one card. One bar per day,
+            Mon to Sun, carrying EVERYTHING recorded that day coloured by
+            where it stands (approved / rejected / waiting), and under the
+            Sunday bar the week's percentage — the same colours adding
+            themselves up. */}
         {canEntry && showKpi && (
           <div className="mob-card">
             <div className="mob-card-label">My work done</div>
-            <div className="mob-sub">Target 100% approved</div>
-            <ScoreMeter label="Today" score={myToday} />
+            <div className="mob-bars">
+              {myWeek.map((w) => {
+                const total = myQty(w)
+                return (
+                  <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
+                    <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
+                    <span className="mob-bartrack split">
+                      {w.appr > 0 && <div className="done" style={{ width: `${(w.appr / myMaxQty) * 100}%` }} />}
+                      {w.rej > 0 && <div className="bad" style={{ width: `${(w.rej / myMaxQty) * 100}%` }} />}
+                      {w.wait > 0 && <div className="wait" style={{ width: `${(w.wait / myMaxQty) * 100}%` }} />}
+                    </span>
+                    <span className="val">{total > 0 ? fmtQty(total) : '·'}</span>
+                  </div>
+                )
+              })}
+            </div>
             <ScoreMeter label="This week" score={myThisWeek} />
             <div className="mob-scorekey">
               <span><i className="dot done" />Work done</span>
@@ -1104,35 +1126,10 @@ function PerformanceTab({
           </div>
         )}
 
-        {canEntry && (
-          <>
-            {needsFix > 0 && (
-              <button className="mob-alert" onClick={onMyWork}>
-                ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
-              </button>
-            )}
-
-            {showKpi && (
-              <div className="mob-card">
-                <div className="mob-title">Daily quantity — this week</div>
-                <div className="mob-bars">
-                  {myWeek.map((w) => (
-                    <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
-                      <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
-                      <span className="mob-bartrack">
-                        <div
-                          className={w.iso === myBestIso && w.qty > 0 ? 'best' : ''}
-                          style={{ width: `${(w.qty / myMaxQty) * 100}%` }}
-                        />
-                      </span>
-                      <span className="val">{w.qty > 0 ? w.qty : '·'}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-          </>
+        {canEntry && needsFix > 0 && (
+          <button className="mob-alert" onClick={onMyWork}>
+            ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
+          </button>
         )}
 
         {/* 3 — what is still out, and what came back. At station level the

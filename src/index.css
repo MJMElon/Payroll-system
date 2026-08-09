@@ -1436,6 +1436,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: linear-gradient(90deg, #566270, #8d959f);
 }
 .mob-bartrack > div.best { background: linear-gradient(90deg, #b98a1d, #e3b34c); }
+/* A day's bar carrying its statuses side by side — the same colours the
+   score meter and its key use, so one legend serves the whole card. */
+.mob-bartrack.split { display: flex; }
+/* height:auto so the default flex stretch sizes the segments — the base
+   rule's height:100% computes to 0 for flex items here. */
+.mob-bartrack.split > div { border-radius: 0; height: auto; flex: none; }
+.mob-bartrack.split > div:first-child { border-radius: 999px 0 0 999px; }
+.mob-bartrack.split > div:last-child { border-radius: 0 999px 999px 0; }
+.mob-bartrack.split > div:only-child { border-radius: 999px; }
+.mob-bartrack.split > .done { background: linear-gradient(90deg, #15803d, #22c55e); }
+.mob-bartrack.split > .bad { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+.mob-bartrack.split > .wait { background: #cbd2da; }
 .mob-barrow .lbl.wide {
   width: 76px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
