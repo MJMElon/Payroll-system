@@ -1626,3 +1626,23 @@ drop policy if exists "clock yourself out" on public.attendance;
 create policy "clock yourself out" on public.attendance
   for update using (user_id = auth.uid() and clock_out is null)
   with check (user_id = auth.uid());
+
+-- ---------------------------------------------------------------------------
+-- A clock-in is witnessed. The phone takes a selfie on the front lens and
+-- asks where it is, and the stamp carries all three — the photo, the place,
+-- and the moment — so "I was there at seven" is something to look at rather
+-- than something to take on trust.
+--
+-- All four are nullable on purpose: location can be refused, and an upload
+-- can fail on a bad signal. A stamp with no coordinates is still a stamp,
+-- and losing the shift because the camera roll would not upload helps
+-- nobody. The photo lands in the same public `records` bucket as the work
+-- photos, under attendance/.
+--
+-- Clocking OUT stays one tap. The selfie proves somebody arrived; nobody
+-- fakes leaving.
+-- ---------------------------------------------------------------------------
+alter table public.attendance add column if not exists photo_path text;
+alter table public.attendance add column if not exists latitude double precision;
+alter table public.attendance add column if not exists longitude double precision;
+alter table public.attendance add column if not exists accuracy_m double precision;
