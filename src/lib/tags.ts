@@ -93,8 +93,8 @@ export const ENTITLEMENT_OPTIONS: { key: string; label: string }[] = [
   { key: 'piece-rate', label: 'Entitled for piece rate contract' },
   // The mobile Performance tab is drawn from these two. Both may be on —
   // the mill reads first, the tier's own numbers follow underneath.
-  { key: 'mill-dashboard', label: 'Mill output dashboard on the Performance tab' },
-  { key: 'kpi-dashboard', label: 'KPI dashboard on the Performance tab' },
+  { key: 'mill-dashboard', label: 'Mill output dashboard on the Mobile Performance tab' },
+  { key: 'kpi-dashboard', label: 'KPI dashboard on the Mobile Performance tab' },
 ]
 
 export const ALL_ENTITLEMENTS: string[] = ENTITLEMENT_OPTIONS.map((e) => e.key)

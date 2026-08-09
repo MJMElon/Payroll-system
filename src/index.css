@@ -1070,6 +1070,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   overflow-x: auto; padding-bottom: 0.35rem;
   scroll-snap-type: x mandatory; margin: 0 -0.1rem;
 }
+/* While a name is being dragged the snap lets go, so the strip can slide
+   toward the next team under the held name instead of bouncing back. */
+.mob-teamscroll.free { scroll-snap-type: none; }
 /* One team fills the width, with the add block beside it as the only
    thing peeking — a half-shown second team read as a layout fault. */
 .mob-teamcol {
@@ -1262,6 +1265,76 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
     inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
+/* Today's attendance, at the head of the Record tab. One row per stamp —
+   the in time on the left, the out time beside it, empty until it is
+   clocked — with the button below reading the NEXT action. */
+.mob-clockrow {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;
+  padding: 0.5rem 0.6rem; border-radius: 12px; background: #f6f8fa;
+}
+.mob-clockrow + .mob-clockrow { margin-top: 0.45rem; }
+.mob-clockrow.open { background: linear-gradient(180deg, #f2fdf6, #e6f9ed); }
+.mob-clockcell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mob-clockcell .t { font-size: 1.05rem; font-weight: 800; letter-spacing: -0.02em; }
+.mob-clockcell .t.empty { color: #b6bfc9; font-weight: 700; }
+/* "4h 23m" is read, not shouted — the label around it is uppercased. */
+.mob-clockcell .mob-field-label em { font-style: normal; text-transform: none; opacity: 0.85; }
+.mob-clockbtn {
+  appearance: none; cursor: pointer; width: 100%;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 0.62rem 0.7rem; border-radius: 12px;
+  border: 1px solid #a7e8bf; background: linear-gradient(180deg, #f2fdf6, #d9f7e3);
+  color: #15803d; font-size: 0.82rem; font-weight: 800;
+}
+.mob-clockbtn.out {
+  border-color: #f6bdbd; background: linear-gradient(180deg, #fff4f4, #fde0e0); color: #b91c1c;
+}
+.mob-clockbtn:disabled { opacity: 0.55; cursor: default; }
+
+/* Folded down once the day is stamped: a clock chip that opens the card
+   again, and the history button beside it holding the week. */
+.mob-clockmini { display: flex; align-items: center; gap: 0.5rem; }
+.mob-clockchip {
+  appearance: none; cursor: pointer; flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0.45rem 0.6rem; border-radius: 999px;
+  border: 1px solid #dbe2ea; background: #f6f8fa; color: var(--text);
+  font-size: 0.78rem; font-weight: 800; letter-spacing: -0.01em;
+}
+.mob-linkrow {
+  appearance: none; background: none; border: none; cursor: pointer;
+  align-self: center; padding: 0.1rem 0.4rem;
+  font-size: 0.68rem; font-weight: 800; color: var(--muted);
+}
+
+/* The week: one narrow column per day — ticked once stamped, and once
+   both ends are in, the hours between them sit underneath. */
+.mob-weekstrip {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px;
+  padding-top: 0.15rem;
+}
+.mob-weekday {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 0.35rem 0.1rem; border-radius: 10px; background: #f6f8fa; min-width: 0;
+}
+.mob-weekday.today { background: #fdf4e3; }
+.mob-weekday .d {
+  font-size: 0.58rem; font-weight: 800; color: var(--muted); text-transform: uppercase;
+}
+.mob-weekday .mark { font-size: 0.85rem; font-weight: 800; color: #c9d2dc; line-height: 1; }
+.mob-weekday .mark.ok { color: #15803d; }
+.mob-weekday .mark.running { color: #b45309; }
+.mob-weekday .h {
+  font-size: 0.5rem; font-weight: 700; color: var(--muted);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* The clock-in selfie on its confirm screen. */
+.mob-selfie {
+  width: 100%; max-height: 240px; object-fit: cover;
+  border-radius: 12px; background: #eef2f6;
+}
+
 /* Record form fields */
 .mob-field-label {
   font-size: 0.62rem; font-weight: 800; color: var(--muted);
@@ -1366,6 +1439,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   background: linear-gradient(90deg, #566270, #8d959f);
 }
 .mob-bartrack > div.best { background: linear-gradient(90deg, #b98a1d, #e3b34c); }
+/* A day's bar carrying its statuses side by side — the same colours the
+   score meter and its key use, so one legend serves the whole card. */
+.mob-bartrack.split { display: flex; }
+/* height:auto so the default flex stretch sizes the segments — the base
+   rule's height:100% computes to 0 for flex items here. */
+.mob-bartrack.split > div { border-radius: 0; height: auto; flex: none; }
+.mob-bartrack.split > div:first-child { border-radius: 999px 0 0 999px; }
+.mob-bartrack.split > div:last-child { border-radius: 0 999px 999px 0; }
+.mob-bartrack.split > div:only-child { border-radius: 999px; }
+.mob-bartrack.split > .done { background: linear-gradient(90deg, #15803d, #22c55e); }
+.mob-bartrack.split > .bad { background: linear-gradient(90deg, #b91c1c, #ef4444); }
+.mob-bartrack.split > .wait { background: #cbd2da; }
 .mob-barrow .lbl.wide {
   width: 76px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -1494,11 +1579,34 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   padding: 0.55rem 1.1rem 0.3rem; font-size: 0.7rem; color: var(--muted);
   letter-spacing: 0.05em;
 }
+/* The brand sits dead centre; a back button, when there is one, floats
+   at the left edge without pushing the brand off centre. */
 .mob-header {
-  display: flex; justify-content: space-between; align-items: center;
+  position: relative;
+  display: flex; justify-content: center; align-items: center;
   padding: 0.5rem 1.1rem 0.8rem;
 }
+.mob-header .mob-back {
+  position: absolute; left: 1.1rem; top: 50%; transform: translateY(-50%);
+}
 .mob-role { font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif; }
+/* The screen title with its trailing action (e.g. the history clock). */
+.mob-rolebar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.6rem; padding: 0 0.2rem;
+}
+/* Range picker — Today / 7 days / 30 days, one segment lit at a time. */
+.mob-seg { display: flex; gap: 0.4rem; }
+.mob-seg button {
+  appearance: none; cursor: pointer; flex: 1;
+  border: 1px solid var(--border); border-radius: 10px; background: #fff;
+  padding: 0.42rem 0; font-size: 0.78rem; font-weight: 700; color: var(--muted);
+}
+.mob-seg button.on {
+  background: linear-gradient(180deg, #566270, #333c47); color: #fff;
+  border-color: transparent;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
 .mob-sub { color: var(--muted); font-size: 0.75rem; }
 /* Top-bar tier badge — the user's tag spelled out in full. */
 .mob-tier {
@@ -1527,13 +1635,17 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-chip.ok { background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
 .mob-chip.warn { background: #fdeeda; color: #b45309; font-weight: 600; }
 .mob-btn {
-  appearance: none; border: none; cursor: pointer;
+  appearance: none; cursor: pointer;
   background: linear-gradient(180deg, #566270, #333c47); color: #fff;
   border-radius: 11px; padding: 0.65rem; font-weight: 700; font-size: 0.85rem;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 5px 14px rgba(35, 45, 58, 0.30); margin-top: 0.2rem;
+  /* Every mob-btn is the same box — a transparent border on the filled
+     face keeps it exactly as tall as the bordered ghost beside it. */
+  border: 1px solid transparent; width: 100%; min-height: 2.8rem;
 }
 .mob-btn.ghost {
   background: #eef0f4; color: var(--accent-strong); box-shadow: none;
+  border-color: #dfe3e9;
 }
 .mob-mini {
   appearance: none; border: none; cursor: pointer;
@@ -1909,6 +2021,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .wm-block[class*='fill-'].over {
   border-color: var(--accent-strong); border-style: dashed; background: var(--accent-soft);
+}
+/* The swap veil while a teammate hangs over this block: the two names
+   will exchange places, and the ⇄ says so before the drop. */
+.wm-swap-mark {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.72); border-radius: inherit;
+  color: var(--accent-strong); font-size: 1.05rem; font-weight: 800;
+  pointer-events: none;
 }
 .wm-block-name {
   margin-top: 0.15rem; font-weight: 700; font-size: 0.85rem;

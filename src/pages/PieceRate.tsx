@@ -96,10 +96,9 @@ export default function PieceRate() {
     const [s, g, j, r] = await Promise.all([
       supabase.from('stations').select('id, name, sort_order').order('sort_order'),
       supabase.from('grades').select('*').order('sort_order'),
-      supabase
-        .from('jobs')
-        .select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by')
-        .order('name'),
+      // select('*') so the optional record_job flag rides along once its
+      // column migration has run — and is simply absent until then.
+      supabase.from('jobs').select('*').order('name'),
       supabase
         .from('piece_rates')
         .select('id, job_id, rate, effective_from, tier2_rate')
@@ -1182,6 +1181,20 @@ function GroupManageModal({
     else onChanged()
   }
 
+  /** Tick on: the mobile "Choose job" list offers this contract. Tick off:
+   *  an incentive/support rate — priced for payroll, never submitted. */
+  async function setRecordJob(job: Job, on: boolean) {
+    const { error } = await supabase.from('jobs').update({ record_job: on }).eq('id', job.id)
+    if (error) {
+      onError(
+        /record_job/i.test(error.message)
+          ? 'The database is missing the record_job column — run the latest supabase/setup.sql ' +
+            '(or just: alter table public.jobs add column record_job boolean not null default true;).'
+          : error.message,
+      )
+    } else onChanged()
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
@@ -1202,6 +1215,17 @@ function GroupManageModal({
                       {j.unit} · rate <RateCell rate={rate} />
                       {rate && <> · effective {rate.effective_from}</>}
                     </div>
+                    <label
+                      className="small muted checkbox"
+                      title='Ticked: workers can pick this contract in the mobile "Choose job" list. Untick for incentive/support rates that are paid but never submitted as a record.'
+                    >
+                      <input
+                        type="checkbox"
+                        checked={j.record_job !== false}
+                        onChange={(e) => setRecordJob(j, e.target.checked)}
+                      />{' '}
+                      Job record — appears in mobile "Choose job"
+                    </label>
                   </div>
                   <div className="row-form">
                     <button className="linkbtn" onClick={() => { onClose(); onEdit(j) }}>Edit</button>

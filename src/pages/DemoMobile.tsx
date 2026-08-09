@@ -171,6 +171,34 @@ async function compressImage(file: File): Promise<Blob> {
   }
 }
 
+/** One attendance stamp: clocked in at, and clocked out at once it ends. */
+interface Shift {
+  id: string
+  clock_in: string
+  clock_out: string | null
+  // The day the shift belongs to, sent by the phone rather than read off
+  // the timestamp — a shift starting at 23:40 is still that day's work.
+  work_date?: string
+}
+
+/** Stand-in id for a shift the database refused — preview only, never saved. */
+const LOCAL_SHIFT = 'not-saved'
+
+/** Time of day as the phone would show it, e.g. "07:45". */
+function clockTime(iso: string) {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+/**
+ * The one failure worth spelling out: the attendance table does not exist
+ * yet, which is a migration to run rather than anything the user did wrong.
+ */
+function clockHelp(message: string) {
+  return /attendance/i.test(message) && /(does not exist|schema cache|relation)/i.test(message)
+    ? 'Clock in/out has nowhere to save yet — run supabase/setup.sql to create the attendance table.'
+    : `Clock in/out failed: ${message}`
+}
+
 export default function DemoMobile() {
   const { profile } = useAuth()
   const [grades, setGrades] = useState<Grade[]>([])
@@ -352,14 +380,15 @@ export default function DemoMobile() {
                 ) : tab === 'performance' ? (
                   <PerformanceTab
                     stations={scopedStations}
-                    scoped={scopedStations.length !== stations.length}
                     tier={tier}
                     grades={grades}
                     jobs={jobs}
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
+                    profile={profile}
                     profileId={profile?.id ?? null}
+                    myStationIds={myStationIds}
                     myEmail={profile?.email ?? 'unknown'}
                     jobColumnReady={jobColumnReady}
                     onMyWork={() => setTab('mywork')}
@@ -408,10 +437,6 @@ export default function DemoMobile() {
                     tier={tier}
                     grades={grades}
                     stations={stations}
-                    jobs={jobs}
-                    rateFor={rateFor}
-                    amountFor={amountFor}
-                    tier2RateFor={tier2RateFor}
                     onError={setError}
                   />
                 )}
@@ -470,7 +495,7 @@ function TabBar({
       <button
         className={`mob-tab-main ${tab === 'record' ? 'active' : ''}`}
         onClick={() => onTab('record')}
-        aria-label="Add new entry"
+        aria-label="New work record"
       >
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           strokeWidth="2.6" strokeLinecap="round">
@@ -501,10 +526,6 @@ function TabBar({
 }
 
 /** Top-bar badge: the previewed tier's name spelled out in full. */
-function TierBadge({ tier }: { tier: Grade | null }) {
-  return <span className="mob-tier">{tier?.name ?? '—'}</span>
-}
-
 function dayISO(d: Date) {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
@@ -705,28 +726,30 @@ function statusChip(status: string | undefined) {
 
 function PerformanceTab({
   stations,
-  scoped,
   tier,
   grades,
   jobs,
   rateFor,
   amountFor,
   tier2RateFor,
+  profile,
   profileId,
+  myStationIds,
   myEmail,
   jobColumnReady,
   onMyWork,
   onError,
 }: {
   stations: Station[]
-  scoped: boolean
   tier: Grade | null
   grades: Grade[]
   jobs: Job[]
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  profile: Profile | null
   profileId: string | null
+  myStationIds: string[]
   myEmail: string
   jobColumnReady: boolean
   onMyWork: () => void
@@ -790,8 +813,10 @@ function PerformanceTab({
 
   const needsFix = myEntries.filter((e) => e.approval_status === 'rejected').length
 
-  // This week's daily quantity (Mon–Sun).
-  const myWeek: { label: string; iso: string; qty: number }[] = []
+  // This week's daily quantity (Mon–Sun), split by where each unit stands
+  // in approval — the bar carries all of it, coloured by status, so the
+  // chart and the scorecard read as one picture.
+  const myWeek: { label: string; iso: string; appr: number; rej: number; wait: number }[] = []
   const todayDate = new Date()
   const monday = new Date(todayDate)
   monday.setDate(todayDate.getDate() - ((todayDate.getDay() + 6) % 7))
@@ -801,20 +826,26 @@ function PerformanceTab({
     myWeek.push({
       label: d.toLocaleDateString(undefined, { weekday: 'short' }),
       iso: dayISO(d),
-      qty: 0,
+      appr: 0,
+      rej: 0,
+      wait: 0,
     })
   }
   for (const e of myEntries) {
     const slot = myWeek.find((w) => w.iso === e.work_date)
-    if (slot) slot.qty += e.quantity
+    if (!slot) continue
+    const st = e.approval_status ?? 'approved'
+    if (st === 'approved') slot.appr += e.quantity
+    else if (st === 'rejected') slot.rej += e.quantity
+    else slot.wait += e.quantity
   }
-  const myMaxQty = Math.max(1, ...myWeek.map((w) => w.qty))
-  const myBestIso = myWeek.reduce((a, b) => (b.qty > a.qty ? b : a), myWeek[0])?.iso
+  const myQty = (w: (typeof myWeek)[number]) => w.appr + w.rej + w.wait
+  const myMaxQty = Math.max(1, ...myWeek.map(myQty))
 
   // The same week, but the whole mill's approved output rather than one
   // person's — an Admin reading the mill dashboard has few records of
   // their own, so their personal chart would sit empty.
-  const millWeek = myWeek.map((w) => ({ ...w, qty: 0 }))
+  const millWeek = myWeek.map((w) => ({ label: w.label, iso: w.iso, qty: 0 }))
   for (const e of entries) {
     if ((e.approval_status ?? 'approved') !== 'approved') continue
     if (!stations.some((st) => st.id === e.station_id)) continue
@@ -892,7 +923,6 @@ function PerformanceTab({
         profileId={profileId}
         myEmail={myEmail}
         level={canFinal ? 'approve' : 'verify'}
-        tier={tier}
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
@@ -937,7 +967,6 @@ function PerformanceTab({
   // Whether this tier reviews anyone else's work at all.
   const reviews = canVerify || canFinal ? 1 : 0
 
-  const myToday = scoreOver(myEntries.filter((e) => e.work_date === todayISO()))
   const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
   const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
   const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
@@ -959,12 +988,15 @@ function PerformanceTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
       <div className="mob-body">
         <div style={{ padding: '0 0.2rem' }}>
-          <div className="mob-role">Performance dashboard</div>
-          <div className="mob-sub">{monthLabel} · {scoped ? 'your stations' : 'all stations'}</div>
+          {/* The title names the dashboard this tier was given (Settings →
+              Tags management → Entitled Function). The mill reads first
+              when both are on. */}
+          <div className="mob-role">
+            {showMill ? 'Mill Performance Dashboard' : showKpi ? 'KPI Dashboard' : 'Performance dashboard'}
+          </div>
         </div>
 
         {/* Both dashboards can be switched off, and a blank tab would look
@@ -1061,11 +1093,30 @@ function PerformanceTab({
         {/* 2 — my own scorecard: everything I submit should end up approved.
             Above the station tiers this reads as review, not as my own
             work, so it moves to My work with the rest of the review. */}
+        {/* My work done — the whole week in one card. One bar per day,
+            Mon to Sun, carrying EVERYTHING recorded that day coloured by
+            where it stands (approved / rejected / waiting), and under the
+            Sunday bar the week's percentage — the same colours adding
+            themselves up. */}
         {canEntry && showKpi && (
           <div className="mob-card">
             <div className="mob-card-label">My work done</div>
-            <div className="mob-sub">Target 100% approved</div>
-            <ScoreMeter label="Today" score={myToday} />
+            <div className="mob-bars">
+              {myWeek.map((w) => {
+                const total = myQty(w)
+                return (
+                  <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
+                    <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
+                    <span className="mob-bartrack split">
+                      {w.appr > 0 && <div className="done" style={{ width: `${(w.appr / myMaxQty) * 100}%` }} />}
+                      {w.rej > 0 && <div className="bad" style={{ width: `${(w.rej / myMaxQty) * 100}%` }} />}
+                      {w.wait > 0 && <div className="wait" style={{ width: `${(w.wait / myMaxQty) * 100}%` }} />}
+                    </span>
+                    <span className="val">{total > 0 ? fmtQty(total) : '·'}</span>
+                  </div>
+                )
+              })}
+            </div>
             <ScoreMeter label="This week" score={myThisWeek} />
             <div className="mob-scorekey">
               <span><i className="dot done" />Work done</span>
@@ -1075,35 +1126,10 @@ function PerformanceTab({
           </div>
         )}
 
-        {canEntry && (
-          <>
-            {needsFix > 0 && (
-              <button className="mob-alert" onClick={onMyWork}>
-                ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
-              </button>
-            )}
-
-            {showKpi && (
-              <div className="mob-card">
-                <div className="mob-title">Daily quantity — this week</div>
-                <div className="mob-bars">
-                  {myWeek.map((w) => (
-                    <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
-                      <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
-                      <span className="mob-bartrack">
-                        <div
-                          className={w.iso === myBestIso && w.qty > 0 ? 'best' : ''}
-                          style={{ width: `${(w.qty / myMaxQty) * 100}%` }}
-                        />
-                      </span>
-                      <span className="val">{w.qty > 0 ? w.qty : '·'}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-          </>
+        {canEntry && needsFix > 0 && (
+          <button className="mob-alert" onClick={onMyWork}>
+            ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
+          </button>
         )}
 
         {/* 3 — what is still out, and what came back. At station level the
@@ -1125,6 +1151,28 @@ function PerformanceTab({
               </span>
             </button>
           </div>
+        )}
+
+        {/* 4 — what the work paid. This month's own numbers, the payslips
+            they add up to, and the rates behind both. They used to live on
+            the Profile tab, which made Profile a pay screen and left the
+            KPI dashboard as a chart with no money on it. They belong to the
+            KPI dashboard, so they follow the same setting as the rest of
+            it rather than a rung test of their own. */}
+        {showKpi && (
+          <>
+            <MyNumbersSection profileId={profileId} amountFor={amountFor} />
+            <PayslipSection profile={profile} />
+            <ContractSection
+              tier={tier}
+              grades={grades}
+              jobs={jobs}
+              stations={stations}
+              myStationIds={myStationIds}
+              rateFor={rateFor}
+              tier2RateFor={tier2RateFor}
+            />
+          </>
         )}
 
         {(canVerify || canFinal) && showMill && (
@@ -1306,7 +1354,6 @@ function StationScreen({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Stations</button>
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -1380,12 +1427,15 @@ function StationWorkPanel({
     ? Math.min(station.hourly_target ?? 6, HOURLY_PHOTO_CAP)
     : station.hourly_target ?? 6
 
-  // Jobs this tier may record at this station, priced at an APPROVED rate only.
+  // Jobs this tier may record at this station, priced at an APPROVED rate
+  // only, and ticked as a JOB RECORD — incentives and other support rates
+  // are paid but never offered as a record to submit.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
   const approvedJobs = jobs.filter(
     (j) =>
       j.station_id === station.id &&
       j.approval_status === 'approved' &&
+      j.record_job !== false &&
       (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
   )
 
@@ -1540,7 +1590,7 @@ function StationWorkPanel({
                     <select className="mob-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
                       <option value="">Choose job…</option>
                       {approvedJobs.map((j) => (
-                        <option key={j.id} value={j.id}>{j.name} · {rateLabel(j.id)}{j.unit}</option>
+                        <option key={j.id} value={j.id}>{j.name}</option>
                       ))}
                     </select>
                   </>
@@ -1668,6 +1718,412 @@ function StationWorkPanel({
 }
 
 /* ------------------------------------------------------------------ */
+/* Today's attendance, at the head of the Record tab. Clocking in is    */
+/* the first thing done on a shift and the record screen is where the   */
+/* day's work is entered, so the two belong on one page.                */
+/*                                                                      */
+/* Clocking IN is witnessed: the camera opens on the front lens, the    */
+/* phone is asked where it is, and the time is the one stamped on that  */
+/* photo — so a stamp is a selfie at a place at a moment, not a tap.    */
+/* Confirming is a separate press, because the shot that opens          */
+/* automatically is rarely the one worth keeping.                       */
+/*                                                                      */
+/* Clocking OUT is one tap. The selfie is there to prove somebody       */
+/* arrived; nobody fakes leaving.                                       */
+/*                                                                      */
+/* Once the day is stamped the card folds down to a clock chip, with    */
+/* the week's ticks behind the history button beside it — the Record    */
+/* tab is for recording work, and attendance has had its moment.        */
+/* ------------------------------------------------------------------ */
+
+/** A clock-in waiting on its confirm press: the photo, where, and when. */
+interface PendingClockIn {
+  file: File
+  preview: string
+  at: string
+  coords: { lat: number; lng: number; accuracy: number } | null
+  locating: boolean
+  locationError: string | null
+}
+
+/** Ask the phone where it is. Never rejects — refusing is an answer. */
+function getCoords(): Promise<{ lat: number; lng: number; accuracy: number } | null> {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null)
+    navigator.geolocation.getCurrentPosition(
+      (p) =>
+        resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 30_000 },
+    )
+  })
+}
+
+/** "4h 22m" — a shift length as it would be said out loud. */
+function spanLabel(fromISO: string, toISO: string) {
+  const mins = Math.max(0, Math.round((new Date(toISO).getTime() - new Date(fromISO).getTime()) / 60_000))
+  const h = Math.floor(mins / 60)
+  return h > 0 ? `${h}h ${mins % 60}m` : `${mins}m`
+}
+
+function ClockCard({
+  profileId,
+  stationId,
+  onError,
+}: {
+  profileId: string | null
+  stationId: string | null
+  onError: (m: string | null) => void
+}) {
+  // Every stamp of the last seven days, so today's card and the week
+  // strip read from one load.
+  const [shifts, setShifts] = useState<Shift[]>([])
+  const [busy, setBusy] = useState(false)
+  const [pending, setPending] = useState<PendingClockIn | null>(null)
+  // Folded down once the day has been stamped, and opened again by the
+  // clock chip when it is time to clock out.
+  const [open, setOpen] = useState(false)
+  const [showWeek, setShowWeek] = useState(false)
+  const camera = useRef<HTMLInputElement>(null)
+
+  const today = todayISO()
+  const weekAgo = useMemo(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 6)
+    return dayISO(d)
+  }, [])
+
+  useEffect(() => {
+    if (!profileId) return
+    let cancelled = false
+    supabase
+      .from('attendance')
+      .select('id, work_date, clock_in, clock_out')
+      .eq('user_id', profileId)
+      .gte('work_date', weekAgo)
+      .order('clock_in')
+      .then(({ data }) => {
+        if (!cancelled && data) setShifts(data as Shift[])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [profileId, weekAgo])
+
+  const todays = shifts.filter((s) => (s.work_date ?? today) === today)
+  // The shift still running, if any. Its absence is what makes the button
+  // read "Clock in" rather than "Clock out".
+  const running = todays.find((s) => s.clock_out == null) ?? null
+  const closed = todays.filter((s) => s.clock_out != null)
+  const hoursToday = closed.reduce(
+    (t, s) => t + (new Date(s.clock_out!).getTime() - new Date(s.clock_in).getTime()) / 3_600_000,
+    0,
+  )
+  // Nothing stamped yet is the one state that has to stay open — there is
+  // no chip worth folding down to.
+  const expanded = open || todays.length === 0 || pending != null
+
+  /* -- the week strip: one column per day, ticked once it is stamped -- */
+  const week = useMemo(() => {
+    const days: { label: string; iso: string }[] = []
+    const monday = new Date()
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday)
+      d.setDate(monday.getDate() + i)
+      days.push({ label: d.toLocaleDateString(undefined, { weekday: 'narrow' }), iso: dayISO(d) })
+    }
+    return days.map((d) => {
+      const rows = shifts.filter((s) => (s.work_date ?? '') === d.iso)
+      const mins = rows.reduce(
+        (t, s) =>
+          t +
+          (s.clock_out
+            ? (new Date(s.clock_out).getTime() - new Date(s.clock_in).getTime()) / 60_000
+            : 0),
+        0,
+      )
+      const worked = rows.some((s) => s.clock_out != null)
+      const h = Math.floor(mins / 60)
+      return {
+        ...d,
+        stamped: rows.length > 0,
+        running: rows.some((s) => s.clock_out == null),
+        // The time worked is the answer once both ends are stamped; until
+        // then the day is ticked but still open.
+        span: worked ? (h > 0 ? `${h}h ${Math.round(mins % 60)}m` : `${Math.round(mins)}m`) : null,
+      }
+    })
+  }, [shifts, today])
+
+  /* --------------------------- clocking ---------------------------- */
+
+  // The camera comes back with a file; where and when are settled at the
+  // same moment, so the confirm screen can show all three together.
+  async function tookSelfie(file: File | undefined) {
+    if (!file) return
+    onError(null)
+    const at = new Date().toISOString()
+    setPending({
+      file,
+      preview: URL.createObjectURL(file),
+      at,
+      coords: null,
+      locating: true,
+      locationError: null,
+    })
+    const coords = await getCoords()
+    setPending((p) =>
+      p == null
+        ? p
+        : {
+            ...p,
+            coords,
+            locating: false,
+            locationError: coords ? null : 'Location unavailable — clocking in without it.',
+          },
+    )
+  }
+
+  function discard() {
+    if (pending) URL.revokeObjectURL(pending.preview)
+    setPending(null)
+    if (camera.current) camera.current.value = ''
+  }
+
+  async function confirmClockIn() {
+    if (!profileId || !pending || busy) return
+    setBusy(true)
+    onError(null)
+    // The photo is uploaded first: a stamp with no selfie behind it is
+    // exactly what the selfie is there to prevent.
+    let photoPath: string | null = null
+    try {
+      const photo = await compressImage(pending.file)
+      const stamp = pending.at.replace(/[:.]/g, '-')
+      const path = `attendance/${profileId}-${stamp}.jpg`
+      const { error: upErr } = await supabase.storage
+        .from('records')
+        .upload(path, photo, { contentType: 'image/jpeg' })
+      if (upErr) throw new Error(upErr.message)
+      photoPath = path
+    } catch (e) {
+      onError(`Selfie did not upload: ${(e as Error).message}`)
+    }
+
+    const row = {
+      user_id: profileId,
+      station_id: stationId,
+      work_date: today,
+      clock_in: pending.at,
+      photo_path: photoPath,
+      latitude: pending.coords?.lat ?? null,
+      longitude: pending.coords?.lng ?? null,
+      accuracy_m: pending.coords?.accuracy ?? null,
+    }
+    const { data, error } = await supabase
+      .from('attendance')
+      .insert(row)
+      .select('id, work_date, clock_in, clock_out')
+      .single()
+    // Not saved is still worth showing: the card stamps so the screen can
+    // be walked through, and the message says exactly why it did not save.
+    if (error) {
+      onError(clockHelp(error.message))
+      setShifts((rows) => [
+        ...rows,
+        { id: `${LOCAL_SHIFT}-${rows.length}`, work_date: today, clock_in: pending.at, clock_out: null },
+      ])
+    } else {
+      setShifts((rows) => [...rows, data as Shift])
+    }
+    discard()
+    setBusy(false)
+    setOpen(false)
+  }
+
+  async function clockOut() {
+    if (!profileId || !running || busy) return
+    setBusy(true)
+    onError(null)
+    const now = new Date().toISOString()
+    if (!running.id.startsWith(LOCAL_SHIFT)) {
+      const { error } = await supabase
+        .from('attendance')
+        .update({ clock_out: now })
+        .eq('id', running.id)
+      if (error) onError(clockHelp(error.message))
+    }
+    setShifts((rows) => rows.map((r) => (r.id === running.id ? { ...r, clock_out: now } : r)))
+    setBusy(false)
+    setOpen(false)
+  }
+
+  /* ---------------------------- drawing ---------------------------- */
+
+  const blank = <span className="t empty">--:--</span>
+  const clockIcon = (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  )
+
+  const weekStrip = (
+    <div className="mob-weekstrip">
+      {week.map((d) => (
+        <div className={`mob-weekday ${d.iso === today ? 'today' : ''}`} key={d.iso}>
+          <span className="d">{d.label}</span>
+          <span className={`mark ${d.stamped ? (d.running ? 'running' : 'ok') : ''}`}>
+            {d.stamped ? (d.running ? '•' : '✓') : '·'}
+          </span>
+          <span className="h">{d.span ?? (d.running ? 'in' : '')}</span>
+        </div>
+      ))}
+    </div>
+  )
+
+  /* The confirm screen: the shot, where it was taken, and when — then
+     one press to turn all three into a stamp. */
+  if (pending) {
+    return (
+      <div className="mob-card">
+        <div className="mob-card-label">Confirm clock in</div>
+        <img className="mob-selfie" src={pending.preview} alt="Clock-in selfie" />
+        <div className="mob-row">
+          <span className="mob-field-label">Time</span>
+          <span>{clockTime(pending.at)} · {new Date(pending.at).toLocaleDateString()}</span>
+        </div>
+        <div className="mob-row">
+          <span className="mob-field-label">Location</span>
+          <span>
+            {pending.locating
+              ? 'Finding…'
+              : pending.coords
+                ? `${pending.coords.lat.toFixed(5)}, ${pending.coords.lng.toFixed(5)}`
+                : '—'}
+          </span>
+        </div>
+        {pending.coords && (
+          <div className="mob-row">
+            <span className="mob-field-label">Accuracy</span>
+            <span>±{Math.round(pending.coords.accuracy)} m</span>
+          </div>
+        )}
+        {pending.locationError && <div className="mob-sub">{pending.locationError}</div>}
+        <div className="mob-actions">
+          <button className="mob-mini ghost" onClick={discard} disabled={busy}>Retake</button>
+          <button className="mob-mini go" onClick={confirmClockIn} disabled={busy || pending.locating}>
+            {busy ? 'Saving…' : 'Confirm clock in'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mob-card">
+      <input
+        ref={camera}
+        type="file"
+        accept="image/*"
+        capture="user"
+        hidden
+        onChange={(e) => tookSelfie(e.target.files?.[0])}
+      />
+
+      {/* Folded down: the clock chip says where the day stands, and the
+          history button beside it opens the week. */}
+      {!expanded ? (
+        <div className="mob-clockmini">
+          <button className="mob-clockchip" onClick={() => setOpen(true)}>
+            {clockIcon}
+            <span>
+              {running
+                ? `In ${clockTime(running.clock_in)}`
+                : `${hoursToday.toFixed(2)} h today`}
+            </span>
+          </button>
+          <button
+            className={`mob-icon-btn ${showWeek ? 'on' : ''}`}
+            onClick={() => setShowWeek((v) => !v)}
+            title="This week's attendance"
+            aria-label="This week's attendance"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="5" width="18" height="16" rx="3" />
+              <path d="M3 10h18M8 3v4M16 3v4" />
+            </svg>
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="mob-card-label">Today's attendance</div>
+          <div className="mob-sub">
+            {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}
+          </div>
+
+          {todays.length === 0 ? (
+            <div className="mob-clockrow">
+              <div className="mob-clockcell">
+                <span className="mob-field-label">Clock in</span>
+                {blank}
+              </div>
+              <div className="mob-clockcell">
+                <span className="mob-field-label">Clock out</span>
+                {blank}
+              </div>
+            </div>
+          ) : (
+            todays.map((s) => (
+              <div className={`mob-clockrow ${s.clock_out ? '' : 'open'}`} key={s.id}>
+                <div className="mob-clockcell">
+                  <span className="mob-field-label">Clock in</span>
+                  <span className="t">{clockTime(s.clock_in)}</span>
+                </div>
+                <div className="mob-clockcell">
+                  <span className="mob-field-label">
+                    Clock out
+                    {s.clock_out && <em> · {spanLabel(s.clock_in, s.clock_out)}</em>}
+                  </span>
+                  {s.clock_out ? <span className="t">{clockTime(s.clock_out)}</span> : blank}
+                </div>
+              </div>
+            ))
+          )}
+
+          <button
+            className={`mob-clockbtn ${running ? 'out' : ''}`}
+            onClick={() => (running ? clockOut() : camera.current?.click())}
+            disabled={busy || !profileId}
+          >
+            {clockIcon}
+            {busy ? 'Saving…' : running ? 'Clock out' : 'Clock in — take a selfie'}
+          </button>
+
+          {closed.length > 0 && (
+            <div className="mob-breakrow total">
+              <span>Hours today</span>
+              <span className="mob-entry-amt">{hoursToday.toFixed(2)} h</span>
+            </div>
+          )}
+
+          {todays.length > 0 && (
+            <button className="mob-linkrow" onClick={() => setOpen(false)}>Hide</button>
+          )}
+        </>
+      )}
+
+      {/* The week reads the same either way — always under the open card,
+          and behind the history button when it is folded down. */}
+      {(expanded || showWeek) && weekStrip}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* TAB 2 — RECORD: submit a work record → pending → verify → approve  */
 /* ------------------------------------------------------------------ */
 
@@ -1701,8 +2157,10 @@ function RecordTab({
   onError: (m: string | null) => void
 }) {
   const [myStationId, setMyStationId] = useState('')
-  const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
+  // The screen behind the clock button: everything already submitted,
+  // by range. The form itself stays clean.
+  const [view, setView] = useState<'form' | 'history'>('form')
   const [stationId, setStationId] = useState('')
   const [jobId, setJobId] = useState('')
   const [qty, setQty] = useState('')
@@ -1730,22 +2188,6 @@ function RecordTab({
   const [pulledQty, setPulledQty] = useState(0)
   const [pulling, setPulling] = useState(false)
 
-  async function loadEntries() {
-    if (!profileId) return
-    const { data, error } = await supabase
-      .from('production_entries')
-      .select('*')
-      .eq('user_id', profileId)
-      .order('created_at', { ascending: false })
-      .limit(12)
-    if (error) onError(error.message)
-    else setEntries(data ?? [])
-  }
-  useEffect(() => {
-    loadEntries()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId])
-
   // Nothing to choose at station level — the form is already on the right
   // station before it is opened.
   useEffect(() => {
@@ -1754,11 +2196,14 @@ function RecordTab({
   }, [atStationLevel, ownStation?.id])
 
   // Jobs at the chosen station this TIER may record — own tier and below
-  // (a job with no tag is open to everyone).
+  // (a job with no tag is open to everyone). Only contracts ticked as a
+  // JOB RECORD are offered: incentives and other support rates are priced
+  // for payroll but are not a record anyone submits.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
   const stationJobs = jobs.filter(
     (j) =>
       j.station_id === stationId &&
+      j.record_job !== false &&
       (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
   )
   const job = jobs.find((j) => j.id === jobId)
@@ -1858,7 +2303,6 @@ function RecordTab({
       setQty('')
       setDutyShift('')
       setPhotos([])
-      await loadEntries()
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1882,27 +2326,52 @@ function RecordTab({
     )
   }
 
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
-
   // Operators record work by taking photos at their own station, merged
   // directly into this tab — no manual station/job/quantity form.
   const isOperator = tier?.name === 'Operator'
   const myStation = myStations.find((s) => s.id === myStationId) ?? myStations[0] ?? null
+
+  if (view === 'history') {
+    return (
+      <RecordHistory
+        profileId={profileId}
+        stations={stations}
+        jobs={jobs}
+        amountFor={amountFor}
+        onOpen={setDetail}
+        onBack={() => setView('form')}
+      />
+    )
+  }
 
   if (isOperator) {
     return (
       <>
         <div className="mob-header">
           <span className="mob-brand">MJM</span>
-          <TierBadge tier={tier} />
         </div>
 
         <div className="mob-body">
-          <div style={{ padding: '0 0.2rem' }}>
-            <div className="mob-role">Add new entry</div>
-            {myStation && <div className="mob-sub">{myStation.name}</div>}
+          <div className="mob-rolebar">
+            <div>
+              <div className="mob-role">New Work Record</div>
+              {myStation && <div className="mob-sub">{myStation.name}</div>}
+            </div>
+            <button
+              className="mob-icon-btn"
+              onClick={() => setView('history')}
+              title="Work record history"
+              aria-label="Work record history"
+            >
+              <IconHistory />
+            </button>
           </div>
+
+          <ClockCard
+            profileId={profileId}
+            stationId={myStation?.id ?? null}
+            onError={onError}
+          />
 
           {!canEntry ? (
             <div className="mob-card">
@@ -1956,11 +2425,26 @@ function RecordTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Add new entry</div>
+        <div className="mob-rolebar">
+          <div className="mob-role">New Work Record</div>
+          <button
+            className="mob-icon-btn"
+            onClick={() => setView('history')}
+            title="Work record history"
+            aria-label="Work record history"
+          >
+            <IconHistory />
+          </button>
+        </div>
+
+        <ClockCard
+          profileId={profileId}
+          stationId={ownStation?.id ?? null}
+          onError={onError}
+        />
 
         {!canEntry ? (
           <div className="mob-card">
@@ -2004,10 +2488,10 @@ function RecordTab({
               disabled={!stationId}
             >
               <option value="">{stationId ? 'Choose job…' : 'Pick a station first'}</option>
+              {/* The list is the job names alone — the rate arithmetic
+                  belongs to the breakdown below, not to the choosing. */}
               {stationJobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.name} · {rateLabelFor(rateFor, tier2RateFor, j.id)}{j.unit}
-                </option>
+                <option key={j.id} value={j.id}>{j.name}</option>
               ))}
             </select>
 
@@ -2145,27 +2629,139 @@ function RecordTab({
           </div>
         )}
 
-        {/* Just-submitted confirmation — the full history lives in My work. */}
-        <div className="mob-card">
-          <div className="mob-title">Recently submitted</div>
-          {entries.length === 0 && <div className="mob-sub">Nothing submitted yet.</div>}
-          {entries.slice(0, 5).map((e) => (
-            <button className="mob-entry" key={e.id} onClick={() => setDetail(e)}>
-              <span className="mob-entry-main">
-                <span className="mob-entry-name">{jobName(e.job_id)}</span>
-                <span className="mob-station-meta">
-                  {stationName(e.station_id)} · {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                </span>
-              </span>
-              <span className="mob-entry-side">
-                <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-                {statusChip(e.approval_status)}
-              </span>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Work record history — behind the clock button beside the New Work   */
+/* Record title. Opens on today's submissions; the ranges widen from   */
+/* there. Tapping a row opens the full submitted record.               */
+/* ------------------------------------------------------------------ */
+
+const HISTORY_RANGES = [
+  { key: 'today', label: 'Today', days: 0 },
+  { key: '7d', label: '7 days', days: 6 },
+  { key: '30d', label: '30 days', days: 29 },
+] as const
+
+function RecordHistory({
+  profileId,
+  stations,
+  jobs,
+  amountFor,
+  onOpen,
+  onBack,
+}: {
+  profileId: string | null
+  stations: Station[]
+  jobs: Job[]
+  amountFor: (jobId: string, quantity: number) => number
+  onOpen: (e: ProductionEntry) => void
+  onBack: () => void
+}) {
+  const [rangeKey, setRangeKey] = useState<(typeof HISTORY_RANGES)[number]['key']>('today')
+  const [rows, setRows] = useState<ProductionEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!profileId) return
+    const range = HISTORY_RANGES.find((r) => r.key === rangeKey)!
+    const d = new Date()
+    d.setDate(d.getDate() - range.days)
+    const since = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+    setLoading(true)
+    supabase
+      .from('production_entries')
+      .select('*')
+      .eq('user_id', profileId)
+      .gte('work_date', since)
+      .order('created_at', { ascending: false })
+      .limit(200)
+      .then(({ data }) => {
+        setRows(data ?? [])
+        setLoading(false)
+      })
+  }, [profileId, rangeKey])
+
+  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
+  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
+
+  return (
+    <>
+      <div className="mob-header">
+        <button className="mob-back" onClick={onBack}>‹ Record</button>
+        <span className="mob-brand">MJM</span>
+      </div>
+
+      <div className="mob-body">
+        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Work Record History</div>
+
+        <div className="mob-seg" role="tablist">
+          {HISTORY_RANGES.map((r) => (
+            <button
+              key={r.key}
+              role="tab"
+              aria-selected={rangeKey === r.key}
+              className={rangeKey === r.key ? 'on' : ''}
+              onClick={() => setRangeKey(r.key)}
+            >
+              {r.label}
             </button>
           ))}
         </div>
+
+        <div className="mob-card">
+          {loading ? (
+            <div className="mob-sub">Loading…</div>
+          ) : rows.length === 0 ? (
+            <div className="mob-sub">
+              {rangeKey === 'today' ? 'Nothing submitted today.' : 'Nothing submitted in this range.'}
+            </div>
+          ) : (
+            rows.map((e) => (
+              <button className="mob-entry" key={e.id} onClick={() => onOpen(e)}>
+                <span className="mob-entry-main">
+                  <span className="mob-entry-name">{jobName(e.job_id)}</span>
+                  <span className="mob-station-meta">
+                    {stationName(e.station_id)} ·{' '}
+                    {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+                      day: '2-digit', month: 'short',
+                    })}
+                  </span>
+                </span>
+                <span className="mob-entry-side">
+                  <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                  {statusChip(e.approval_status)}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
       </div>
     </>
+  )
+}
+
+/** The history mark: a clock face swept by a turning-back arrow. */
+function IconHistory() {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 12a9 9 0 1 0 2.6-6.4" />
+      <path d="M3 4v4h4" />
+      <path d="M12 8v4l3 2" />
+    </svg>
   )
 }
 
@@ -2265,7 +2861,6 @@ function EntryDetail({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Records</button>
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -2852,7 +3447,6 @@ function MyWorkTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -3039,7 +3633,6 @@ function ApprovalsScreen({
   profileId,
   myEmail,
   level,
-  tier,
   stations,
   jobs,
   amountFor,
@@ -3049,7 +3642,6 @@ function ApprovalsScreen({
   profileId: string | null
   myEmail: string
   level: 'verify' | 'approve'
-  tier: Grade | null
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
@@ -3107,7 +3699,6 @@ function ApprovalsScreen({
         submitter={submitterName(detail)}
         level={level}
         myEmail={myEmail}
-        tier={tier}
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
@@ -3126,7 +3717,6 @@ function ApprovalsScreen({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Performance</button>
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -3182,7 +3772,6 @@ function ApprovalDetail({
   submitter,
   level,
   myEmail,
-  tier,
   stations,
   jobs,
   amountFor,
@@ -3194,7 +3783,6 @@ function ApprovalDetail({
   submitter: string
   level: 'verify' | 'approve'
   myEmail: string
-  tier: Grade | null
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
@@ -3252,7 +3840,6 @@ function ApprovalDetail({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Approvals</button>
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -3342,12 +3929,14 @@ function ApprovalDetail({
 }
 
 /* ------------------------------------------------------------------ */
-/* TAB 5 — PROFILE. Same layout for every tier, top to bottom:        */
+/* TAB 5 — PROFILE. Who you are, and nothing else. Same layout for     */
+/* every tier, top to bottom:                                          */
 /*   1  selfie (uploadable), name, tier, station                      */
 /*   2  personal details — collapsed until asked for                  */
-/*   3  this month's own numbers                                      */
-/*   4  the last three months of payslips                             */
-/*   5  the piece-rate contract: your tier, then the tiers below      */
+/*                                                                     */
+/* This month's numbers, the payslips and the rate contract used to    */
+/* sit under them. They are pay, not identity, and they now make up    */
+/* the KPI dashboard on the Performance tab.                           */
 /* ------------------------------------------------------------------ */
 
 function ProfileTab({
@@ -3355,20 +3944,12 @@ function ProfileTab({
   tier,
   grades,
   stations,
-  jobs,
-  rateFor,
-  amountFor,
-  tier2RateFor,
   onError,
 }: {
   profile: Profile | null
   tier: Grade | null
   grades: Grade[]
   stations: Station[]
-  jobs: Job[]
-  rateFor: (jobId: string) => number
-  amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
   onError: (m: string | null) => void
 }) {
   const [showDetails, setShowDetails] = useState(false)
@@ -3436,7 +4017,6 @@ function ProfileTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -3526,24 +4106,6 @@ function ProfileTab({
           )}
         </div>
 
-        {/* 3, 4, 5 — this month, the payslips it feeds, and the rates
-            behind both. All three are about being paid by the piece, so
-            they are absent for the tiers that are not. */}
-        {isPaidByPiece && (
-          <>
-            <MyNumbersSection profileId={profile?.id ?? null} amountFor={amountFor} />
-            <PayslipSection profile={profile} />
-            <ContractSection
-              tier={tier}
-              grades={grades}
-              jobs={jobs}
-              stations={stations}
-              myStationIds={myStationIds}
-              rateFor={rateFor}
-              tier2RateFor={tier2RateFor}
-            />
-          </>
-        )}
       </div>
     </>
   )
@@ -4017,6 +4579,25 @@ function TeamTab({
   const [pickedStation, setPickedStation] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
+  // While a held name hovers near the strip's edge, the strip slides
+  // itself toward the next team — the finger is busy holding the name,
+  // so the scrolling has to be done for it.
+  const slideDir = useRef(0)
+  const slideTimer = useRef<number | null>(null)
+  function setSlide(dir: number) {
+    slideDir.current = dir
+    if (dir === 0) {
+      if (slideTimer.current != null) {
+        window.clearInterval(slideTimer.current)
+        slideTimer.current = null
+      }
+    } else if (slideTimer.current == null) {
+      slideTimer.current = window.setInterval(() => {
+        scrollRef.current?.scrollBy({ left: slideDir.current * 14 })
+      }, 24)
+    }
+  }
+  useEffect(() => () => setSlide(0), [])
   // Moving is a MODE, entered from the move button beside +. Inside it a
   // name drags straight away and nothing is written until Save, so a
   // reshuffle is one decision rather than a write per drag.
@@ -4462,6 +5043,7 @@ function TeamTab({
               onDragEnd={() => {
                 setDragId(null)
                 setOverGrade(null)
+                setSlide(0)
               }}
             >
               {moveMode && <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>}
@@ -4573,7 +5155,24 @@ function TeamTab({
 
       {runsTeams ? (
         <>
-          <div className="mob-teamscroll" ref={scrollRef}>
+          <div
+            /* Snap is released while a name is held — mandatory snapping
+               would pull the strip straight back mid-slide. It returns on
+               drop, settling the strip on the nearest column. */
+            className={`mob-teamscroll ${dragId ? 'free' : ''}`}
+            ref={scrollRef}
+            onDragOver={(e) => {
+              // Lanes preventDefault and let the event bubble here, so the
+              // edge check runs wherever the name is held.
+              const el = scrollRef.current
+              if (!el) return
+              const r = el.getBoundingClientRect()
+              const EDGE = 56
+              setSlide(e.clientX < r.left + EDGE ? -1 : e.clientX > r.right - EDGE ? 1 : 0)
+            }}
+            onDragLeave={() => setSlide(0)}
+            onDrop={() => setSlide(0)}
+          >
             {teamColumns.map((col) => (
               <div className="mob-teamcol" key={col.key}>
                 <div className="mob-teamcol-name">{col.name}</div>
@@ -4666,7 +5265,6 @@ function TeamTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">

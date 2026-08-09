@@ -1576,3 +1576,83 @@ update public.grades set capabilities = '{data-entry,verify}'
 
 update public.grades set capabilities = '{data-entry,verify,approve}'
   where name = 'Station Head' and capabilities = '{data-entry}';
+
+-- ---------------------------------------------------------------------------
+-- Attendance: the clock in / clock out stamps behind the float that sits
+-- beside "+ Record" on the mobile view.
+--
+-- One row per shift, opened on clock in and closed on clock out, so the
+-- OPEN shift is simply the row with no clock_out. The partial unique index
+-- is what makes that reading safe: a person can never hold two open shifts,
+-- whatever a stale phone screen believes.
+--
+-- work_date is sent by the phone rather than derived from the timestamp,
+-- because a shift starting at 23:40 still belongs to that day's work and
+-- the server's idea of "today" is UTC.
+-- ---------------------------------------------------------------------------
+create table if not exists public.attendance (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.access_profiles (id) on delete cascade,
+  station_id uuid references public.stations (id) on delete set null,
+  work_date date not null default current_date,
+  clock_in timestamptz not null default now(),
+  clock_out timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists attendance_user_day_idx
+  on public.attendance (user_id, work_date desc);
+
+create unique index if not exists attendance_one_open_shift_idx
+  on public.attendance (user_id) where clock_out is null;
+
+alter table public.attendance enable row level security;
+
+grant select, insert, update on public.attendance to authenticated;
+
+-- Reading is open to anyone signed in: a supervisor has to be able to see
+-- who is on site, and the stamps carry no pay.
+drop policy if exists "authenticated read attendance" on public.attendance;
+create policy "authenticated read attendance" on public.attendance
+  for select using (auth.uid() is not null);
+
+-- Stamping, though, is yours alone — you cannot clock anybody else in or
+-- out, and you cannot reach back into a shift that is already closed.
+drop policy if exists "clock yourself in" on public.attendance;
+create policy "clock yourself in" on public.attendance
+  for insert with check (user_id = auth.uid());
+
+drop policy if exists "clock yourself out" on public.attendance;
+create policy "clock yourself out" on public.attendance
+  for update using (user_id = auth.uid() and clock_out is null)
+  with check (user_id = auth.uid());
+
+-- ---------------------------------------------------------------------------
+-- JOB RECORD flag. The mobile "Choose job" list offers only contracts
+-- ticked as a job record — the actual work a person submits a count of.
+-- Supporting contracts (incentives, allowances priced per unit) keep
+-- their rates for payroll but are never offered as a record to submit.
+-- Ticked is the default, so existing contracts keep appearing until an
+-- incentive is deliberately unticked in the Piece Rate Masterlist.
+-- ---------------------------------------------------------------------------
+alter table public.jobs add column if not exists record_job boolean not null default true;
+
+-- ---------------------------------------------------------------------------
+-- A clock-in is witnessed. The phone takes a selfie on the front lens and
+-- asks where it is, and the stamp carries all three — the photo, the place,
+-- and the moment — so "I was there at seven" is something to look at rather
+-- than something to take on trust.
+--
+-- All four are nullable on purpose: location can be refused, and an upload
+-- can fail on a bad signal. A stamp with no coordinates is still a stamp,
+-- and losing the shift because the camera roll would not upload helps
+-- nobody. The photo lands in the same public `records` bucket as the work
+-- photos, under attendance/.
+--
+-- Clocking OUT stays one tap. The selfie proves somebody arrived; nobody
+-- fakes leaving.
+-- ---------------------------------------------------------------------------
+alter table public.attendance add column if not exists photo_path text;
+alter table public.attendance add column if not exists latitude double precision;
+alter table public.attendance add column if not exists longitude double precision;
+alter table public.attendance add column if not exists accuracy_m double precision;
