@@ -955,6 +955,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font: inherit; color: inherit; text-align: left; align-items: flex-start;
 }
 .mob-card.tapcard:hover { background: #f8fafb; }
+/* A tap card whose contents are block-level (meters, bars) rather than a
+   label and a number — it cannot be a <button>, so it says so instead. */
+.mob-card.tapcard.block { align-items: stretch; }
+.mob-card.tapcard.block:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* A tappable row inside a card — name on the left, value and chevron
    on the right. */
@@ -1643,9 +1647,23 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-station:hover { background: #f6f8fa; }
 .mob-station-meta { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
+/* One back arrow, one centred page title — the same row on every screen
+   reached from a tab, so the way out never moves. */
+.mob-subhead {
+  display: grid; grid-template-columns: 34px 1fr 34px; align-items: center;
+  padding: 0 0.2rem;
+}
 .mob-back {
-  appearance: none; background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: 0.8rem; padding: 0;
+  appearance: none; background: #f0f3f6; border: 1px solid #e2e8ef; cursor: pointer;
+  width: 30px; height: 30px; border-radius: 50%; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text); font-size: 1.15rem; font-weight: 800; line-height: 1;
+}
+.mob-back:hover { background: #e7ecf2; }
+.mob-pagetitle {
+  grid-column: 2; text-align: center;
+  font-size: 1rem; font-weight: 800; letter-spacing: -0.02em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mob-brand {
   font-family: 'Montserrat', system-ui, sans-serif;

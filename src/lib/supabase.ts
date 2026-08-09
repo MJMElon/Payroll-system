@@ -189,6 +189,9 @@ export interface ProductionEntry {
   approved_by?: string | null
   approved_at?: string | null
   rejected_reason?: string | null
+  // Who sent it back, by email — the same shape as verified_by /
+  // approved_by, so "work I sent back" is answerable.
+  rejected_by?: string | null
 }
 
 export interface PayrollRun {
