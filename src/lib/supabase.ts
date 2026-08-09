@@ -152,6 +152,11 @@ export interface Job {
   approval_status: 'pending' | 'verified' | 'approved' | 'rejected'
   verified_by: string | null
   approved_by: string | null
+  // Ticked (default): the mobile "Choose job" list offers this contract as
+  // a record to submit. Unticked: an incentive/support rate — priced for
+  // payroll, never submitted as a job record. Optional: absent until the
+  // column migration has run, and older queries don't select it.
+  record_job?: boolean | null
 }
 
 export interface PieceRate {

@@ -1628,6 +1628,16 @@ create policy "clock yourself out" on public.attendance
   with check (user_id = auth.uid());
 
 -- ---------------------------------------------------------------------------
+-- JOB RECORD flag. The mobile "Choose job" list offers only contracts
+-- ticked as a job record — the actual work a person submits a count of.
+-- Supporting contracts (incentives, allowances priced per unit) keep
+-- their rates for payroll but are never offered as a record to submit.
+-- Ticked is the default, so existing contracts keep appearing until an
+-- incentive is deliberately unticked in the Piece Rate Masterlist.
+-- ---------------------------------------------------------------------------
+alter table public.jobs add column if not exists record_job boolean not null default true;
+
+-- ---------------------------------------------------------------------------
 -- A clock-in is witnessed. The phone takes a selfie on the front lens and
 -- asks where it is, and the stamp carries all three — the photo, the place,
 -- and the moment — so "I was there at seven" is something to look at rather
