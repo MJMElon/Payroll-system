@@ -534,10 +534,25 @@ function SubmissionsList({
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
 
+  /**
+   * Write the new approval state — and check something actually moved.
+   *
+   * Postgres does not treat "row-level security says no" as an error: the
+   * update matches zero rows and comes back clean. Without the `select` we
+   * would reload, find the row still pending, and look like the database
+   * had lost the approval. Say so instead.
+   */
   async function act(job: Job, fields: Partial<Job> & { approval_status: Job['approval_status'] }) {
-    const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
-    if (error) onError(error.message)
-    else onChanged()
+    const { data, error } = await supabase.from('jobs').update(fields).eq('id', job.id).select('id')
+    if (error) return onError(error.message)
+    if (!data || data.length === 0) {
+      return onError(
+        'Nothing was saved — the database refused the change for your account. ' +
+          'The tier tag needs Verify or Approve ticked under Piece rate setting ' +
+          '(Settings → Tags management).',
+      )
+    }
+    onChanged()
   }
 
   const verify = (j: Job) =>
@@ -554,20 +569,14 @@ function SubmissionsList({
     } as never)
 
   // A rejected proposal goes back into the approval queue from the start.
-  async function resubmit(j: Job) {
-    const { error } = await supabase
-      .from('jobs')
-      .update({
-        approval_status: 'pending',
-        verified_by: null,
-        verified_at: null,
-        approved_by: null,
-        approved_at: null,
-      } as never)
-      .eq('id', j.id)
-    if (error) onError(error.message)
-    else onChanged()
-  }
+  const resubmit = (j: Job) =>
+    act(j, {
+      approval_status: 'pending',
+      verified_by: null,
+      verified_at: null,
+      approved_by: null,
+      approved_at: null,
+    } as never)
 
   const list = jobs
     .filter((j) => (stationFilter ? j.station_id === stationFilter : true))
@@ -1197,50 +1206,88 @@ function GroupManageModal({
     } else onChanged()
   }
 
+  // One column per tier tag that is paid for this work, so the whole
+  // contract reads across in one look: the tiers along the top, and what
+  // each of them is paid down the rows beneath.
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <div className="row-form spread">
-          <h2>{jobs[0]?.name} — {stationName}</h2>
+          <h2>{stationName} — Job : {jobs[0]?.name}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
-        <div className="stack">
-          {jobs.map((j) => {
-            const rate = currentRate.get(j.id)
-            return (
-              <div className="approval-item" key={j.id}>
-                <div className="row-form spread">
-                  <div>
-                    <strong>{gradeName(j.grade_id)}</strong>{' '}
-                    {!j.active && <span className="badge off">inactive</span>}
-                    <div className="muted small">
-                      {j.unit} · rate <RateCell rate={rate} />
-                      {rate && <> · effective {rate.effective_from}</>}
-                    </div>
+
+        <div className="table-scroll">
+          <table className="table pr-manage">
+            <thead>
+              <tr>
+                <th className="pr-manage-corner">{jobs[0]?.name}</th>
+                {jobs.map((j) => (
+                  <th key={j.id}>
+                    <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>
+                      {gradeName(j.grade_id)}
+                    </span>
+                    {!j.active && <> <span className="badge off">inactive</span></>}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Rate</th>
+                {jobs.map((j) => (
+                  <td key={j.id}>
+                    <RateCell rate={currentRate.get(j.id)} />
+                    <div className="muted small">{j.unit}</div>
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <th scope="row">Effective date</th>
+                {jobs.map((j) => (
+                  <td key={j.id}>
+                    {currentRate.get(j.id)?.effective_from ?? <span className="muted">—</span>}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <th scope="row">
+                  Job record
+                  <div className="muted small">Appears in the mobile “Choose job” list</div>
+                </th>
+                {jobs.map((j) => (
+                  <td key={j.id}>
                     <label
-                      className="small muted checkbox"
-                      title='Ticked: workers can pick this contract in the mobile "Choose job" list. Untick for incentive/support rates that are paid but never submitted as a record.'
+                      className="checkbox"
+                      style={{ margin: 0 }}
+                      title="Untick for an incentive or support rate — paid through payroll, never submitted as a work record."
                     >
                       <input
                         type="checkbox"
                         checked={j.record_job !== false}
                         onChange={(e) => setRecordJob(j, e.target.checked)}
-                      />{' '}
-                      Job record — appears in mobile "Choose job"
+                      />
                     </label>
-                  </div>
-                  <div className="row-form">
-                    <button className="linkbtn" onClick={() => { onClose(); onEdit(j) }}>Edit</button>
-                    {j.active ? (
-                      <button className="linkbtn danger" onClick={() => setActive(j, false)}>Deactivate</button>
-                    ) : (
-                      <button className="linkbtn" onClick={() => setActive(j, true)}>Reactivate</button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
+                  </td>
+                ))}
+              </tr>
+              <tr>
+                <th scope="row" />
+                {jobs.map((j) => (
+                  <td key={j.id}>
+                    <div className="row-form">
+                      <button className="linkbtn" onClick={() => { onClose(); onEdit(j) }}>Edit</button>
+                      {j.active ? (
+                        <button className="linkbtn danger" onClick={() => setActive(j, false)}>Deactivate</button>
+                      ) : (
+                        <button className="linkbtn" onClick={() => setActive(j, true)}>Reactivate</button>
+                      )}
+                    </div>
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -1851,9 +1898,11 @@ function ContractModal({
   const [stationId, setStationId] = useState(job.station_id)
   const [gradeId, setGradeId] = useState(job.grade_id ?? '')
   const [description, setDescription] = useState(job.name)
-  const [unit, setUnit] = useState(job.unit)
+  // Same convention as the create window: paid by the hour is a UNIT choice,
+  // not a separate switch, so the two windows are filled in the same way.
+  const [unit, setUnit] = useState(currentRate?.tier2_rate != null ? TIERED : job.unit)
+  const tiered = unit === TIERED
   const [rate, setRate] = useState(currentRate ? String(Number(currentRate.rate)) : '')
-  const [tiered, setTiered] = useState(currentRate?.tier2_rate != null)
   const [tier2, setTier2] = useState(
     currentRate?.tier2_rate != null ? String(Number(currentRate.tier2_rate)) : '',
   )
@@ -1884,7 +1933,9 @@ function ContractModal({
         station_id: stationId,
         grade_id: gradeId || null,
         name: description.trim(),
-        unit: unit.trim() || 'unit',
+        // Tiered work is stored as "/hour" — the tiering itself lives in
+        // the rate row's tier2_rate, exactly as the create window writes it.
+        unit: tiered ? '/hour' : unit.trim() || 'unit',
       }
       // Only send the identity fields (station/tag/description/unit) when
       // one actually changed — Postgres re-checks the station+tag+name
@@ -1939,9 +1990,11 @@ function ContractModal({
     }
   }
 
+  // Laid out as ONE row of the create window's grid, column for column, so
+  // editing a rate is filled in the same way it was written.
   return (
     <div className="modal-overlay" {...overlayProps}>
-      <form className="modal" onSubmit={save}>
+      <form className={`modal modal-xwide ${tiered ? 'tiered' : ''}`} onSubmit={save}>
         <div className="row-form spread">
           <h2>Edit piece rate</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
@@ -1949,104 +2002,126 @@ function ContractModal({
 
         {error && <div className="error">{error}</div>}
 
-        {/* A <label> is not used around these two: they are buttons, and a
-            label forwards its own click to the control it wraps, which
-            would toggle the dropdown straight back shut. */}
-        <div className="field">
-          <span>Tier Tag</span>
-          <Select
-            block
-            value={gradeId}
-            onChange={setGradeId}
-            options={[
-              { value: '', label: 'All positions' },
-              ...tierTagOptions(grades, job.grade_id),
-            ]}
-            placeholder="Choose tier tag…"
-            ariaLabel="Tier tag"
-          />
-        </div>
-
-        <div className="field">
-          <span>Station Tag</span>
-          <Select
-            block
-            value={stationId}
-            onChange={setStationId}
-            options={stationOptions(stations)}
-            placeholder="Choose station tag…"
-            ariaLabel="Station tag"
-          />
-        </div>
-
-        <label className="field">
-          <span>Piece Rate Work Description</span>
-          <input value={description} onChange={(e) => setDescription(e.target.value)} required />
-        </label>
-
-        <div className="field">
-          <span>Unit</span>
-          <UnitPicker value={unit} onChange={setUnit} ariaLabel="Unit" />
-        </div>
-
-        <div className="tiered-toggle">
-          <button type="button" className={!tiered ? 'active' : ''} onClick={() => setTiered(false)}>
-            Flat rate
-          </button>
-          <button type="button" className={tiered ? 'active' : ''} onClick={() => setTiered(true)}>
-            Tiered by hour
-          </button>
-        </div>
-
-        {tiered ? (
-          <div className="row-form">
-            <label className="field inline grow">
-              <span>Tier 1 — 1st to 4th /hr</span>
-              <input
-                inputMode="decimal"
-                value={rate}
-                onChange={(e) => setRate(e.target.value)}
-                required
-              />
-            </label>
-            <label className="field inline grow">
-              <span>Tier 2 — 5th onward /hr</span>
-              <input
-                inputMode="decimal"
-                value={tier2}
-                onChange={(e) => setTier2(e.target.value)}
-                required
-              />
-            </label>
-          </div>
-        ) : (
-          <label className="field">
+        <div className={`pr-grid ${tiered ? 'tiered' : ''}`}>
+          <div className="pr-grid-head">
+            <span>Tier Tag</span>
+            <span>Station Tag</span>
+            <span>Piece Rate Work Description</span>
+            <span>Unit</span>
             <span>Piece Rate (RM)</span>
-            <input
-              inputMode="decimal"
-              value={rate}
-              onChange={(e) => setRate(e.target.value)}
-              required
-            />
-          </label>
-        )}
+            {tiered && <span>Tier 1 — 1st to 4th /hr</span>}
+            {tiered && <span>Tier 2 — 5th onward /hr</span>}
+            <span>Effective date</span>
+            <span />
+          </div>
+
+          <div className="pr-grid-row">
+            <div className="pr-cell">
+              <span className="pr-cell-label">Tier Tag</span>
+              <Select
+                block
+                value={gradeId}
+                onChange={setGradeId}
+                options={[
+                  { value: '', label: 'All positions' },
+                  ...tierTagOptions(grades, job.grade_id),
+                ]}
+                placeholder="Choose tier tag"
+                ariaLabel="Tier tag"
+              />
+            </div>
+
+            <div className="pr-cell">
+              <span className="pr-cell-label">Station Tag</span>
+              <Select
+                block
+                value={stationId}
+                onChange={setStationId}
+                options={stationOptions(stations)}
+                placeholder="Choose station tag"
+                ariaLabel="Station tag"
+              />
+            </div>
+
+            <div className="pr-cell wide">
+              <span className="pr-cell-label">Piece Rate Work Description</span>
+              <input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                aria-label="Piece rate work description"
+              />
+            </div>
+
+            <div className="pr-cell">
+              <span className="pr-cell-label">Unit</span>
+              <UnitPicker
+                allowTiered
+                value={unit}
+                onChange={(v) => setUnit(v)}
+                ariaLabel="Unit"
+              />
+            </div>
+
+            <div className="pr-cell">
+              <span className="pr-cell-label">Piece Rate (RM)</span>
+              {tiered ? (
+                <span className="pr-none">—</span>
+              ) : (
+                <input
+                  inputMode="decimal"
+                  value={rate}
+                  onChange={(e) => setRate(e.target.value)}
+                  aria-label="Piece rate"
+                />
+              )}
+            </div>
+
+            {tiered && (
+              <>
+                <div className="pr-cell">
+                  <span className="pr-cell-label">Tier 1 — 1st to 4th /hr</span>
+                  <input
+                    inputMode="decimal"
+                    value={rate}
+                    onChange={(e) => setRate(e.target.value)}
+                    aria-label="Tier 1 rate"
+                  />
+                </div>
+                <div className="pr-cell">
+                  <span className="pr-cell-label">Tier 2 — 5th onward /hr</span>
+                  <input
+                    inputMode="decimal"
+                    value={tier2}
+                    onChange={(e) => setTier2(e.target.value)}
+                    aria-label="Tier 2 rate"
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="pr-cell">
+              <span className="pr-cell-label">Effective date</span>
+              <input
+                type="date"
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+                aria-label="Effective date"
+              />
+            </div>
+
+            <span />
+          </div>
+        </div>
+
         {tiered && (
           <p className="small muted" style={{ margin: 0 }}>
             Every hour resets: the first 4 units done pay Tier 1, the 5th unit
             onward that same hour pays Tier 2 — then it starts over next hour.
           </p>
         )}
-
-        <label className="field">
-          <span>Effective date</span>
-          <input
-            type="date"
-            value={effectiveFrom}
-            onChange={(e) => setEffectiveFrom(e.target.value)}
-            required
-          />
-          <span className="small">Payroll uses whichever rate is effective on the day worked.</span>
-        </label>
+        <p className="small muted" style={{ margin: 0 }}>
+          Payroll uses whichever rate is effective on the day worked.
+        </p>
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>

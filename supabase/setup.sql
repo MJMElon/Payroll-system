@@ -344,9 +344,18 @@ stable
 security definer
 set search_path = public
 as $$
-  select coalesce(g.capabilities, '{}') from public.access_profiles p
-  join public.grades g on g.id = p.grade_id
-  where p.id = auth.uid();
+  -- The coalesce has to sit OUTSIDE the select: an account with no tier tag
+  -- matches no row at all, and a scalar subquery with no rows is null, not
+  -- '{}'. Null then poisons every `my_capabilities() && array[...]` test in
+  -- the policies below — the write is refused, silently, with no error.
+  select coalesce(
+    (
+      select g.capabilities from public.access_profiles p
+      join public.grades g on g.id = p.grade_id
+      where p.id = auth.uid()
+    ),
+    '{}'
+  );
 $$;
 update public.grades set modules = '{station-status,piece-rate,payroll,demo-mobile}'
   where name in ('Management', 'Manager', 'Engineer')
@@ -795,6 +804,12 @@ begin
     where station_id = ffb_station and grade_id = op_grade
       and name = 'FFB Cages Tipped (Fifth Cages onward of the hour)';
 
+  -- Everything below is the ONE-TIME consolidation, and it all hangs off
+  -- the un-renamed job still being there. Once the rename has happened
+  -- first4_job comes back null and a re-run does nothing — which matters
+  -- most for the two approval resets at the end: they used to fire on
+  -- EVERY run, so re-running this file knocked a rate somebody had just
+  -- approved straight back into the pending queue.
   if first4_job is not null and fifth_job is not null then
     select rate into fifth_rate from public.piece_rates
       where job_id = fifth_job order by effective_from desc limit 1;
@@ -809,23 +824,23 @@ begin
     -- Retired, not deleted — existing production_entries/photo_records still
     -- reference it, and its piece_rates history stays intact for their payout.
     update public.jobs set active = false where id = fifth_job;
-  end if;
 
-  -- Roll tiering out to Assistant Station Head / Station Head too. Their
-  -- existing flat rate becomes Tier 1; Tier 2 is unset until someone fills
-  -- it in, so the job needs re-approval before it's usable again.
-  select id into plain_job from public.jobs
-    where station_id = ffb_station and grade_id = ash_grade and name = 'FFB Cages Tipped';
-  if plain_job is not null then
-    update public.jobs set approval_status = 'pending'
-      where id = plain_job and approval_status = 'approved';
-  end if;
+    -- Roll tiering out to Assistant Station Head / Station Head too. Their
+    -- existing flat rate becomes Tier 1; Tier 2 is unset until someone fills
+    -- it in, so the job needs re-approval before it's usable again.
+    select id into plain_job from public.jobs
+      where station_id = ffb_station and grade_id = ash_grade and name = 'FFB Cages Tipped';
+    if plain_job is not null then
+      update public.jobs set approval_status = 'pending'
+        where id = plain_job and approval_status = 'approved';
+    end if;
 
-  select id into plain_job from public.jobs
-    where station_id = ffb_station and grade_id = sh_grade and name = 'FFB Cages Tipped';
-  if plain_job is not null then
-    update public.jobs set approval_status = 'pending'
-      where id = plain_job and approval_status = 'approved';
+    select id into plain_job from public.jobs
+      where station_id = ffb_station and grade_id = sh_grade and name = 'FFB Cages Tipped';
+    if plain_job is not null then
+      update public.jobs set approval_status = 'pending'
+        where id = plain_job and approval_status = 'approved';
+    end if;
   end if;
 end $$;
 
@@ -1105,10 +1120,15 @@ drop policy if exists "rate creators insert jobs" on public.jobs;
 create policy "rate creators insert jobs" on public.jobs
   for insert with check ('rate-create' = any(public.my_capabilities()));
 
+-- Tier 1 is named the super admin throughout the app, and the web UI hands
+-- it every ability whatever its tag happens to store. The database has to
+-- agree, or an approve click updates zero rows and comes back looking like
+-- a success — the rate stays pending with nothing to explain it.
 drop policy if exists "approvers update jobs" on public.jobs;
 create policy "approvers update jobs" on public.jobs
   for update using (
-    exists (
+    public.my_tag_tier() = 1
+    or exists (
       select 1 from public.access_profiles p
       where p.id = auth.uid() and p.can_approve_rates
     )
@@ -1119,7 +1139,10 @@ create policy "approvers update jobs" on public.jobs
 -- View window asks for a remark first, which the audit log keeps).
 drop policy if exists "approvers delete jobs" on public.jobs;
 create policy "approvers delete jobs" on public.jobs
-  for delete using ('rate-delete' = any(public.my_capabilities()));
+  for delete using (
+    public.my_tag_tier() = 1
+    or 'rate-delete' = any(public.my_capabilities())
+  );
 
 drop policy if exists "rate creators write piece_rates" on public.piece_rates;
 create policy "rate creators write piece_rates" on public.piece_rates
@@ -1677,3 +1700,16 @@ alter table public.attendance add column if not exists accuracy_m double precisi
 -- rejection somebody has to fix.
 -- ---------------------------------------------------------------------------
 alter table public.production_entries add column if not exists rejected_by text;
+
+-- ---------------------------------------------------------------------------
+-- Clocking OUT is witnessed too. It was one tap at first, on the reasoning
+-- that nobody fakes leaving — but the hours between the two stamps are what
+-- gets paid, so an unwitnessed out is as good as an unwitnessed in. Same
+-- three facts, same nullability, same reasons: location can be refused and
+-- an upload can die on a bad signal, and losing the shift over either helps
+-- nobody.
+-- ---------------------------------------------------------------------------
+alter table public.attendance add column if not exists out_photo_path text;
+alter table public.attendance add column if not exists out_latitude double precision;
+alter table public.attendance add column if not exists out_longitude double precision;
+alter table public.attendance add column if not exists out_accuracy_m double precision;

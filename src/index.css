@@ -592,12 +592,6 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .rate-tier-line { font-weight: 700; white-space: nowrap; font-size: 0.85rem; }
 .rate-tier-lbl { font-weight: 500; color: var(--muted); font-size: 0.68rem; margin-right: 0.3rem; }
 .rate-tiered-pill { margin-top: 0.1rem; font-size: 0.62rem; padding: 0.05rem 0.4rem; }
-.tiered-toggle { display: flex; gap: 0.4rem; background: var(--bg); border-radius: 10px; padding: 0.25rem; }
-.tiered-toggle button {
-  flex: 1; appearance: none; border: none; cursor: pointer; padding: 0.5rem; border-radius: 8px;
-  font-size: 0.82rem; font-weight: 600; color: var(--muted); background: transparent;
-}
-.tiered-toggle button.active { background: var(--surface); color: var(--accent-strong); box-shadow: var(--shadow); }
 
 /* Station status hour board */
 .board-scroll { overflow-x: auto; margin: 0.6rem 0 0.4rem; }
@@ -1297,7 +1291,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 /* Folded down once the day is stamped: a clock chip that opens the card
    again, and the history button beside it holding the week. */
-.mob-clockmini { display: flex; align-items: center; gap: 0.5rem; }
+/* In, out and the week's "V" on one line. Everything here is sized to
+   survive a 360px screen — the row used to run the V out past the card's
+   own edge when the times, the labels and the button all turned up. */
+.mob-clockmini {
+  display: flex; align-items: center; gap: 0.4rem;
+  flex-wrap: wrap; row-gap: 0.4rem; max-width: 100%;
+}
 .mob-clockchip {
   appearance: none; cursor: pointer; flex: 1 1 auto; min-width: 0;
   display: flex; align-items: center; gap: 6px;
@@ -1315,19 +1315,20 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    done, so it presses. */
 .mob-clockpair {
   appearance: none; background: none; border: none; padding: 0; cursor: pointer;
-  display: flex; align-items: center; gap: 0.35rem; flex: none; min-width: 0;
+  display: flex; align-items: center; gap: 0.25rem; flex: none; min-width: 0;
 }
 .mob-clockpair.as-row { cursor: default; }
-.mob-clockpair .t { font-size: 0.95rem; font-weight: 800; letter-spacing: -0.02em; }
+.mob-clockpair .mob-field-label { font-size: 0.55rem; letter-spacing: 0.04em; }
+.mob-clockpair .t { font-size: 0.88rem; font-weight: 800; letter-spacing: -0.02em; }
 .mob-clockoutmini {
   appearance: none; cursor: pointer; flex: none;
   border: 1px solid #f6bdbd; border-radius: 999px;
   background: linear-gradient(180deg, #fff4f4, #fde0e0); color: #b91c1c;
-  padding: 0.3rem 0.8rem; font-size: 0.74rem; font-weight: 800;
+  padding: 0.28rem 0.6rem; font-size: 0.7rem; font-weight: 800; white-space: nowrap;
 }
 .mob-clockoutmini:disabled { opacity: 0.55; cursor: default; }
 /* The "V" that opens the week — flipped over while the week is out. */
-.mob-clockmini > .week-toggle { margin-left: auto; }
+.mob-clockmini > .week-toggle { margin-left: auto; width: 26px; height: 26px; }
 .mob-icon-btn.week-toggle svg { transition: transform 0.15s; }
 .mob-icon-btn.week-toggle.on svg { transform: rotate(180deg); }
 
@@ -1646,12 +1647,22 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; justify-content: center; align-items: center;
   padding: 0.5rem 1.1rem 0.8rem;
 }
-.mob-role { font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif; }
-/* The screen title with its trailing action (e.g. the history clock). */
+.mob-role {
+  font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif;
+  text-align: center;
+}
+/* A tab's own title block, centred under the brand — the same place a
+   sub-page's title sits, so moving between them does not shift the eye. */
+.mob-pagehead { padding: 0 0.2rem; text-align: center; }
+/* The screen title with its trailing action (e.g. the history clock).
+   Three columns so the title stays centred on the screen rather than
+   centred on whatever is left over beside the button. */
 .mob-rolebar {
-  display: flex; align-items: center; justify-content: space-between;
+  display: grid; grid-template-columns: 30px 1fr 30px; align-items: center;
   gap: 0.6rem; padding: 0 0.2rem;
 }
+.mob-rolebar > :first-child { grid-column: 2; text-align: center; min-width: 0; }
+.mob-rolebar > :last-child { grid-column: 3; }
 /* Range picker — Today / 7 days / 30 days, one segment lit at a time. */
 .mob-seg { display: flex; gap: 0.4rem; }
 .mob-seg button {
@@ -2371,6 +2382,21 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* work description, unit, rate, effective date. "+ Row" stacks another */
 /* line, so a whole batch of rates goes in without reopening.           */
 /* ------------------------------------------------------------------ */
+/* Manage window — the contract read across: one column per tier tag that
+   is paid for the work, and what each of them gets down the rows. */
+.pr-manage { min-width: max-content; }
+.pr-manage th, .pr-manage td { vertical-align: top; }
+/* The row labels down the left are quieter than the tier names on top —
+   they name the line, the tier columns are what is being compared. */
+.pr-manage tbody th {
+  text-align: left; font-weight: 600; color: var(--muted);
+  white-space: nowrap; padding-right: 1.2rem;
+}
+/* The work description sits where the two headings meet, so the window
+   says which job before it says who is paid for it. */
+.pr-manage-corner { font-weight: 800; color: var(--accent-strong); }
+.pr-manage tbody td { min-width: 9rem; }
+
 .modal.modal-xwide { max-width: min(1320px, 96vw); }
 /* Paid by the hour puts two more columns on every line, so the window
    takes the extra width rather than squeezing the six it already had. */

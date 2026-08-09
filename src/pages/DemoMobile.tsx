@@ -1054,12 +1054,12 @@ function PerformanceTab({
         <span className="mob-brand">MJM</span>
       </div>
       <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
+        <div className="mob-pagehead">
           {/* The title names the dashboard this tier was given (Settings →
               Tags management → Entitled Function). The mill reads first
               when both are on. */}
           <div className="mob-role">
-            {showMill ? 'Mill Performance Dashboard' : showKpi ? 'KPI Dashboard' : 'Performance dashboard'}
+            {showMill ? 'Mill Dashboard' : showKpi ? 'KPI Dashboard' : 'Performance dashboard'}
           </div>
         </div>
 
@@ -1801,8 +1801,18 @@ function StationWorkPanel({
 /* tab is for recording work, and attendance has had its moment.        */
 /* ------------------------------------------------------------------ */
 
-/** A clock-in waiting on its confirm press: the photo, where, and when. */
-interface PendingClockIn {
+/**
+ * A stamp waiting on its confirm press: the photo, where, and when.
+ *
+ * Both ends of a shift go through this. Clocking out is as much a claim
+ * about being somewhere as clocking in — the hours between them are what
+ * gets paid — so it is witnessed the same way.
+ */
+interface PendingStamp {
+  /** Which end of the shift this is. */
+  kind: 'in' | 'out'
+  /** The shift being closed; only set when clocking out. */
+  shiftId?: string
   file: File
   preview: string
   at: string
@@ -1844,7 +1854,10 @@ function ClockCard({
   // strip read from one load.
   const [shifts, setShifts] = useState<Shift[]>([])
   const [busy, setBusy] = useState(false)
-  const [pending, setPending] = useState<PendingClockIn | null>(null)
+  const [pending, setPending] = useState<PendingStamp | null>(null)
+  // Which end of the shift the camera was opened for — the file comes
+  // back from the input with no memory of why it was asked for.
+  const aiming = useRef<{ kind: 'in' | 'out'; shiftId?: string }>({ kind: 'in' })
   // Folded down once the day has been stamped, and opened again by the
   // clock chip when it is time to clock out.
   const [open, setOpen] = useState(false)
@@ -1927,11 +1940,17 @@ function ClockCard({
 
   // The camera comes back with a file; where and when are settled at the
   // same moment, so the confirm screen can show all three together.
+  function openCamera(kind: 'in' | 'out', shiftId?: string) {
+    aiming.current = { kind, shiftId }
+    camera.current?.click()
+  }
+
   async function tookSelfie(file: File | undefined) {
     if (!file) return
     onError(null)
     const at = new Date().toISOString()
     setPending({
+      ...aiming.current,
       file,
       preview: URL.createObjectURL(file),
       at,
@@ -1947,7 +1966,7 @@ function ClockCard({
             ...p,
             coords,
             locating: false,
-            locationError: coords ? null : 'Location unavailable — clocking in without it.',
+            locationError: coords ? null : 'Location unavailable — stamping without it.',
           },
     )
   }
@@ -1958,7 +1977,8 @@ function ClockCard({
     if (camera.current) camera.current.value = ''
   }
 
-  async function confirmClockIn() {
+  /** Both ends land the same way: photo up first, then the stamp. */
+  async function confirmStamp() {
     if (!profileId || !pending || busy) return
     setBusy(true)
     onError(null)
@@ -1968,7 +1988,7 @@ function ClockCard({
     try {
       const photo = await compressImage(pending.file)
       const stamp = pending.at.replace(/[:.]/g, '-')
-      const path = `attendance/${profileId}-${stamp}.jpg`
+      const path = `attendance/${profileId}-${pending.kind}-${stamp}.jpg`
       const { error: upErr } = await supabase.storage
         .from('records')
         .upload(path, photo, { contentType: 'image/jpeg' })
@@ -1977,51 +1997,56 @@ function ClockCard({
     } catch (e) {
       onError(`Selfie did not upload: ${(e as Error).message}`)
     }
-
-    const row = {
-      user_id: profileId,
-      station_id: stationId,
-      work_date: today,
-      clock_in: pending.at,
-      photo_path: photoPath,
+    const where = {
       latitude: pending.coords?.lat ?? null,
       longitude: pending.coords?.lng ?? null,
       accuracy_m: pending.coords?.accuracy ?? null,
     }
-    const { data, error } = await supabase
-      .from('attendance')
-      .insert(row)
-      .select('id, work_date, clock_in, clock_out')
-      .single()
-    // Not saved is still worth showing: the card stamps so the screen can
-    // be walked through, and the message says exactly why it did not save.
-    if (error) {
-      onError(clockHelp(error.message))
-      setShifts((rows) => [
-        ...rows,
-        { id: `${LOCAL_SHIFT}-${rows.length}`, work_date: today, clock_in: pending.at, clock_out: null },
-      ])
+
+    if (pending.kind === 'out') {
+      const id = pending.shiftId
+      // A stamp the database never took has no row to close, so it is
+      // closed where it lives — on screen.
+      if (id && !id.startsWith(LOCAL_SHIFT)) {
+        const { error } = await supabase
+          .from('attendance')
+          .update({
+            clock_out: pending.at,
+            out_photo_path: photoPath,
+            out_latitude: where.latitude,
+            out_longitude: where.longitude,
+            out_accuracy_m: where.accuracy_m,
+          })
+          .eq('id', id)
+        if (error) onError(clockHelp(error.message))
+      }
+      setShifts((rows) => rows.map((r) => (r.id === id ? { ...r, clock_out: pending.at } : r)))
     } else {
-      setShifts((rows) => [...rows, data as Shift])
+      const { data, error } = await supabase
+        .from('attendance')
+        .insert({
+          user_id: profileId,
+          station_id: stationId,
+          work_date: today,
+          clock_in: pending.at,
+          photo_path: photoPath,
+          ...where,
+        })
+        .select('id, work_date, clock_in, clock_out')
+        .single()
+      // Not saved is still worth showing: the card stamps so the screen
+      // can be walked through, and the message says exactly why.
+      if (error) {
+        onError(clockHelp(error.message))
+        setShifts((rows) => [
+          ...rows,
+          { id: `${LOCAL_SHIFT}-${rows.length}`, work_date: today, clock_in: pending.at, clock_out: null },
+        ])
+      } else {
+        setShifts((rows) => [...rows, data as Shift])
+      }
     }
     discard()
-    setBusy(false)
-    setOpen(false)
-  }
-
-  async function clockOut() {
-    if (!profileId || !running || busy) return
-    setBusy(true)
-    onError(null)
-    const now = new Date().toISOString()
-    if (!running.id.startsWith(LOCAL_SHIFT)) {
-      const { error } = await supabase
-        .from('attendance')
-        .update({ clock_out: now })
-        .eq('id', running.id)
-      if (error) onError(clockHelp(error.message))
-    }
-    setShifts((rows) => rows.map((r) => (r.id === running.id ? { ...r, clock_out: now } : r)))
     setBusy(false)
     setOpen(false)
   }
@@ -2037,12 +2062,18 @@ function ClockCard({
     </svg>
   )
 
-  /** A tapped day, told in full: the first in, the last out, the hours. */
+  /**
+   * A tapped day, told in full — every in and out it holds, in order.
+   *
+   * A day is not one pair. Somebody who goes home for lunch and comes
+   * back has stamped twice, and showing only the first in and the last
+   * out would quietly pay them for the gap. Each pair is listed, and the
+   * hours are the pairs added up.
+   */
   function dayDetail(iso: string) {
     const rows = shifts
       .filter((s) => (s.work_date ?? '') === iso)
       .sort((a, b) => a.clock_in.localeCompare(b.clock_in))
-    const outs = rows.filter((s) => s.clock_out != null).map((s) => s.clock_out!).sort()
     const mins = rows.reduce(
       (t, s) =>
         t + (s.clock_out ? (new Date(s.clock_out).getTime() - new Date(s.clock_in).getTime()) / 60_000 : 0),
@@ -2050,9 +2081,7 @@ function ClockCard({
     )
     const h = Math.floor(mins / 60)
     return {
-      firstIn: rows[0]?.clock_in ?? null,
-      lastOut: outs[outs.length - 1] ?? null,
-      stillIn: rows.some((s) => s.clock_out == null),
+      rows,
       span: mins > 0 ? (h > 0 ? `${h}h ${Math.round(mins % 60)}m` : `${Math.round(mins)}m`) : null,
     }
   }
@@ -2094,14 +2123,26 @@ function ClockCard({
                 ✕
               </button>
             </div>
-            <div className="mob-row">
-              <span className="mob-field-label">Clock in</span>
-              <span>{d.firstIn ? clockTime(d.firstIn) : '—'}</span>
-            </div>
-            <div className="mob-row">
-              <span className="mob-field-label">Clock out</span>
-              <span>{d.lastOut ? clockTime(d.lastOut) : d.stillIn ? 'Still in' : '—'}</span>
-            </div>
+            {d.rows.length === 0 ? (
+              <div className="mob-row">
+                <span className="mob-field-label">Clock in</span>
+                <span>—</span>
+              </div>
+            ) : (
+              d.rows.map((r, i) => (
+                <div className="mob-row" key={r.id}>
+                  {/* The number is only worth printing when there is more
+                      than one pair to tell apart. */}
+                  <span className="mob-field-label">
+                    {d.rows.length > 1 ? `${i + 1}. ` : ''}In · out
+                  </span>
+                  <span>
+                    {clockTime(r.clock_in)} –{' '}
+                    {r.clock_out ? clockTime(r.clock_out) : 'still in'}
+                  </span>
+                </div>
+              ))
+            )}
             <div className="mob-row">
               <span className="mob-field-label">Work hours</span>
               <span>{d.span ?? '—'}</span>
@@ -2117,8 +2158,10 @@ function ClockCard({
   if (pending) {
     return (
       <div className="mob-card">
-        <div className="mob-card-label">Confirm clock in</div>
-        <img className="mob-selfie" src={pending.preview} alt="Clock-in selfie" />
+        <div className="mob-card-label">
+          {pending.kind === 'out' ? 'Confirm clock out' : 'Confirm clock in'}
+        </div>
+        <img className="mob-selfie" src={pending.preview} alt="Attendance selfie" />
         <div className="mob-row">
           <span className="mob-field-label">Time</span>
           <span>{clockTime(pending.at)} · {new Date(pending.at).toLocaleDateString()}</span>
@@ -2142,8 +2185,8 @@ function ClockCard({
         {pending.locationError && <div className="mob-sub">{pending.locationError}</div>}
         <div className="mob-actions">
           <button className="mob-mini ghost" onClick={discard} disabled={busy}>Retake</button>
-          <button className="mob-mini go" onClick={confirmClockIn} disabled={busy || pending.locating}>
-            {busy ? 'Saving…' : 'Confirm clock in'}
+          <button className="mob-mini go" onClick={confirmStamp} disabled={busy || pending.locating}>
+            {busy ? 'Saving…' : pending.kind === 'out' ? 'Confirm clock out' : 'Confirm clock in'}
           </button>
         </div>
       </div>
@@ -2177,7 +2220,7 @@ function ClockCard({
                 <span className="mob-field-label">Clock out :</span>
                 <button
                   className="mob-clockoutmini"
-                  onClick={clockOut}
+                  onClick={() => openCamera('out', running.id)}
                   disabled={busy || !profileId}
                 >
                   {busy ? 'Saving…' : 'Clock out'}
@@ -2225,10 +2268,12 @@ function ClockCard({
               </div>
             </div>
           ) : (
-            todays.map((s) => (
+            todays.map((s, i) => (
               <div className={`mob-clockrow ${s.clock_out ? '' : 'open'}`} key={s.id}>
                 <div className="mob-clockcell">
-                  <span className="mob-field-label">Clock in</span>
+                  <span className="mob-field-label">
+                    {todays.length > 1 ? `${i + 1}. ` : ''}Clock in
+                  </span>
                   <span className="t">{clockTime(s.clock_in)}</span>
                 </div>
                 <div className="mob-clockcell">
@@ -2244,11 +2289,11 @@ function ClockCard({
 
           <button
             className={`mob-clockbtn ${running ? 'out' : ''}`}
-            onClick={() => (running ? clockOut() : camera.current?.click())}
+            onClick={() => (running ? openCamera('out', running.id) : openCamera('in'))}
             disabled={busy || !profileId}
           >
             {clockIcon}
-            {busy ? 'Saving…' : running ? 'Clock out' : 'Clock in — take a selfie'}
+            {busy ? 'Saving…' : running ? 'Clock out — take a selfie' : 'Clock in — take a selfie'}
           </button>
 
           {closed.length > 0 && (
@@ -3692,7 +3737,7 @@ function MyWorkTab({
       </div>
 
       <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
+        <div className="mob-pagehead">
           <div className="mob-role">My work</div>
           <div className="mob-sub">Everything you recorded and where it stands</div>
         </div>
@@ -5467,7 +5512,7 @@ function TeamTab({
       </div>
 
       <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
+        <div className="mob-pagehead">
           <div className="mob-role">My team</div>
         </div>
 
