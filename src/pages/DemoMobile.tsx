@@ -527,10 +527,6 @@ function TabBar({
 }
 
 /** Top-bar badge: the previewed tier's name spelled out in full. */
-function TierBadge({ tier }: { tier: Grade | null }) {
-  return <span className="mob-tier">{tier?.name ?? '—'}</span>
-}
-
 function dayISO(d: Date) {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
@@ -922,7 +918,6 @@ function PerformanceTab({
         profileId={profileId}
         myEmail={myEmail}
         level={canFinal ? 'approve' : 'verify'}
-        tier={tier}
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
@@ -989,11 +984,15 @@ function PerformanceTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
       <div className="mob-body">
         <div style={{ padding: '0 0.2rem' }}>
-          <div className="mob-role">Performance dashboard</div>
+          {/* The title names the dashboard this tier was given (Settings →
+              Tags management → Entitled Function). The mill reads first
+              when both are on. */}
+          <div className="mob-role">
+            {showMill ? 'Mill Performance Dashboard' : showKpi ? 'KPI Dashboard' : 'Performance dashboard'}
+          </div>
           <div className="mob-sub">{monthLabel} · {scoped ? 'your stations' : 'all stations'}</div>
         </div>
 
@@ -1358,7 +1357,6 @@ function StationScreen({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Stations</button>
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -2340,7 +2338,6 @@ function RecordTab({
     return (
       <RecordHistory
         profileId={profileId}
-        tier={tier}
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
@@ -2355,7 +2352,6 @@ function RecordTab({
       <>
         <div className="mob-header">
           <span className="mob-brand">MJM</span>
-          <TierBadge tier={tier} />
         </div>
 
         <div className="mob-body">
@@ -2432,7 +2428,6 @@ function RecordTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -2656,7 +2651,6 @@ const HISTORY_RANGES = [
 
 function RecordHistory({
   profileId,
-  tier,
   stations,
   jobs,
   amountFor,
@@ -2664,7 +2658,6 @@ function RecordHistory({
   onBack,
 }: {
   profileId: string | null
-  tier: Grade | null
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
@@ -2703,7 +2696,6 @@ function RecordHistory({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Record</button>
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -2872,7 +2864,6 @@ function EntryDetail({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Records</button>
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -3459,7 +3450,6 @@ function MyWorkTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -3646,7 +3636,6 @@ function ApprovalsScreen({
   profileId,
   myEmail,
   level,
-  tier,
   stations,
   jobs,
   amountFor,
@@ -3656,7 +3645,6 @@ function ApprovalsScreen({
   profileId: string | null
   myEmail: string
   level: 'verify' | 'approve'
-  tier: Grade | null
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
@@ -3714,7 +3702,6 @@ function ApprovalsScreen({
         submitter={submitterName(detail)}
         level={level}
         myEmail={myEmail}
-        tier={tier}
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
@@ -3733,7 +3720,6 @@ function ApprovalsScreen({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Performance</button>
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -3789,7 +3775,6 @@ function ApprovalDetail({
   submitter,
   level,
   myEmail,
-  tier,
   stations,
   jobs,
   amountFor,
@@ -3801,7 +3786,6 @@ function ApprovalDetail({
   submitter: string
   level: 'verify' | 'approve'
   myEmail: string
-  tier: Grade | null
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
@@ -3859,7 +3843,6 @@ function ApprovalDetail({
       <div className="mob-header">
         <button className="mob-back" onClick={onBack}>‹ Approvals</button>
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -4037,7 +4020,6 @@ function ProfileTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">
@@ -5249,7 +5231,6 @@ function TeamTab({
     <>
       <div className="mob-header">
         <span className="mob-brand">MJM</span>
-        <TierBadge tier={tier} />
       </div>
 
       <div className="mob-body">

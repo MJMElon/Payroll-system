@@ -1564,9 +1564,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   padding: 0.55rem 1.1rem 0.3rem; font-size: 0.7rem; color: var(--muted);
   letter-spacing: 0.05em;
 }
+/* The brand sits dead centre; a back button, when there is one, floats
+   at the left edge without pushing the brand off centre. */
 .mob-header {
-  display: flex; justify-content: space-between; align-items: center;
+  position: relative;
+  display: flex; justify-content: center; align-items: center;
   padding: 0.5rem 1.1rem 0.8rem;
+}
+.mob-header .mob-back {
+  position: absolute; left: 1.1rem; top: 50%; transform: translateY(-50%);
 }
 .mob-role { font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif; }
 /* The screen title with its trailing action (e.g. the history clock). */
