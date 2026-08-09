@@ -955,6 +955,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font: inherit; color: inherit; text-align: left; align-items: flex-start;
 }
 .mob-card.tapcard:hover { background: #f8fafb; }
+/* A tap card whose contents are block-level (meters, bars) rather than a
+   label and a number — it cannot be a <button>, so it says so instead. */
+.mob-card.tapcard.block { align-items: stretch; }
+.mob-card.tapcard.block:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* A tappable row inside a card — name on the left, value and chevron
    on the right. */
@@ -1306,18 +1310,56 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   align-self: center; padding: 0.1rem 0.4rem;
   font-size: 0.68rem; font-weight: 800; color: var(--muted);
 }
+/* Clocked in, folded down: "Clock in : 07:12" beside "Clock out : [btn]".
+   The in is a stamp already made, so it reads; the out is the next thing
+   done, so it presses. */
+.mob-clockpair {
+  appearance: none; background: none; border: none; padding: 0; cursor: pointer;
+  display: flex; align-items: center; gap: 0.35rem; flex: none; min-width: 0;
+}
+.mob-clockpair.as-row { cursor: default; }
+.mob-clockpair .t { font-size: 0.95rem; font-weight: 800; letter-spacing: -0.02em; }
+.mob-clockoutmini {
+  appearance: none; cursor: pointer; flex: none;
+  border: 1px solid #f6bdbd; border-radius: 999px;
+  background: linear-gradient(180deg, #fff4f4, #fde0e0); color: #b91c1c;
+  padding: 0.3rem 0.8rem; font-size: 0.74rem; font-weight: 800;
+}
+.mob-clockoutmini:disabled { opacity: 0.55; cursor: default; }
+/* The "V" that opens the week — flipped over while the week is out. */
+.mob-clockmini > .week-toggle { margin-left: auto; }
+.mob-icon-btn.week-toggle svg { transition: transform 0.15s; }
+.mob-icon-btn.week-toggle.on svg { transform: rotate(180deg); }
 
 /* The week: one narrow column per day — ticked once stamped, and once
    both ends are in, the hours between them sit underneath. */
+/* The float anchors to the strip, so the strip needs its own ground. */
+.mob-weekwrap { position: relative; }
 .mob-weekstrip {
   display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px;
   padding-top: 0.15rem;
 }
 .mob-weekday {
+  appearance: none; border: none; cursor: pointer; font: inherit;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 0.35rem 0.1rem; border-radius: 10px; background: #f6f8fa; min-width: 0;
 }
 .mob-weekday.today { background: #fdf4e3; }
+.mob-weekday.picked { box-shadow: 0 0 0 2px var(--accent-strong); }
+/* The tapped day's card: date, the in, the out, the hours between. */
+.mob-dayfloat {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: calc(100% + 6px); z-index: 6; min-width: 220px;
+  background: #fff; border: 1px solid var(--border); border-radius: 13px;
+  padding: 0.6rem 0.75rem; box-shadow: 0 14px 30px rgba(15, 25, 40, 0.2);
+  display: flex; flex-direction: column; gap: 0.15rem;
+}
+.mob-dayfloat-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.mob-dayfloat-date { font-weight: 800; font-size: 0.8rem; }
+.mob-dayfloat-x {
+  appearance: none; background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 0.75rem; padding: 0.1rem 0.2rem;
+}
 .mob-weekday .d {
   font-size: 0.58rem; font-weight: 800; color: var(--muted); text-transform: uppercase;
 }
@@ -1586,9 +1628,6 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; justify-content: center; align-items: center;
   padding: 0.5rem 1.1rem 0.8rem;
 }
-.mob-header .mob-back {
-  position: absolute; left: 1.1rem; top: 50%; transform: translateY(-50%);
-}
 .mob-role { font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif; }
 /* The screen title with its trailing action (e.g. the history clock). */
 .mob-rolebar {
@@ -1664,9 +1703,23 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-station:hover { background: #f6f8fa; }
 .mob-station-meta { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
+/* One back arrow, one centred page title — the same row on every screen
+   reached from a tab, so the way out never moves. */
+.mob-subhead {
+  display: grid; grid-template-columns: 34px 1fr 34px; align-items: center;
+  padding: 0 0.2rem;
+}
 .mob-back {
-  appearance: none; background: none; border: none; cursor: pointer;
-  color: var(--muted); font-size: 0.8rem; padding: 0;
+  appearance: none; background: #f0f3f6; border: 1px solid #e2e8ef; cursor: pointer;
+  width: 30px; height: 30px; border-radius: 50%; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text); font-size: 1.15rem; font-weight: 800; line-height: 1;
+}
+.mob-back:hover { background: #e7ecf2; }
+.mob-pagetitle {
+  grid-column: 2; text-align: center;
+  font-size: 1rem; font-weight: 800; letter-spacing: -0.02em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .mob-brand {
   font-family: 'Montserrat', system-ui, sans-serif;

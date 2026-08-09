@@ -207,6 +207,15 @@ export default function DemoMobile() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<PieceRate[]>([])
   const [tab, setTab] = useState<Tab>('performance')
+  // Pressing a tab means "take me to that tab's main page" — including the
+  // tab you are already on, which is how you get back out of a screen you
+  // drilled into. Bumping this remounts the tab, so every screen it was
+  // holding open falls away with it.
+  const [tabPress, setTabPress] = useState(0)
+  const goTab = (t: Tab) => {
+    setTab(t)
+    setTabPress((n) => n + 1)
+  }
   const [signupPreview, setSignupPreview] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -372,7 +381,7 @@ export default function DemoMobile() {
                 </div>
               )}
 
-              <div className="mob-content">
+              <div className="mob-content" key={`${tab}-${tabPress}`}>
                 {loading ? (
                   <div className="mob-body"><p className="muted small">Loading…</p></div>
                 ) : signupPreview ? (
@@ -445,7 +454,7 @@ export default function DemoMobile() {
               {!signupPreview && (
                 <TabBar
                   tab={tab}
-                  onTab={setTab}
+                  onTab={goTab}
                 />
               )}
             </div>
@@ -525,7 +534,24 @@ function TabBar({
   )
 }
 
-/** Top-bar badge: the previewed tier's name spelled out in full. */
+/**
+ * Every screen reached FROM a tab wears the same row, directly under the
+ * MJM brand: a back arrow hard left, the page's name in the middle.
+ *
+ * It used to be a worded link — "‹ Approvals", "‹ Stations", "‹ Record" —
+ * sharing the brand's row, so the arrow moved about, said something
+ * different on each screen, and the page's own name sat somewhere else
+ * again. One arrow, one title, one place.
+ */
+function MobSubHeader({ title, onBack }: { title: string; onBack: () => void }) {
+  return (
+    <div className="mob-subhead">
+      <button className="mob-back" onClick={onBack} aria-label="Back">‹</button>
+      <span className="mob-pagetitle">{title}</span>
+    </div>
+  )
+}
+
 function dayISO(d: Date) {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
@@ -756,7 +782,10 @@ function PerformanceTab({
   onError: (m: string | null) => void
 }) {
   const [station, setStation] = useState<Station | null>(null)
-  const [showApprovals, setShowApprovals] = useState(false)
+  // The screens this tab drills into: the work record behind "My work
+  // done", and the two queues behind the cards under it.
+  const [sub, setSub] = useState<null | 'history' | 'pending' | 'rejected'>(null)
+  const [detail, setDetail] = useState<ProductionEntry | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const tierCaps = effectiveCapabilities(tier)
   const canEntry = tierCaps.includes('data-entry')
@@ -917,17 +946,51 @@ function PerformanceTab({
     )
   }
 
-  if (showApprovals) {
+  if (detail) {
     return (
-      <ApprovalsScreen
+      <EntryDetail
+        entry={detail}
+        myName={profileName(profile)}
+        tier={tier}
+        stations={stations}
+        jobs={jobs}
+        rateFor={rateFor}
+        amountFor={amountFor}
+        tier2RateFor={tier2RateFor}
+        onBack={() => setDetail(null)}
+      />
+    )
+  }
+
+  if (sub === 'history') {
+    return (
+      <RecordHistory
         profileId={profileId}
-        myEmail={myEmail}
-        level={canFinal ? 'approve' : 'verify'}
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
+        onOpen={setDetail}
+        onBack={() => setSub(null)}
+      />
+    )
+  }
+
+  if (sub === 'pending' || sub === 'rejected') {
+    return (
+      <QueueScreen
+        kind={sub}
+        profileId={profileId}
+        myName={profileName(profile)}
+        myEmail={myEmail}
+        tier={tier}
+        grades={grades}
+        stations={stations}
+        jobs={jobs}
+        rateFor={rateFor}
+        amountFor={amountFor}
+        tier2RateFor={tier2RateFor}
         onBack={() => {
-          setShowApprovals(false)
+          setSub(null)
           loadEntries()
         }}
         onError={onError}
@@ -1018,8 +1081,8 @@ function PerformanceTab({
         {showMill && (
           <>
             <div className="mob-card">
-              <div className="mob-card-label">Mill performance · {monthLabel}</div>
-              <div className="mob-sub">Approved work records only</div>
+              <div className="mob-card-label">Mill Dashboard</div>
+              <div className="mob-sub">{monthLabel} · approved work records only</div>
               {stations.length === 0 ? (
                 <div className="mob-sub">No stations for your tags yet.</div>
               ) : (
@@ -1099,8 +1162,15 @@ function PerformanceTab({
             Sunday bar the week's percentage — the same colours adding
             themselves up. */}
         {canEntry && showKpi && (
-          <div className="mob-card">
+          <div
+            className="mob-card tapcard block"
+            role="button"
+            tabIndex={0}
+            onClick={() => setSub('history')}
+            onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && setSub('history')}
+          >
             <div className="mob-card-label">My work done</div>
+            <div className="mob-sub">Tap for the work record</div>
             <div className="mob-bars">
               {myWeek.map((w) => {
                 const total = myQty(w)
@@ -1136,19 +1206,13 @@ function PerformanceTab({
             tab ends here: this is the day's own work, not the mill's. */}
         {showKpi && (
           <div className="mob-grid2">
-            <button className="mob-card tapcard" onClick={() => (reviews > 0 ? setShowApprovals(true) : onMyWork())}>
+            <button className="mob-card tapcard" onClick={() => setSub('pending')}>
               <span className="mob-field-label">Pending verify</span>
-              <span className="mob-stat">{reviews > 0 ? awaiting.length : myWaiting}</span>
-              <span className="mob-station-meta">
-                {reviews > 0 ? 'waiting on you' : 'waiting on your upper'}
-              </span>
+              <span className="mob-stat">{(reviews > 0 ? awaiting.length : 0) + myWaiting}</span>
             </button>
-            <button className="mob-card tapcard" onClick={onMyWork}>
-              <span className="mob-field-label">Rejected this wk</span>
-              <span className="mob-stat">{reviews > 0 ? rejectedWk.length : myRejectedWk}</span>
-              <span className="mob-station-meta">
-                {reviews > 0 ? 'at your station' : 'to fix & resubmit'}
-              </span>
+            <button className="mob-card tapcard" onClick={() => setSub('rejected')}>
+              <span className="mob-field-label">Rejected</span>
+              <span className="mob-stat">{(reviews > 0 ? rejectedWk.length : 0) + myRejectedWk}</span>
             </button>
           </div>
         )}
@@ -1352,11 +1416,11 @@ function StationScreen({
   return (
     <>
       <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Stations</button>
         <span className="mob-brand">MJM</span>
       </div>
 
       <div className="mob-body">
+        <MobSubHeader title={station.name} onBack={onBack} />
         {/* The admin tier is an access level, not a job on the floor. */}
         {tier?.sort_order === ADMIN_TIER_ORDER ? (
           <div className="mob-card">
@@ -1784,6 +1848,8 @@ function ClockCard({
   // clock chip when it is time to clock out.
   const [open, setOpen] = useState(false)
   const [showWeek, setShowWeek] = useState(false)
+  // The day tapped on the week strip — its float shows the ins and outs.
+  const [dayInfo, setDayInfo] = useState<string | null>(null)
   const camera = useRef<HTMLInputElement>(null)
 
   const today = todayISO()
@@ -1970,17 +2036,78 @@ function ClockCard({
     </svg>
   )
 
+  /** A tapped day, told in full: the first in, the last out, the hours. */
+  function dayDetail(iso: string) {
+    const rows = shifts
+      .filter((s) => (s.work_date ?? '') === iso)
+      .sort((a, b) => a.clock_in.localeCompare(b.clock_in))
+    const outs = rows.filter((s) => s.clock_out != null).map((s) => s.clock_out!).sort()
+    const mins = rows.reduce(
+      (t, s) =>
+        t + (s.clock_out ? (new Date(s.clock_out).getTime() - new Date(s.clock_in).getTime()) / 60_000 : 0),
+      0,
+    )
+    const h = Math.floor(mins / 60)
+    return {
+      firstIn: rows[0]?.clock_in ?? null,
+      lastOut: outs[outs.length - 1] ?? null,
+      stillIn: rows.some((s) => s.clock_out == null),
+      span: mins > 0 ? (h > 0 ? `${h}h ${Math.round(mins % 60)}m` : `${Math.round(mins)}m`) : null,
+    }
+  }
+
   const weekStrip = (
-    <div className="mob-weekstrip">
-      {week.map((d) => (
-        <div className={`mob-weekday ${d.iso === today ? 'today' : ''}`} key={d.iso}>
-          <span className="d">{d.label}</span>
-          <span className={`mark ${d.stamped ? (d.running ? 'running' : 'ok') : ''}`}>
-            {d.stamped ? (d.running ? '•' : '✓') : '·'}
-          </span>
-          <span className="h">{d.span ?? (d.running ? 'in' : '')}</span>
-        </div>
-      ))}
+    <div className="mob-weekwrap">
+      <div className="mob-weekstrip">
+        {week.map((d) => (
+          <button
+            type="button"
+            className={`mob-weekday ${d.iso === today ? 'today' : ''} ${dayInfo === d.iso ? 'picked' : ''}`}
+            key={d.iso}
+            onClick={() => setDayInfo((cur) => (cur === d.iso ? null : d.iso))}
+          >
+            <span className="d">{d.label}</span>
+            <span className={`mark ${d.stamped ? (d.running ? 'running' : 'ok') : ''}`}>
+              {d.stamped ? (d.running ? '•' : '✓') : '·'}
+            </span>
+            <span className="h">{d.span ?? (d.running ? 'in' : '')}</span>
+          </button>
+        ))}
+      </div>
+      {dayInfo && (() => {
+        const d = dayDetail(dayInfo)
+        return (
+          <div className="mob-dayfloat">
+            <div className="mob-dayfloat-head">
+              <span className="mob-dayfloat-date">
+                {new Date(dayInfo + 'T00:00:00').toLocaleDateString(undefined, {
+                  weekday: 'long', day: 'numeric', month: 'short',
+                })}
+              </span>
+              <button
+                type="button"
+                className="mob-dayfloat-x"
+                onClick={() => setDayInfo(null)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mob-row">
+              <span className="mob-field-label">Clock in</span>
+              <span>{d.firstIn ? clockTime(d.firstIn) : '—'}</span>
+            </div>
+            <div className="mob-row">
+              <span className="mob-field-label">Clock out</span>
+              <span>{d.lastOut ? clockTime(d.lastOut) : d.stillIn ? 'Still in' : '—'}</span>
+            </div>
+            <div className="mob-row">
+              <span className="mob-field-label">Work hours</span>
+              <span>{d.span ?? '—'}</span>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 
@@ -2037,24 +2164,44 @@ function ClockCard({
           history button beside it opens the week. */}
       {!expanded ? (
         <div className="mob-clockmini">
-          <button className="mob-clockchip" onClick={() => setOpen(true)}>
-            {clockIcon}
-            <span>
-              {running
-                ? `In ${clockTime(running.clock_in)}`
-                : `${hoursToday.toFixed(2)} h today`}
-            </span>
-          </button>
+          {running ? (
+            <>
+              {/* The stamp already made, and the one still to make — the
+                  out is a button because it is the next thing done. */}
+              <button className="mob-clockpair" onClick={() => setOpen(true)} title="Open today's attendance">
+                <span className="mob-field-label">Clock in :</span>
+                <span className="t">{clockTime(running.clock_in)}</span>
+              </button>
+              <span className="mob-clockpair as-row">
+                <span className="mob-field-label">Clock out :</span>
+                <button
+                  className="mob-clockoutmini"
+                  onClick={clockOut}
+                  disabled={busy || !profileId}
+                >
+                  {busy ? 'Saving…' : 'Clock out'}
+                </button>
+              </span>
+            </>
+          ) : (
+            <button className="mob-clockchip" onClick={() => setOpen(true)}>
+              {clockIcon}
+              <span>{hoursToday.toFixed(2)} h today</span>
+            </button>
+          )}
           <button
-            className={`mob-icon-btn ${showWeek ? 'on' : ''}`}
-            onClick={() => setShowWeek((v) => !v)}
+            className={`mob-icon-btn week-toggle ${showWeek ? 'on' : ''}`}
+            onClick={() => {
+              setShowWeek((v) => !v)
+              setDayInfo(null)
+            }}
             title="This week's attendance"
             aria-label="This week's attendance"
+            aria-expanded={showWeek}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="5" width="18" height="16" rx="3" />
-              <path d="M3 10h18M8 3v4M16 3v4" />
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 9l7 6 7-6" />
             </svg>
           </button>
         </div>
@@ -2695,12 +2842,11 @@ function RecordHistory({
   return (
     <>
       <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Record</button>
         <span className="mob-brand">MJM</span>
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Work Record History</div>
+        <MobSubHeader title="Work Record History" onBack={onBack} />
 
         <div className="mob-seg" role="tablist">
           {HISTORY_RANGES.map((r) => (
@@ -2863,12 +3009,11 @@ function EntryDetail({
   return (
     <>
       <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Records</button>
         <span className="mob-brand">MJM</span>
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Submitted work record</div>
+        <MobSubHeader title="Submitted work record" onBack={onBack} />
 
         {/* Whose record this is and what it is for. No money here — the
             rate belongs with the parameters it was applied to, and the
@@ -3357,6 +3502,7 @@ function MyWorkTab({
     if (next === 'rejected') {
       Object.assign(fields, {
         rejected_reason: reason || null,
+        rejected_by: myEmail,
         verified_by: null,
         verified_at: null,
         approved_by: null,
@@ -3626,307 +3772,264 @@ function SignupWelcome({ myName }: { myName: string }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* APPROVALS — a sub-screen of Performance, reached from the "awaiting */
-/* review" alert. It is NOT a bottom tab: the tab bar is the same five */
-/* buttons for every tier. 'verify' level works the To-verify queue;   */
-/* 'approve' level gets both queues. Own submissions are never queued  */
-/* back to the person who submitted them.                              */
+/* PENDING VERIFY and REJECTED — the two sub-screens of Performance.    */
+/*                                                                      */
+/* Each reads the same way, in two sections: what is waiting on ME      */
+/* first, then what is waiting on somebody else. Both sides come from   */
+/* the LADDER, so the same screen serves every tier without a rung      */
+/* named anywhere:                                                      */
+/*                                                                      */
+/*   Pending   1  work from below me that my tag says I verify/approve  */
+/*             2  my own submissions, still waiting on my upper         */
+/*                                                                      */
+/*   Rejected  1  my work, sent back to me by my upper                  */
+/*             2  work from below me that went back down                */
+/*                                                                      */
+/* A section with nothing in it is not drawn. An Operator has nobody    */
+/* below, so an Operator simply gets one section — no empty half, and   */
+/* no tier test in the code that says so.                               */
 /* ------------------------------------------------------------------ */
 
-function ApprovalsScreen({
+function QueueScreen({
+  kind,
   profileId,
+  myName,
   myEmail,
-  level,
+  tier,
+  grades,
   stations,
   jobs,
+  rateFor,
   amountFor,
+  tier2RateFor,
   onBack,
   onError,
 }: {
+  kind: 'pending' | 'rejected'
   profileId: string | null
+  myName: string
   myEmail: string
-  level: 'verify' | 'approve'
+  tier: Grade | null
+  grades: Grade[]
   stations: Station[]
   jobs: Job[]
+  rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
+  tier2RateFor: (jobId: string) => number | null
   onBack: () => void
   onError: (m: string | null) => void
 }) {
-  const [entries, setEntries] = useState<ProductionEntry[]>([])
-  const [people, setPeople] = useState<Map<string, string>>(new Map())
-  const [queue, setQueue] = useState<'verify' | 'approve'>('verify')
-  const [detail, setDetail] = useState<ProductionEntry | null>(null)
+  const [mine, setMine] = useState<ProductionEntry[]>([])
+  const [theirs, setTheirs] = useState<ProductionEntry[]>([])
+  const [people, setPeople] = useState<Map<string, Profile>>(new Map())
   const [loading, setLoading] = useState(true)
+  const [detail, setDetail] = useState<ProductionEntry | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const caps = effectiveCapabilities(tier)
+  const canVerify = caps.includes('verify')
+  const canApprove = caps.includes('approve')
+  const reviews = canVerify || canApprove
 
   async function load() {
-    const [e, p] = await Promise.all([
+    if (!profileId) return
+    setLoading(true)
+    const wanted = kind === 'pending' ? ['pending', 'verified'] : ['rejected']
+    const [mineRes, allRes, peopleRes] = await Promise.all([
       supabase
         .from('production_entries')
         .select('*')
-        .in('approval_status', ['pending', 'verified'])
-        .order('created_at', { ascending: true }),
-      supabase.from('access_profiles').select('id, full_name, email'),
+        .eq('user_id', profileId)
+        .in('approval_status', wanted)
+        .order('created_at', { ascending: false })
+        .limit(100),
+      // Somebody else's work is only worth loading for a tag that acts on
+      // it — for the pending screen that is verify/approve, and for the
+      // rejected screen it is the same tags looking back at what they sent
+      // down.
+      reviews
+        ? supabase
+            .from('production_entries')
+            .select('*')
+            .in('approval_status', wanted)
+            .neq('user_id', profileId)
+            .order('created_at', { ascending: true })
+            .limit(200)
+        : Promise.resolve({ data: [] as ProductionEntry[], error: null }),
+      supabase.from('access_profiles').select('id, full_name, email, grade_id'),
     ])
-    if (e.error) onError(e.error.message)
-    // Never queue someone's own submissions to themselves.
-    setEntries(
-      ((e.data ?? []) as ProductionEntry[]).filter(
-        (x) =>
-          x.user_id !== profileId &&
-          ['pending', 'verified'].includes(x.approval_status ?? ''),
-      ),
-    )
-    setPeople(
-      new Map(
-        ((p.data ?? []) as Profile[]).map((x) => [x.id, x.full_name ?? x.email ?? '?']),
-      ),
+    if (mineRes.error) onError(mineRes.error.message)
+    const byId = new Map(((peopleRes.data ?? []) as Profile[]).map((p) => [p.id, p]))
+    setPeople(byId)
+    setMine((mineRes.data ?? []) as ProductionEntry[])
+
+    // Strictly DOWN the ladder — verify and approve never reach sideways
+    // or up, and neither does looking at what you sent back.
+    const below = (e: ProductionEntry) => {
+      if (tier == null) return false
+      const who = e.user_id ? byId.get(e.user_id) : undefined
+      const order = who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order : null
+      // Somebody with no tier tag cannot be placed, so they count as below
+      // rather than disappearing from every queue there is.
+      return order == null || order > tier.sort_order
+    }
+    const all = ((allRes.data ?? []) as ProductionEntry[]).filter(below)
+    setTheirs(
+      kind === 'pending'
+        ? all.filter(
+            (e) =>
+              (canVerify && e.approval_status === 'pending') ||
+              (canApprove && e.approval_status === 'verified'),
+          )
+        : // Whoever sent it back, if it was recorded. Rows rejected before
+          // the column existed name nobody, and are kept rather than lost.
+          all.filter((e) => !e.rejected_by || e.rejected_by === myEmail),
     )
     setLoading(false)
   }
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId])
+  }, [profileId, kind])
+
+  /** Move someone else's entry along the flow, or send it back. */
+  async function act(e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') {
+    let reason: string | null = null
+    if (next === 'rejected') {
+      reason = window.prompt('Reason for rejecting (shown to the worker):') ?? null
+      if (reason === null) return
+    }
+    setBusy(e.id)
+    onError(null)
+    const now = new Date().toISOString()
+    const fields: Record<string, unknown> = { approval_status: next }
+    if (next === 'verified') Object.assign(fields, { verified_by: myEmail, verified_at: now })
+    if (next === 'approved') Object.assign(fields, { approved_by: myEmail, approved_at: now })
+    if (next === 'rejected') {
+      Object.assign(fields, {
+        rejected_reason: reason || null,
+        rejected_by: myEmail,
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      })
+    }
+    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    setBusy(null)
+    if (error) return onError(error.message)
+    load()
+  }
 
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const submitterName = (e: ProductionEntry) => people.get(e.user_id ?? '') ?? '?'
-
-  const pendingList = entries.filter((e) => e.approval_status === 'pending')
-  const verifiedList = entries.filter((e) => e.approval_status === 'verified')
-  const list = level === 'approve' && queue === 'approve' ? verifiedList : pendingList
+  const nameOf = (e: ProductionEntry) => {
+    const p = e.user_id ? people.get(e.user_id) : undefined
+    return p ? profileName(p) : '?'
+  }
+  const tierOf = (e: ProductionEntry) => {
+    const p = e.user_id ? people.get(e.user_id) : undefined
+    return grades.find((g) => g.id === p?.grade_id) ?? null
+  }
 
   if (detail) {
+    const isMine = detail.user_id === profileId
     return (
-      <ApprovalDetail
+      <EntryDetail
         entry={detail}
-        submitter={submitterName(detail)}
-        level={level}
-        myEmail={myEmail}
+        myName={isMine ? myName : nameOf(detail)}
+        tier={tier}
         stations={stations}
         jobs={jobs}
+        rateFor={rateFor}
         amountFor={amountFor}
+        tier2RateFor={tier2RateFor}
         onBack={() => setDetail(null)}
-        onDone={() => {
-          setDetail(null)
-          load()
-        }}
-        onError={onError}
+        workerTier={isMine ? tier : tierOf(detail)}
+        // Your own record is never yours to wave through, and a record
+        // already sent back is not at a step anybody acts on.
+        decide={
+          !isMine && kind === 'pending' && reviews
+            ? {
+                canVerify,
+                canApprove,
+                busy: busy === detail.id,
+                act: (next) => {
+                  const e = detail
+                  setDetail(null)
+                  act(e, next)
+                },
+              }
+            : undefined
+        }
       />
     )
   }
 
+  const Row = ({ e, who }: { e: ProductionEntry; who?: string }) => (
+    <button className="mob-station perf" key={e.id} onClick={() => setDetail(e)}>
+      <span className="perf-top">
+        <span>{who ?? jobName(e.job_id)}</span>
+        <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+      </span>
+      <span className="perf-top">
+        <span className="mob-station-meta">
+          {who ? `${jobName(e.job_id)} · ` : ''}
+          {stationName(e.station_id)} ·{' '}
+          {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+            day: '2-digit', month: 'short',
+          })}
+        </span>
+        {statusChip(e.approval_status)}
+      </span>
+    </button>
+  )
+
+  // Section 1 is always the half that is about ME — waiting on my action
+  // when pending, sent back to me when rejected.
+  const sections =
+    kind === 'pending'
+      ? [
+          { title: 'Waiting on me', rows: theirs, named: true },
+          { title: 'My work waiting on my upper', rows: mine, named: false },
+        ]
+      : [
+          { title: 'My work sent back to me', rows: mine, named: false },
+          { title: 'Work I sent back', rows: theirs, named: true },
+        ]
+  const filled = sections.filter((s) => s.rows.length > 0)
+
   return (
     <>
       <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Performance</button>
         <span className="mob-brand">MJM</span>
       </div>
 
       <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
-          <div className="mob-role">Approvals</div>
-          <div className="mob-sub">
-            {level === 'approve' ? 'Verification & final approval' : 'Work verification'}
-          </div>
-        </div>
-
-        {level === 'approve' && (
-          <div className="mob-queue-chips">
-            <button className={queue === 'verify' ? 'on' : ''} onClick={() => setQueue('verify')}>
-              To verify ({pendingList.length})
-            </button>
-            <button className={queue === 'approve' ? 'on' : ''} onClick={() => setQueue('approve')}>
-              To approve ({verifiedList.length})
-            </button>
-          </div>
-        )}
+        <MobSubHeader title={kind === 'pending' ? 'Pending verify' : 'Rejected'} onBack={onBack} />
 
         {loading ? (
           <p className="muted small">Loading…</p>
-        ) : list.length === 0 ? (
+        ) : filled.length === 0 ? (
           <div className="mob-card">
-            <div className="mob-sub">Nothing waiting — all caught up ✅</div>
+            <div className="mob-sub">
+              {kind === 'pending'
+                ? 'Nothing waiting — all caught up ✅'
+                : 'Nothing rejected — good work ✅'}
+            </div>
           </div>
         ) : (
-          list.map((e) => (
-            <button className="mob-station perf" key={e.id} onClick={() => setDetail(e)}>
-              <span className="perf-top">
-                <span>{submitterName(e)}</span>
-                <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-              </span>
-              <span className="perf-top">
-                <span className="mob-station-meta">
-                  {jobName(e.job_id)} · {stationName(e.station_id)} ·{' '}
-                  {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                </span>
-                {statusChip(e.approval_status)}
-              </span>
-            </button>
+          filled.map((s) => (
+            <div key={s.title}>
+              <div className="mob-card-label" style={{ padding: '0 0.2rem 0.35rem' }}>
+                {s.title} <span className="mob-station-meta">({s.rows.length})</span>
+              </div>
+              {s.rows.map((e) => (
+                <Row key={e.id} e={e} who={s.named ? nameOf(e) : undefined} />
+              ))}
+            </div>
           ))
         )}
-      </div>
-    </>
-  )
-}
-
-/* One entry under review: parameters, photo evidence, then the action. */
-function ApprovalDetail({
-  entry,
-  submitter,
-  level,
-  myEmail,
-  stations,
-  jobs,
-  amountFor,
-  onBack,
-  onDone,
-  onError,
-}: {
-  entry: ProductionEntry
-  submitter: string
-  level: 'verify' | 'approve'
-  myEmail: string
-  stations: Station[]
-  jobs: Job[]
-  amountFor: (jobId: string, quantity: number) => number
-  onBack: () => void
-  onDone: () => void
-  onError: (m: string | null) => void
-}) {
-  const [photos, setPhotos] = useState<PhotoRecord[]>([])
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    supabase
-      .from('photo_records')
-      .select('*')
-      .eq('entry_id', entry.id)
-      .then(({ data }) => setPhotos(data ?? []))
-  }, [entry.id])
-
-  const job = jobs.find((j) => j.id === entry.job_id)
-  const station = stations.find((s) => s.id === entry.station_id)
-  const total = amountFor(entry.job_id, entry.quantity)
-  const status = entry.approval_status ?? 'pending'
-  const canVerifyNow = status === 'pending'
-  const canApproveNow = status === 'verified' && level === 'approve'
-  const photoUrl = (path: string | null) =>
-    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
-
-  async function act(next: 'verified' | 'approved' | 'rejected') {
-    let reason: string | null = null
-    if (next === 'rejected') {
-      reason = window.prompt('Reason for rejecting (shown to the worker):') ?? null
-      if (reason === null) return // cancelled
-    }
-    setBusy(true)
-    onError(null)
-    const now = new Date().toISOString()
-    const fields: Partial<ProductionEntry> & Record<string, unknown> = { approval_status: next }
-    if (next === 'verified') {
-      fields.verified_by = myEmail
-      fields.verified_at = now
-    }
-    if (next === 'approved') {
-      fields.approved_by = myEmail
-      fields.approved_at = now
-    }
-    if (next === 'rejected') fields.rejected_reason = reason || null
-    const { error } = await supabase.from('production_entries').update(fields).eq('id', entry.id)
-    setBusy(false)
-    if (error) return onError(error.message)
-    onDone()
-  }
-
-  return (
-    <>
-      <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Approvals</button>
-        <span className="mob-brand">MJM</span>
-      </div>
-
-      <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Review work entry</div>
-
-        <div className="mob-card">
-          <div className="mob-row">
-            <span>
-              <div className="mob-entry-name">{submitter}</div>
-              <div className="mob-station-meta">
-                {job?.name ?? 'Work'} · {station?.name ?? '?'} ·{' '}
-                {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-                  day: 'numeric', month: 'long',
-                })}
-              </div>
-            </span>
-            <span className="mob-detail-amt">{RM(total)}</span>
-          </div>
-          {statusChip(status)}
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">Submitted parameters</div>
-          <div className="mob-grid2">
-            <div>
-              <div className="mob-field-label">Quantity</div>
-              <div className="mob-param">{entry.quantity} {job ? job.unit.replace('/', '') : ''}</div>
-            </div>
-            <div>
-              <div className="mob-field-label">Amount</div>
-              <div className="mob-param">{RM(total)}</div>
-            </div>
-          </div>
-          {entry.verified_by && (
-            <div className="mob-sub">Verified by {entry.verified_by}</div>
-          )}
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">
-            Photo evidence{' '}
-            <span className="mob-chip">{photos.length} photo{photos.length === 1 ? '' : 's'}</span>
-          </div>
-          {photos.length === 0 && <div className="mob-sub">No photos attached.</div>}
-          <div className="mob-photo-grid">
-            {photos.map((p) => {
-              const url = photoUrl(p.photo_path)
-              return url ? (
-                <a key={p.id} href={url} target="_blank" rel="noreferrer">
-                  <img className="mob-photo" src={url} alt="evidence" />
-                </a>
-              ) : (
-                <span key={p.id} className="mob-chip">no photo</span>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">
-            {canApproveNow ? 'Final approval' : canVerifyNow ? 'Verification' : 'Review'}
-          </div>
-          {canVerifyNow && (
-            <button className="mob-btn approve" disabled={busy} onClick={() => act('verified')}>
-              ✓ Verify this work
-            </button>
-          )}
-          {canApproveNow && (
-            <button className="mob-btn approve" disabled={busy} onClick={() => act('approved')}>
-              ✓ Approve — final
-            </button>
-          )}
-          {(canVerifyNow || canApproveNow) && (
-            <button className="mob-btn reject" disabled={busy} onClick={() => act('rejected')}>
-              ✗ Reject…
-            </button>
-          )}
-          {!canVerifyNow && !canApproveNow && (
-            <div className="mob-sub">
-              Waiting for a final approver — your access level covers verification only.
-            </div>
-          )}
-        </div>
       </div>
     </>
   )

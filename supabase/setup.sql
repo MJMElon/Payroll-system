@@ -1654,3 +1654,16 @@ alter table public.attendance add column if not exists photo_path text;
 alter table public.attendance add column if not exists latitude double precision;
 alter table public.attendance add column if not exists longitude double precision;
 alter table public.attendance add column if not exists accuracy_m double precision;
+
+-- ---------------------------------------------------------------------------
+-- Who sent a record back. verified_by and approved_by have always been
+-- recorded; rejected_by never was, so "work I sent back to my team" — one
+-- half of the mobile Rejected screen — had no way of being answered except
+-- by guessing from the ladder. Same shape as the other two: the acting
+-- person's email.
+--
+-- Rows rejected before this column existed name nobody. The screen keeps
+-- them rather than dropping them, since a nameless rejection is still a
+-- rejection somebody has to fix.
+-- ---------------------------------------------------------------------------
+alter table public.production_entries add column if not exists rejected_by text;
