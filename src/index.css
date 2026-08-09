@@ -1934,6 +1934,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .wm-block[class*='fill-'].over {
   border-color: var(--accent-strong); border-style: dashed; background: var(--accent-soft);
 }
+/* The swap veil while a teammate hangs over this block: the two names
+   will exchange places, and the ⇄ says so before the drop. */
+.wm-swap-mark {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.72); border-radius: inherit;
+  color: var(--accent-strong); font-size: 1.05rem; font-weight: 800;
+  pointer-events: none;
+}
 .wm-block-name {
   margin-top: 0.15rem; font-weight: 700; font-size: 0.85rem;
   display: flex; align-items: center; gap: 0.3rem;
