@@ -124,6 +124,8 @@ export default function PieceRate() {
     profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) : null,
   )
   const canCreate = canManage || myCaps.includes('rate-create')
+  const canEditRate = canManage || myCaps.includes('rate-edit')
+  const canDeleteRate = canManage || myCaps.includes('rate-delete')
   const canVerify = isAdmin || myCaps.includes('rate-verify')
   const canFinal = isAdmin || myCaps.includes('rate-approve')
   const isApprover = isAdmin || canVerify || canFinal
@@ -245,10 +247,10 @@ export default function PieceRate() {
                   jobs={notYetApproved.filter(visibleTo)}
                   currentRate={latestRate}
                   pendingCount={openApprovals.length}
-                  canManage={canManage}
                   canResubmit={canManage || canCreate || isApprover}
                   canVerify={canVerify}
                   canFinal={canFinal}
+                  canDelete={canDeleteRate}
                   myEmail={profile?.email ?? 'unknown'}
                   onChanged={load}
                   onError={setError}
@@ -263,7 +265,7 @@ export default function PieceRate() {
               grades={grades}
               jobs={jobs.filter((j) => j.approval_status === 'approved' && visibleTo(j))}
               currentRate={currentRate}
-              canManage={canManage}
+              canManage={canEditRate}
               onEdit={(j) => setModal(j)}
               onChanged={load}
               onError={setError}
@@ -503,10 +505,10 @@ function SubmissionsList({
   jobs,
   currentRate,
   pendingCount,
-  canManage,
   canResubmit,
   canVerify,
   canFinal,
+  canDelete,
   myEmail,
   onChanged,
   onError,
@@ -516,10 +518,10 @@ function SubmissionsList({
   jobs: Job[]
   currentRate: Map<string, Rate>
   pendingCount: number
-  canManage: boolean
   canResubmit: boolean
   canVerify: boolean
   canFinal: boolean
+  canDelete: boolean
   myEmail: string
   onChanged: () => void
   onError: (m: string | null) => void
@@ -722,7 +724,7 @@ function SubmissionsList({
           rate={currentRate.get(viewing.id)}
           stationName={stationName(viewing.station_id)}
           grades={grades}
-          canDelete={canManage || canVerify || canFinal}
+          canDelete={canDelete}
           onClose={() => setViewing(null)}
           onChanged={() => {
             setViewing(null)

@@ -1102,20 +1102,18 @@ create policy "approvers update jobs" on public.jobs
       select 1 from public.access_profiles p
       where p.id = auth.uid() and p.can_approve_rates
     )
-    or public.my_capabilities() && array['verify', 'approve', 'rate-verify', 'rate-approve']
+    or public.my_capabilities() && array['verify', 'approve', 'rate-verify', 'rate-approve', 'rate-edit']
   );
 
--- Approvers may also delete a proposed rate (the View window asks for a
--- remark first, which the audit log keeps).
+-- Deleting a piece rate follows the tag editor's own Delete tick (the
+-- View window asks for a remark first, which the audit log keeps).
 drop policy if exists "approvers delete jobs" on public.jobs;
 create policy "approvers delete jobs" on public.jobs
-  for delete using (
-    public.my_capabilities() && array['rate-verify', 'rate-approve']
-  );
+  for delete using ('rate-delete' = any(public.my_capabilities()));
 
 drop policy if exists "rate creators write piece_rates" on public.piece_rates;
 create policy "rate creators write piece_rates" on public.piece_rates
-  for all using ('rate-create' = any(public.my_capabilities()));
+  for all using (public.my_capabilities() && array['rate-create', 'rate-edit']);
 
 drop policy if exists "tag adders insert grades" on public.grades;
 create policy "tag adders insert grades" on public.grades

@@ -283,6 +283,10 @@ export default function Operation() {
         : profile?.mobile_approval ?? null
   const canManage =
     profile?.role === 'admin' || profile?.role === 'manager' || myGrade?.sort_order === 1
+  // Adding and deleting follow their own ticks from the tag editor (Work
+  // entry setting: Add New / Delete); managers and tier 1 hold every tick.
+  const canAddEntry = canManage || myCaps.includes('data-entry')
+  const canDeleteEntry = canManage || myCaps.includes('delete-entry')
 
   const bestRate = useMemo(() => {
     const today = todayISO()
@@ -571,7 +575,7 @@ export default function Operation() {
             const first = g.entries[0]
             const tier = tierOf(first)
             const s = groupStatus(g)
-            const canDrop = g.entries.every(canModify)
+            const canDrop = canDeleteEntry && g.entries.every(canModify)
             return (
               <tr key={g.key}>
                 <td className="nowrap muted small">
@@ -754,7 +758,7 @@ export default function Operation() {
 
             {/* Adding work lives under the first tab — a new entry lands
                 there, waiting to be verified. */}
-            {tab === 'open' && (
+            {tab === 'open' && canAddEntry && (
               <div className="row-form op-tabbar" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn" onClick={() => setShowAdd(true)}>
                   + Add Job Record

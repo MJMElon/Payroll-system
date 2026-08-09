@@ -2367,11 +2367,13 @@ function RecordTab({
             </button>
           </div>
 
-          <ClockCard
-            profileId={profileId}
-            stationId={myStation?.id ?? null}
-            onError={onError}
-          />
+          {isEntitled(tier, 'clock-in-out', grades) && (
+            <ClockCard
+              profileId={profileId}
+              stationId={myStation?.id ?? null}
+              onError={onError}
+            />
+          )}
 
           {!canEntry ? (
             <div className="mob-card">
@@ -2440,11 +2442,13 @@ function RecordTab({
           </button>
         </div>
 
-        <ClockCard
-          profileId={profileId}
-          stationId={ownStation?.id ?? null}
-          onError={onError}
-        />
+        {isEntitled(tier, 'clock-in-out', grades) && (
+          <ClockCard
+            profileId={profileId}
+            stationId={ownStation?.id ?? null}
+            onError={onError}
+          />
+        )}
 
         {!canEntry ? (
           <div className="mob-card">

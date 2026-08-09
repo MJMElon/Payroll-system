@@ -95,6 +95,9 @@ export const ENTITLEMENT_OPTIONS: { key: string; label: string }[] = [
   // the mill reads first, the tier's own numbers follow underneath.
   { key: 'mill-dashboard', label: 'Mill output dashboard on the Mobile Performance tab' },
   { key: 'kpi-dashboard', label: 'KPI dashboard on the Mobile Performance tab' },
+  // The attendance card on the mobile Work Record tab. Deliberately NOT in
+  // any tier's default: a tier clocks in and out only once this is ticked.
+  { key: 'clock-in-out', label: 'Clock in & out on the Mobile Work Record tab' },
 ]
 
 export const ALL_ENTITLEMENTS: string[] = ENTITLEMENT_OPTIONS.map((e) => e.key)
