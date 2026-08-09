@@ -534,10 +534,25 @@ function SubmissionsList({
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
 
+  /**
+   * Write the new approval state — and check something actually moved.
+   *
+   * Postgres does not treat "row-level security says no" as an error: the
+   * update matches zero rows and comes back clean. Without the `select` we
+   * would reload, find the row still pending, and look like the database
+   * had lost the approval. Say so instead.
+   */
   async function act(job: Job, fields: Partial<Job> & { approval_status: Job['approval_status'] }) {
-    const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
-    if (error) onError(error.message)
-    else onChanged()
+    const { data, error } = await supabase.from('jobs').update(fields).eq('id', job.id).select('id')
+    if (error) return onError(error.message)
+    if (!data || data.length === 0) {
+      return onError(
+        'Nothing was saved — the database refused the change for your account. ' +
+          'The tier tag needs Verify or Approve ticked under Piece rate setting ' +
+          '(Settings → Tags management).',
+      )
+    }
+    onChanged()
   }
 
   const verify = (j: Job) =>
@@ -554,20 +569,14 @@ function SubmissionsList({
     } as never)
 
   // A rejected proposal goes back into the approval queue from the start.
-  async function resubmit(j: Job) {
-    const { error } = await supabase
-      .from('jobs')
-      .update({
-        approval_status: 'pending',
-        verified_by: null,
-        verified_at: null,
-        approved_by: null,
-        approved_at: null,
-      } as never)
-      .eq('id', j.id)
-    if (error) onError(error.message)
-    else onChanged()
-  }
+  const resubmit = (j: Job) =>
+    act(j, {
+      approval_status: 'pending',
+      verified_by: null,
+      verified_at: null,
+      approved_by: null,
+      approved_at: null,
+    } as never)
 
   const list = jobs
     .filter((j) => (stationFilter ? j.station_id === stationFilter : true))
