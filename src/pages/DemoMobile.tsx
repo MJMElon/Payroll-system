@@ -1383,6 +1383,32 @@ function PerformanceTab({
   )
 }
 
+/**
+ * One entry per work name.
+ *
+ * A work type is priced once per tier tag, so a Station Head — who may
+ * record their own tier's work and everything below it — would otherwise be
+ * offered "FFB Cages Tipped" three times over with nothing to tell the
+ * lines apart. Keep the contract closest to the person's own rank: their
+ * own tier when it is priced, then the tier below it, and a contract with
+ * no tag at all only when nothing else fits.
+ */
+function onePerWork(list: Job[], tier: Grade | null, grades: Grade[]): Job[] {
+  const rank = (j: Job) => {
+    if (!j.grade_id) return 1000
+    const g = grades.find((x) => x.id === j.grade_id)
+    if (!g) return 999
+    // Distance DOWN from the viewer's own rank — their own tier scores 0.
+    return tier ? g.sort_order - tier.sort_order : g.sort_order
+  }
+  const best = new Map<string, Job>()
+  for (const j of list) {
+    const seen = best.get(j.name)
+    if (!seen || rank(j) < rank(seen)) best.set(j.name, j)
+  }
+  return [...best.values()]
+}
+
 // Hard cap on hourly piece-work photos — a station's hourly_target is a
 // visual goal and may be lower, but no more than this converts to pay.
 const HOURLY_PHOTO_CAP = 8
@@ -1496,12 +1522,17 @@ function StationWorkPanel({
   // only, and ticked as a JOB RECORD — incentives and other support rates
   // are paid but never offered as a record to submit.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
-  const approvedJobs = jobs.filter(
-    (j) =>
-      j.station_id === station.id &&
-      j.approval_status === 'approved' &&
-      j.record_job !== false &&
-      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  const approvedJobs = onePerWork(
+    jobs.filter(
+      (j) =>
+        j.station_id === station.id &&
+        j.approval_status === 'approved' &&
+        j.active &&
+        j.record_job !== false &&
+        (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+    ),
+    tier,
+    grades,
   )
 
   // Auto-pick the job when there's only one option; otherwise wait for a choice.
@@ -2393,11 +2424,16 @@ function RecordTab({
   // JOB RECORD are offered: incentives and other support rates are priced
   // for payroll but are not a record anyone submits.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
-  const stationJobs = jobs.filter(
-    (j) =>
-      j.station_id === stationId &&
-      j.record_job !== false &&
-      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  const stationJobs = onePerWork(
+    jobs.filter(
+      (j) =>
+        j.station_id === stationId &&
+        j.active &&
+        j.record_job !== false &&
+        (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+    ),
+    tier,
+    grades,
   )
   const job = jobs.find((j) => j.id === jobId)
   const rate = jobId ? rateFor(jobId) : 0

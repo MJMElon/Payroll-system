@@ -317,14 +317,13 @@ function IconPencil() {
   )
 }
 
-function IconTrash() {
+function IconArchive() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 6h16" />
-      <path d="M9 6V4h6v2" />
-      <path d="M6 6v14h12V6" />
-      <path d="M10 10v6M14 10v6" />
+      <path d="M3 4h18v4H3z" />
+      <path d="M5 8v12h14V8" />
+      <path d="M10 12h4" />
     </svg>
   )
 }
@@ -450,18 +449,21 @@ function groupJobs(jobs: Job[]): JobGroup[] {
   return [...m.values()]
 }
 
-// The Master/History pivot only ever shows these three positions, in this
-// order — other tags (e.g. Management, Manager, Engineer) are left out.
-const MASTER_TAG_ORDER = ['Operator', 'Assistant Station Head', 'Station Head']
+// The Master/History pivot only ever shows these three positions — other
+// tags (e.g. Management, Manager, Engineer) are left out. They are ordered
+// by TIER, upper first, so the columns read down the ranks the way the tier
+// list does rather than in whatever order this array happens to be in.
+const MASTER_TAG_NAMES = ['Station Head', 'Assistant Station Head', 'Operator']
 
-/** One pivoted column per tag in MASTER_TAG_ORDER that exists in `grades`,
+/** One pivoted column per tag in MASTER_TAG_NAMES that exists in `grades`,
  *  plus a column for any OTHER tag actually used by the listed jobs (custom
  *  tags, Engineer, …), plus "All positions" when a job carries no tag. */
 function tagColumns(grades: Grade[], jobs?: Job[]): { key: string; label: string }[] {
   const byName = new Map(grades.map((g) => [g.name, g]))
-  const cols = MASTER_TAG_ORDER
+  const cols = MASTER_TAG_NAMES
     .map((name) => byName.get(name))
     .filter((g): g is Grade => Boolean(g))
+    .sort((a, b) => a.sort_order - b.sort_order)
     .map((g) => ({ key: g.id, label: g.name }))
   if (jobs) {
     const covered = new Set(cols.map((c) => c.key))
@@ -1137,7 +1139,7 @@ function RatesList({
               return (
                 <tr key={groupKey(g)} className={rowActive ? '' : 'muted'}>
                   <td>{stationName(g.station_id)}</td>
-                  <td>{g.name}{!rowActive && ' (inactive)'}</td>
+                  <td>{g.name}{!rowActive && ' (archived)'}</td>
                   <td className="muted">{g.jobs[0]?.unit}</td>
                   {tagCols.map((c) => {
                     const j = g.jobs.find((x) => (x.grade_id ?? NO_TAG) === c.key)
@@ -1149,10 +1151,18 @@ function RatesList({
                     )
                   })}
                   <td className="muted">{effectiveDate ?? '—'}</td>
-                  <td>{rowActive ? <span className="badge ok">Active</span> : <span className="badge off">Inactive</span>}</td>
+                  <td>{rowActive ? <span className="badge ok">Active</span> : <span className="badge off">Archived</span>}</td>
                   {canManage && (
                     <td className="right">
-                      <button className="linkbtn" onClick={() => setManageKey(groupKey(g))}>Manage</button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="Edit this piece rate"
+                        aria-label={`Edit ${g.name}`}
+                        onClick={() => setManageKey(groupKey(g))}
+                      >
+                        <IconPencil />
+                      </button>
                     </td>
                   )}
                 </tr>
@@ -1169,7 +1179,7 @@ function RatesList({
             checked={showInactive}
             onChange={(e) => setShowInactive(e.target.checked)}
           />{' '}
-          Show inactive
+          Show archived
         </label>
       </div>
 
@@ -1215,7 +1225,7 @@ interface Change {
 }
 
 function GroupManageModal({
-  jobs,
+  jobs: unsortedJobs,
   stationName,
   grades,
   currentRate,
@@ -1237,6 +1247,10 @@ function GroupManageModal({
 }) {
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? 'No tag'
   const gradeColor = (id: string | null) => grades.find((g) => g.id === id)?.color
+  // Columns run upper tier first, the same way the masterlist and the tier
+  // list do. An untagged contract has no rank, so it sits at the end.
+  const tierRank = (id: string | null) => grades.find((g) => g.id === id)?.sort_order ?? 999
+  const jobs = [...unsortedJobs].sort((a, b) => tierRank(a.grade_id) - tierRank(b.grade_id))
 
   const blankDraft = () =>
     Object.fromEntries(
@@ -1259,7 +1273,7 @@ function GroupManageModal({
   const [mode, setMode] = useState<'view' | 'edit' | 'history'>('view')
   const [name, setName] = useState(jobs[0]?.name ?? '')
   const [draft, setDraft] = useState<Record<string, RateDraft>>(blankDraft)
-  const [confirm, setConfirm] = useState<'save' | 'delete' | null>(null)
+  const [confirm, setConfirm] = useState<'save' | 'archive' | null>(null)
   const [remark, setRemark] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -1327,18 +1341,8 @@ function GroupManageModal({
     return out
   })()
 
-  async function setActive(job: Job, active: boolean) {
-    const { data, error } = await supabase
-      .from('jobs')
-      .update({ active })
-      .eq('id', job.id)
-      .select('id')
-    if (error) onError(error.message)
-    else if (!data || data.length === 0) onError('You are not allowed to change this piece rate.')
-    else onChanged()
-  }
 
-  /** Tick on: the mobile "Choose job" list offers this contract. Tick off:
+  /** Tick on: the work appears in the mobile work entry screen. Tick off:
    *  an incentive/support rate — priced for payroll, never submitted. */
   async function setRecordJob(job: Job, on: boolean) {
     const { error } = await supabase.from('jobs').update({ record_job: on }).eq('id', job.id)
@@ -1436,28 +1440,29 @@ function GroupManageModal({
     }
   }
 
-  /** Delete every tier's contract for this work. The remark goes onto each
-   *  row first so the audit trail keeps the reason past the row itself. */
-  async function destroy() {
-    if (!remark.trim()) return onError('Say why this piece rate is being deleted.')
+  /**
+   * Archive every tier's contract for this work, or bring it back.
+   *
+   * Nothing is deleted: a piece rate that has already paid somebody is
+   * part of the payroll record, so archiving takes it out of the listing
+   * and out of the mobile work entry screen and leaves the row where it
+   * is. The reason goes onto each row first, so the audit log keeps it.
+   */
+  async function archive() {
+    if (!remark.trim()) return onError('Say why this piece rate is being archived.')
     setBusy(true)
     onError(null)
     try {
       for (const j of jobs) {
-        const { error: remarkErr } = await supabase
+        const { data, error } = await supabase
           .from('jobs')
-          .update({ delete_remark: remark.trim() } as never)
+          .update({ active: false, delete_remark: remark.trim() } as never)
           .eq('id', j.id)
-        if (remarkErr) throw new Error(remarkErr.message)
-        const { data, error } = await supabase.from('jobs').delete().eq('id', j.id).select('id')
-        if (error) {
-          throw new Error(
-            error.message.includes('foreign key')
-              ? 'This piece rate is already used in production or payroll records, so it cannot be deleted.'
-              : error.message,
-          )
+          .select('id')
+        if (error) throw new Error(error.message)
+        if (!data || data.length === 0) {
+          throw new Error('You are not allowed to archive this piece rate.')
         }
-        if (!data || data.length === 0) throw new Error('You are not allowed to delete this piece rate.')
       }
       setConfirm(null)
       onChanged()
@@ -1470,7 +1475,29 @@ function GroupManageModal({
     }
   }
 
+  /** Put an archived piece rate back into the listing. */
+  async function restore() {
+    setBusy(true)
+    onError(null)
+    const ids = jobs.map((j) => j.id)
+    const { data, error } = await supabase
+      .from('jobs')
+      .update({ active: true })
+      .in('id', ids)
+      .select('id')
+    setBusy(false)
+    if (error) return onError(error.message)
+    if (!data || data.length === 0) {
+      return onError('You are not allowed to restore this piece rate.')
+    }
+    onChanged()
+    onClose()
+  }
+
   const editing = mode === 'edit'
+  // Archiving takes the whole work, so a work is archived when none of its
+  // tiers is active any more.
+  const archived = jobs.every((j) => !j.active)
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -1495,15 +1522,28 @@ function GroupManageModal({
               </button>
             )}
             {!editing && canDelete && mode !== 'history' && (
-              <button
-                type="button"
-                className="icon-btn danger"
-                onClick={() => { setRemark(''); setConfirm('delete') }}
-                title="Delete this piece rate"
-                aria-label="Delete this piece rate"
-              >
-                <IconTrash />
-              </button>
+              archived ? (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={restore}
+                  disabled={busy}
+                  title="Restore this piece rate"
+                  aria-label="Restore this piece rate"
+                >
+                  <IconRedo />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="icon-btn danger"
+                  onClick={() => { setRemark(''); setConfirm('archive') }}
+                  title="Archive this piece rate"
+                  aria-label="Archive this piece rate"
+                >
+                  <IconArchive />
+                </button>
+              )
             )}
             <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
           </div>
@@ -1522,7 +1562,7 @@ function GroupManageModal({
                   {jobs.map((j) => (
                     <th key={j.id}>
                       <span className={tagClass(gradeColor(j.grade_id))}>{gradeName(j.grade_id)}</span>
-                      {!j.active && <> <span className="badge off">inactive</span></>}
+                      {!j.active && <> <span className="badge off">archived</span></>}
                     </th>
                   ))}
                 </tr>
@@ -1602,7 +1642,7 @@ function GroupManageModal({
 
                 {!editing && (
                   <tr>
-                    <th scope="row">Job record</th>
+                    <th scope="row">Show on mobile apps work entry</th>
                     {jobs.map((j) => (
                       <td key={j.id}>
                         <label
@@ -1622,24 +1662,6 @@ function GroupManageModal({
                   </tr>
                 )}
 
-                {!editing && canEdit && (
-                  <tr>
-                    <th scope="row" />
-                    {jobs.map((j) => (
-                      <td key={j.id}>
-                        {j.active ? (
-                          <button className="linkbtn danger" onClick={() => setActive(j, false)}>
-                            Deactivate
-                          </button>
-                        ) : (
-                          <button className="linkbtn" onClick={() => setActive(j, true)}>
-                            Reactivate
-                          </button>
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                )}
               </tbody>
             </table>
           </div>
@@ -1675,13 +1697,16 @@ function GroupManageModal({
         />
       )}
 
-      {confirm === 'delete' && (
+      {confirm === 'archive' && (
         <div className="modal-overlay" onClick={(e) => e.stopPropagation()}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Delete this piece rate?</h2>
+            <h2>Archive this piece rate?</h2>
             <p className="small muted" style={{ marginTop: 0 }}>
-              {jobs[0]?.name} at {stationName} — {jobs.length} tier
-              {jobs.length === 1 ? '' : 's'} will be removed. The reason is kept in the audit log.
+              {jobs[0]?.name} at {stationName} — all {jobs.length} tier
+              {jobs.length === 1 ? '' : 's'} come out of the masterlist and out of
+              the mobile work entry screen. Nothing is deleted: the rate stays on
+              record for the work already paid against it, and it can be restored
+              from here at any time.
             </p>
             <label className="field">
               <span>Reason</span>
@@ -1689,8 +1714,8 @@ function GroupManageModal({
             </label>
             <div className="row-form" style={{ justifyContent: 'flex-end' }}>
               <button type="button" className="btn ghost" onClick={() => setConfirm(null)}>Cancel</button>
-              <button type="button" className="btn danger" disabled={busy} onClick={destroy}>
-                {busy ? 'Deleting…' : 'Delete'}
+              <button type="button" className="btn danger" disabled={busy} onClick={archive}>
+                {busy ? 'Archiving…' : 'Archive'}
               </button>
             </div>
           </div>
@@ -1777,9 +1802,9 @@ const AUDIT_FIELD: Record<string, string> = {
   tier2_rate: 'Tier 2 rate',
   effective_from: 'Effective date',
   approval_status: 'Approval',
-  active: 'Active',
-  record_job: 'Job record',
-  delete_remark: 'Delete remark',
+  active: 'In the masterlist',
+  record_job: 'Show on mobile work entry',
+  delete_remark: 'Archive reason',
   verified_by: 'Verified by',
   approved_by: 'Approved by',
 }
@@ -2062,7 +2087,7 @@ function HistoryList({
  *  index name; say what that actually means in the window. */
 function saveMessage(message: string) {
   return message.includes('jobs_station_grade_name_idx')
-    ? 'A piece rate already exists for this exact Tier tag + Station tag + work description — edit that one instead (tick "Show inactive" if it might be hidden).'
+    ? 'A piece rate already exists for this exact Tier tag + Station tag + work description — edit that one instead (tick "Show archived" if it might be hidden).'
     : message
 }
 
