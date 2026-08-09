@@ -15,13 +15,14 @@
 // the tag's order in Settings).
 // Tables used: stations, grades, jobs, piece_rates (see supabase/setup.sql).
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import Select, { MultiSelect, type SelectOption } from '../components/Select'
 import { useAuth } from '../context/AuthContext'
 import { useOverlayClose } from '../lib/useOverlayClose'
 import { effectiveCapabilities, isEntitled, tagClass } from '../lib/tags'
 import {
+  profileName,
   supabase,
   todayISO,
   type Grade,
@@ -84,7 +85,7 @@ export default function PieceRate() {
   const [myTier, setMyTier] = useState<number | null>(null)
   const canManage = profile?.role === 'admin' || profile?.role === 'manager'
   const isAdmin = profile?.role === 'admin'
-  const [modal, setModal] = useState<'closed' | 'create' | Job>('closed')
+  const [modal, setModal] = useState<'closed' | 'create'>('closed')
   // The masterlist is what the module is FOR, so it leads and opens first;
   // approvals and history follow it.
   const [tab, setTab] = useState<'master' | 'approval' | 'history'>('master')
@@ -266,7 +267,7 @@ export default function PieceRate() {
               jobs={jobs.filter((j) => j.approval_status === 'approved' && visibleTo(j))}
               currentRate={currentRate}
               canManage={canEditRate}
-              onEdit={(j) => setModal(j)}
+              canDelete={canDeleteRate}
               onChanged={load}
               onError={setError}
             />
@@ -297,20 +298,7 @@ export default function PieceRate() {
         />
       )}
 
-      {modal !== 'closed' && modal !== 'create' && (
-        <ContractModal
-          stations={stations}
-          grades={grades}
-          job={modal}
-          currentRate={latestRate.get(modal.id) ?? null}
-          onClose={() => setModal('closed')}
-          onSaved={(submitted) => {
-            setModal('closed')
-            setNotice(submitted ? 'Piece rate submitted — waiting for approval.' : null)
-            load()
-          }}
-        />
-      )}
+
     </div>
   )
 }
@@ -318,6 +306,38 @@ export default function PieceRate() {
 /* ------------------------------------------------------------------ */
 /* Sidebar icons                                                      */
 /* ------------------------------------------------------------------ */
+
+function IconPencil() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 20h4L20 8a2.8 2.8 0 0 0-4-4L4 16v4Z" />
+      <path d="m14.5 5.5 4 4" />
+    </svg>
+  )
+}
+
+function IconTrash() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6h16" />
+      <path d="M9 6V4h6v2" />
+      <path d="M6 6v14h12V6" />
+      <path d="M10 10v6M14 10v6" />
+    </svg>
+  )
+}
+
+function IconClock() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5.5l3.5 2" />
+    </svg>
+  )
+}
 
 function IconEye() {
   return (
@@ -993,7 +1013,7 @@ function RatesList({
   jobs,
   currentRate,
   canManage,
-  onEdit,
+  canDelete,
   onChanged,
   onError,
 }: {
@@ -1002,14 +1022,17 @@ function RatesList({
   jobs: Job[]
   currentRate: Map<string, Rate>
   canManage: boolean
-  onEdit: (j: Job) => void
+  canDelete: boolean
   onChanged: () => void
   onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
   const [search, setSearch] = useState('')
   const [showInactive, setShowInactive] = useState(false)
-  const [manageGroup, setManageGroup] = useState<JobGroup | null>(null)
+  // The open Manage window is held by KEY, not by a snapshot of the group:
+  // deactivating a tier or renaming the work reloads `jobs`, and the window
+  // has to show the reloaded rows rather than the ones it opened with.
+  const [manageKey, setManageKey] = useState<string | null>(null)
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
 
@@ -1021,6 +1044,9 @@ function RatesList({
   const groups = groupJobs(filtered).sort(
     (a, b) => stationName(a.station_id).localeCompare(stationName(b.station_id)) || a.name.localeCompare(b.name),
   )
+  const manageGroup = manageKey
+    ? groupJobs(jobs).find((g) => groupKey(g) === manageKey) ?? null
+    : null
   const tagCols = tagColumns(grades, filtered)
   const colCount = 3 + tagCols.length + 2 + (canManage ? 1 : 0)
 
@@ -1126,7 +1152,7 @@ function RatesList({
                   <td>{rowActive ? <span className="badge ok">Active</span> : <span className="badge off">Inactive</span>}</td>
                   {canManage && (
                     <td className="right">
-                      <button className="linkbtn" onClick={() => setManageGroup(g)}>Manage</button>
+                      <button className="linkbtn" onClick={() => setManageKey(groupKey(g))}>Manage</button>
                     </td>
                   )}
                 </tr>
@@ -1153,24 +1179,48 @@ function RatesList({
           stationName={stationName(manageGroup.station_id)}
           grades={grades}
           currentRate={currentRate}
-          onEdit={onEdit}
+          canEdit={canManage}
+          canDelete={canDelete}
           onChanged={onChanged}
           onError={onError}
-          onClose={() => setManageGroup(null)}
+          onClose={() => setManageKey(null)}
         />
       )}
     </div>
   )
 }
 
-/** Per-tag detail behind a Master row's "Manage" action — same edit/deactivate
- *  controls the listing used to expose per row, one line per tag/position. */
+/* ------------------------------------------------------------------ */
+/* Manage window — one work type, read across its tier tags.          */
+/*                                                                    */
+/* Three faces behind the same window: the contract as it stands, the */
+/* same table with its rate boxes open for amendment, and everything  */
+/* that has ever been changed on it. Amending asks for the change to  */
+/* be confirmed side by side before any of it is written.             */
+/* ------------------------------------------------------------------ */
+
+/** What one tier's rate looks like while it is being amended. */
+interface RateDraft {
+  unit: string
+  rate: string
+  tier2: string
+  effectiveFrom: string
+}
+
+/** One line of the before/after sheet shown before anything is written. */
+interface Change {
+  what: string
+  before: string
+  after: string
+}
+
 function GroupManageModal({
   jobs,
   stationName,
   grades,
   currentRate,
-  onEdit,
+  canEdit,
+  canDelete,
   onChanged,
   onError,
   onClose,
@@ -1179,16 +1229,112 @@ function GroupManageModal({
   stationName: string
   grades: Grade[]
   currentRate: Map<string, Rate>
-  onEdit: (j: Job) => void
+  canEdit: boolean
+  canDelete: boolean
   onChanged: () => void
   onError: (m: string | null) => void
   onClose: () => void
 }) {
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? 'No tag'
+  const gradeColor = (id: string | null) => grades.find((g) => g.id === id)?.color
+
+  const blankDraft = () =>
+    Object.fromEntries(
+      jobs.map((j) => {
+        const r = currentRate.get(j.id)
+        return [
+          j.id,
+          {
+            // Paid by the hour is a UNIT choice, the same as it is in the
+            // create window — the tiering itself lives in tier2_rate.
+            unit: r?.tier2_rate != null ? TIERED : j.unit,
+            rate: r ? String(Number(r.rate)) : '',
+            tier2: r?.tier2_rate != null ? String(Number(r.tier2_rate)) : '',
+            effectiveFrom: r?.effective_from ?? todayISO(),
+          } as RateDraft,
+        ]
+      }),
+    )
+
+  const [mode, setMode] = useState<'view' | 'edit' | 'history'>('view')
+  const [name, setName] = useState(jobs[0]?.name ?? '')
+  const [draft, setDraft] = useState<Record<string, RateDraft>>(blankDraft)
+  const [confirm, setConfirm] = useState<'save' | 'delete' | null>(null)
+  const [remark, setRemark] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const patch = (jobId: string, fields: Partial<RateDraft>) =>
+    setDraft((d) => ({ ...d, [jobId]: { ...d[jobId], ...fields } }))
+
+  function startEdit() {
+    setName(jobs[0]?.name ?? '')
+    setDraft(blankDraft())
+    onError(null)
+    setMode('edit')
+  }
+
+  function cancelEdit() {
+    setName(jobs[0]?.name ?? '')
+    setDraft(blankDraft())
+    onError(null)
+    setMode('view')
+  }
+
+  const fmtRate = (v: number | null | undefined) =>
+    v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(2)
+  const unitLabel = (u: string) => (u === TIERED ? '/hour (tiered)' : u)
+
+  /** Everything the amendment would change, in the order it is read. */
+  const changes: Change[] = (() => {
+    const out: Change[] = []
+    const oldName = jobs[0]?.name ?? ''
+    if (name.trim() && name.trim() !== oldName) {
+      out.push({ what: 'Work description', before: oldName, after: name.trim() })
+    }
+    for (const j of jobs) {
+      const d = draft[j.id]
+      if (!d) continue
+      const r = currentRate.get(j.id)
+      const tier = gradeName(j.grade_id)
+      const beforeUnit = r?.tier2_rate != null ? TIERED : j.unit
+      if (unitLabel(d.unit) !== unitLabel(beforeUnit)) {
+        out.push({ what: `${tier} · unit`, before: unitLabel(beforeUnit), after: unitLabel(d.unit) })
+      }
+      const afterRate = d.rate.trim() === '' ? null : Number(d.rate)
+      if (fmtRate(afterRate) !== fmtRate(r ? Number(r.rate) : null)) {
+        out.push({
+          what: `${tier} · ${d.unit === TIERED ? 'tier 1 rate' : 'rate'}`,
+          before: fmtRate(r ? Number(r.rate) : null),
+          after: fmtRate(afterRate),
+        })
+      }
+      const afterTier2 = d.unit === TIERED && d.tier2.trim() !== '' ? Number(d.tier2) : null
+      if (fmtRate(afterTier2) !== fmtRate(r?.tier2_rate ?? null)) {
+        out.push({
+          what: `${tier} · tier 2 rate`,
+          before: fmtRate(r?.tier2_rate ?? null),
+          after: fmtRate(afterTier2),
+        })
+      }
+      if (d.effectiveFrom !== (r?.effective_from ?? '')) {
+        out.push({
+          what: `${tier} · effective date`,
+          before: r?.effective_from ?? '—',
+          after: d.effectiveFrom || '—',
+        })
+      }
+    }
+    return out
+  })()
 
   async function setActive(job: Job, active: boolean) {
-    const { error } = await supabase.from('jobs').update({ active }).eq('id', job.id)
+    const { data, error } = await supabase
+      .from('jobs')
+      .update({ active })
+      .eq('id', job.id)
+      .select('id')
     if (error) onError(error.message)
+    else if (!data || data.length === 0) onError('You are not allowed to change this piece rate.')
     else onChanged()
   }
 
@@ -1206,92 +1352,550 @@ function GroupManageModal({
     } else onChanged()
   }
 
-  // One column per tier tag that is paid for this work, so the whole
-  // contract reads across in one look: the tiers along the top, and what
-  // each of them is paid down the rows beneath.
+  /** Write the amendment. Every write is checked for a refusal, since row
+   *  security answers "no" with zero rows rather than with an error. */
+  async function save() {
+    setBusy(true)
+    onError(null)
+    try {
+      const newName = name.trim()
+      if (!newName) throw new Error('Enter the work description.')
+
+      if (newName !== jobs[0]?.name) {
+        for (const j of jobs) {
+          const { data, error } = await supabase
+            .from('jobs')
+            .update({ name: newName })
+            .eq('id', j.id)
+            .select('id')
+          if (error) throw new Error(saveMessage(error.message))
+          if (!data || data.length === 0) {
+            throw new Error('You are not allowed to edit this piece rate.')
+          }
+        }
+      }
+
+      for (const j of jobs) {
+        const d = draft[j.id]
+        if (!d) continue
+        const tier = gradeName(j.grade_id)
+        const tiered = d.unit === TIERED
+        const rateValue = Number(d.rate)
+        if (d.rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
+          throw new Error(`${tier}: enter a valid non-negative ${tiered ? 'tier 1' : 'piece'} rate.`)
+        }
+        const tier2Value = tiered ? Number(d.tier2) : null
+        if (tiered && (d.tier2.trim() === '' || Number.isNaN(tier2Value) || (tier2Value as number) < 0)) {
+          throw new Error(`${tier}: enter a valid non-negative tier 2 rate.`)
+        }
+        if (!d.effectiveFrom) throw new Error(`${tier}: pick an effective date.`)
+
+        const unitValue = tiered ? '/hour' : d.unit.trim() || 'unit'
+        if (unitValue !== j.unit) {
+          const { error } = await supabase.from('jobs').update({ unit: unitValue }).eq('id', j.id)
+          if (error) throw new Error(saveMessage(error.message))
+        }
+
+        const r = currentRate.get(j.id)
+        const rateUnchanged =
+          r &&
+          Number(r.rate) === rateValue &&
+          (r.tier2_rate ?? null) === tier2Value &&
+          r.effective_from === d.effectiveFrom
+        if (rateUnchanged) continue
+
+        const { error } = await supabase.from('piece_rates').upsert(
+          { job_id: j.id, rate: rateValue, tier2_rate: tier2Value, effective_from: d.effectiveFrom },
+          { onConflict: 'job_id,effective_from' },
+        )
+        if (error) throw new Error(error.message)
+        // A price change on an APPROVED contract goes back through verify
+        // and approve — otherwise amending the rate would bypass the flow.
+        if (j.approval_status === 'approved') {
+          const { error: reErr } = await supabase
+            .from('jobs')
+            .update({
+              approval_status: 'pending',
+              verified_by: null,
+              verified_at: null,
+              approved_by: null,
+              approved_at: null,
+            } as never)
+            .eq('id', j.id)
+          if (reErr) throw new Error(reErr.message)
+        }
+      }
+      setConfirm(null)
+      onChanged()
+      onClose()
+    } catch (err) {
+      setConfirm(null)
+      onError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Delete every tier's contract for this work. The remark goes onto each
+   *  row first so the audit trail keeps the reason past the row itself. */
+  async function destroy() {
+    if (!remark.trim()) return onError('Say why this piece rate is being deleted.')
+    setBusy(true)
+    onError(null)
+    try {
+      for (const j of jobs) {
+        const { error: remarkErr } = await supabase
+          .from('jobs')
+          .update({ delete_remark: remark.trim() } as never)
+          .eq('id', j.id)
+        if (remarkErr) throw new Error(remarkErr.message)
+        const { data, error } = await supabase.from('jobs').delete().eq('id', j.id).select('id')
+        if (error) {
+          throw new Error(
+            error.message.includes('foreign key')
+              ? 'This piece rate is already used in production or payroll records, so it cannot be deleted.'
+              : error.message,
+          )
+        }
+        if (!data || data.length === 0) throw new Error('You are not allowed to delete this piece rate.')
+      }
+      setConfirm(null)
+      onChanged()
+      onClose()
+    } catch (err) {
+      setConfirm(null)
+      onError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const editing = mode === 'edit'
+
   return (
     <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-manage" onClick={(e) => e.stopPropagation()}>
+        <div className="row-form spread">
+          <h2>{stationName}</h2>
+          <div className="row-form manage-tools">
+            {!editing && (
+              <button
+                type="button"
+                className={`icon-btn ${mode === 'history' ? 'on' : ''}`}
+                onClick={() => setMode(mode === 'history' ? 'view' : 'history')}
+                title="Amendment history"
+                aria-label="Amendment history"
+              >
+                <IconClock />
+              </button>
+            )}
+            {!editing && canEdit && mode !== 'history' && (
+              <button type="button" className="icon-btn" onClick={startEdit} title="Edit" aria-label="Edit">
+                <IconPencil />
+              </button>
+            )}
+            {!editing && canDelete && mode !== 'history' && (
+              <button
+                type="button"
+                className="icon-btn danger"
+                onClick={() => { setRemark(''); setConfirm('delete') }}
+                title="Delete this piece rate"
+                aria-label="Delete this piece rate"
+              >
+                <IconTrash />
+              </button>
+            )}
+            <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          </div>
+        </div>
+
+        {mode === 'history' ? (
+          <GroupHistory jobs={jobs} grades={grades} onError={onError} />
+        ) : (
+          /* The unit dropdown is positioned inside its cell, so a scroll
+             container would clip it — only the read-only face gets one. */
+          <div className={editing ? '' : 'table-scroll'}>
+            <table className="table pr-manage">
+              <thead>
+                <tr>
+                  <th className="pr-manage-corner">Work</th>
+                  {jobs.map((j) => (
+                    <th key={j.id}>
+                      <span className={tagClass(gradeColor(j.grade_id))}>{gradeName(j.grade_id)}</span>
+                      {!j.active && <> <span className="badge off">inactive</span></>}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row" className="pr-manage-work">
+                    {editing ? (
+                      <input
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        aria-label="Work description"
+                      />
+                    ) : (
+                      jobs[0]?.name
+                    )}
+                  </th>
+                  {jobs.map((j) => {
+                    const d = draft[j.id]
+                    const r = currentRate.get(j.id)
+                    const tiered = d?.unit === TIERED
+                    return (
+                      <td key={j.id}>
+                        {editing ? (
+                          <div className="pr-manage-edit">
+                            <UnitPicker
+                              allowTiered
+                              value={d?.unit ?? j.unit}
+                              onChange={(v) => patch(j.id, { unit: v })}
+                              ariaLabel={`${gradeName(j.grade_id)} unit`}
+                            />
+                            <input
+                              inputMode="decimal"
+                              value={d?.rate ?? ''}
+                              onChange={(e) => patch(j.id, { rate: e.target.value })}
+                              aria-label={`${gradeName(j.grade_id)} ${tiered ? 'tier 1 rate' : 'rate'}`}
+                              placeholder={tiered ? 'Tier 1 — 1st to 4th /hr' : 'Piece rate (RM)'}
+                            />
+                            {tiered && (
+                              <input
+                                inputMode="decimal"
+                                value={d?.tier2 ?? ''}
+                                onChange={(e) => patch(j.id, { tier2: e.target.value })}
+                                aria-label={`${gradeName(j.grade_id)} tier 2 rate`}
+                                placeholder="Tier 2 — 5th onward /hr"
+                              />
+                            )}
+                          </div>
+                        ) : (
+                          <>
+                            <RateCell rate={r} />
+                            <div className="muted small">{j.unit}</div>
+                          </>
+                        )}
+                      </td>
+                    )
+                  })}
+                </tr>
+
+                <tr>
+                  <th scope="row">Effective date</th>
+                  {jobs.map((j) => (
+                    <td key={j.id}>
+                      {editing ? (
+                        <input
+                          type="date"
+                          value={draft[j.id]?.effectiveFrom ?? ''}
+                          onChange={(e) => patch(j.id, { effectiveFrom: e.target.value })}
+                          aria-label={`${gradeName(j.grade_id)} effective date`}
+                        />
+                      ) : (
+                        currentRate.get(j.id)?.effective_from ?? <span className="muted">—</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+
+                {!editing && (
+                  <tr>
+                    <th scope="row">Job record</th>
+                    {jobs.map((j) => (
+                      <td key={j.id}>
+                        <label
+                          className="checkbox"
+                          style={{ margin: 0 }}
+                          title="Untick for an incentive or support rate — paid through payroll, never submitted as a work record."
+                        >
+                          <input
+                            type="checkbox"
+                            checked={j.record_job !== false}
+                            disabled={!canEdit}
+                            onChange={(e) => setRecordJob(j, e.target.checked)}
+                          />
+                        </label>
+                      </td>
+                    ))}
+                  </tr>
+                )}
+
+                {!editing && canEdit && (
+                  <tr>
+                    <th scope="row" />
+                    {jobs.map((j) => (
+                      <td key={j.id}>
+                        {j.active ? (
+                          <button className="linkbtn danger" onClick={() => setActive(j, false)}>
+                            Deactivate
+                          </button>
+                        ) : (
+                          <button className="linkbtn" onClick={() => setActive(j, true)}>
+                            Reactivate
+                          </button>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!editing && (
+          <p className="small muted" style={{ margin: 0 }}>
+            Payroll uses whichever rate is effective on the day worked.
+          </p>
+        )}
+
+        {editing && (
+          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" className="btn ghost" onClick={cancelEdit}>Cancel</button>
+            <button
+              type="button"
+              className="btn"
+              disabled={changes.length === 0}
+              onClick={() => setConfirm('save')}
+            >
+              Save changes
+            </button>
+          </div>
+        )}
+      </div>
+
+      {confirm === 'save' && (
+        <ConfirmChangesModal
+          changes={changes}
+          busy={busy}
+          onCancel={() => setConfirm(null)}
+          onConfirm={save}
+        />
+      )}
+
+      {confirm === 'delete' && (
+        <div className="modal-overlay" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete this piece rate?</h2>
+            <p className="small muted" style={{ marginTop: 0 }}>
+              {jobs[0]?.name} at {stationName} — {jobs.length} tier
+              {jobs.length === 1 ? '' : 's'} will be removed. The reason is kept in the audit log.
+            </p>
+            <label className="field">
+              <span>Reason</span>
+              <input value={remark} onChange={(e) => setRemark(e.target.value)} autoFocus />
+            </label>
+            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+              <button type="button" className="btn ghost" onClick={() => setConfirm(null)}>Cancel</button>
+              <button type="button" className="btn danger" disabled={busy} onClick={destroy}>
+                {busy ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* The double-check before an amendment is written: what each line     */
+/* says now, and what it would say. Nothing is saved until this is     */
+/* confirmed.                                                          */
+/* ------------------------------------------------------------------ */
+
+function ConfirmChangesModal({
+  changes,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  changes: Change[]
+  busy: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div className="modal-overlay" onClick={(e) => e.stopPropagation()}>
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
         <div className="row-form spread">
-          <h2>{stationName} — Job : {jobs[0]?.name}</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+          <h2>Confirm changes</h2>
+          <button type="button" className="modal-close" onClick={onCancel} aria-label="Close">×</button>
         </div>
 
         <div className="table-scroll">
-          <table className="table pr-manage">
+          <table className="table">
             <thead>
               <tr>
-                <th className="pr-manage-corner">{jobs[0]?.name}</th>
-                {jobs.map((j) => (
-                  <th key={j.id}>
-                    <span className={tagClass(grades.find((g) => g.id === j.grade_id)?.color)}>
-                      {gradeName(j.grade_id)}
-                    </span>
-                    {!j.active && <> <span className="badge off">inactive</span></>}
-                  </th>
-                ))}
+                <th>What</th>
+                <th>Before</th>
+                <th>After</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <th scope="row">Rate</th>
-                {jobs.map((j) => (
-                  <td key={j.id}>
-                    <RateCell rate={currentRate.get(j.id)} />
-                    <div className="muted small">{j.unit}</div>
-                  </td>
-                ))}
-              </tr>
-              <tr>
-                <th scope="row">Effective date</th>
-                {jobs.map((j) => (
-                  <td key={j.id}>
-                    {currentRate.get(j.id)?.effective_from ?? <span className="muted">—</span>}
-                  </td>
-                ))}
-              </tr>
-              <tr>
-                <th scope="row">
-                  Job record
-                  <div className="muted small">Appears in the mobile “Choose job” list</div>
-                </th>
-                {jobs.map((j) => (
-                  <td key={j.id}>
-                    <label
-                      className="checkbox"
-                      style={{ margin: 0 }}
-                      title="Untick for an incentive or support rate — paid through payroll, never submitted as a work record."
-                    >
-                      <input
-                        type="checkbox"
-                        checked={j.record_job !== false}
-                        onChange={(e) => setRecordJob(j, e.target.checked)}
-                      />
-                    </label>
-                  </td>
-                ))}
-              </tr>
-              <tr>
-                <th scope="row" />
-                {jobs.map((j) => (
-                  <td key={j.id}>
-                    <div className="row-form">
-                      <button className="linkbtn" onClick={() => { onClose(); onEdit(j) }}>Edit</button>
-                      {j.active ? (
-                        <button className="linkbtn danger" onClick={() => setActive(j, false)}>Deactivate</button>
-                      ) : (
-                        <button className="linkbtn" onClick={() => setActive(j, true)}>Reactivate</button>
-                      )}
-                    </div>
-                  </td>
-                ))}
-              </tr>
+              {changes.map((c, i) => (
+                <tr key={i}>
+                  <td>{c.what}</td>
+                  <td className="muted">{c.before}</td>
+                  <td><strong>{c.after}</strong></td>
+                </tr>
+              ))}
             </tbody>
           </table>
+        </div>
+
+        <p className="small muted" style={{ margin: 0 }}>
+          Changing a rate on an approved contract sends it back for verification
+          and approval. Every change here is kept in the amendment history.
+        </p>
+
+        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn ghost" onClick={onCancel}>Back</button>
+          <button type="button" className="btn" disabled={busy} onClick={onConfirm}>
+            {busy ? 'Saving…' : 'Confirm & save'}
+          </button>
         </div>
       </div>
     </div>
   )
+}
+
+/* ------------------------------------------------------------------ */
+/* Amendment history for one work type. Read straight from the audit  */
+/* log, which already records every change to jobs and piece_rates —  */
+/* so there is no second copy of the truth to keep in step.           */
+/* ------------------------------------------------------------------ */
+
+/** Columns worth showing a person. The rest (ids, timestamps that repeat
+ *  a field beside them) only add noise to the line. */
+const AUDIT_FIELD: Record<string, string> = {
+  name: 'Work description',
+  unit: 'Unit',
+  rate: 'Piece rate',
+  tier2_rate: 'Tier 2 rate',
+  effective_from: 'Effective date',
+  approval_status: 'Approval',
+  active: 'Active',
+  record_job: 'Job record',
+  delete_remark: 'Delete remark',
+  verified_by: 'Verified by',
+  approved_by: 'Approved by',
+}
+
+interface AuditRow {
+  id: string
+  at: string
+  actor: string | null
+  action: string
+  target: string
+  target_id: string | null
+  detail: Record<string, unknown> | null
+}
+
+function GroupHistory({
+  jobs,
+  grades,
+  onError,
+}: {
+  jobs: Job[]
+  grades: Grade[]
+  onError: (m: string | null) => void
+}) {
+  const [rows, setRows] = useState<AuditRow[] | null>(null)
+  const [who, setWho] = useState<Map<string, string>>(new Map())
+  // Which tier each rate row belongs to, so a rate change says whose it was.
+  const [rateTier, setRateTier] = useState<Map<string, string>>(new Map())
+
+  const jobIds = jobs.map((j) => j.id).join(',')
+
+  useEffect(() => {
+    let live = true
+    ;(async () => {
+      const ids = jobs.map((j) => j.id)
+      const tierOfJob = new Map(
+        jobs.map((j) => [j.id, grades.find((g) => g.id === j.grade_id)?.name ?? 'No tag']),
+      )
+      const { data: prs } = await supabase.from('piece_rates').select('id, job_id').in('job_id', ids)
+      const rateMap = new Map<string, string>()
+      for (const r of prs ?? []) rateMap.set(r.id as string, tierOfJob.get(r.job_id as string) ?? '')
+
+      const { data, error } = await supabase
+        .from('audit_log')
+        .select('id, at, actor, action, target, target_id, detail')
+        .in('target_id', [...ids, ...rateMap.keys()])
+        .order('at', { ascending: false })
+        .limit(200)
+      if (!live) return
+      if (error) onError(error.message)
+      const list = (data ?? []) as AuditRow[]
+
+      const actorIds = [...new Set(list.map((r) => r.actor).filter((a): a is string => Boolean(a)))]
+      const names = new Map<string, string>()
+      if (actorIds.length > 0) {
+        const { data: people } = await supabase
+          .from('access_profiles')
+          .select('id, full_name, email')
+          .in('id', actorIds)
+        for (const p of people ?? []) names.set(p.id as string, profileName(p as never))
+      }
+      if (!live) return
+      setRateTier(rateMap)
+      setWho(names)
+      setRows(list)
+    })()
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobIds])
+
+  if (rows === null) return <p className="muted">Loading…</p>
+  if (rows.length === 0) return <p className="muted">No changes recorded for this piece rate yet.</p>
+
+  const describe = (r: AuditRow) => {
+    if (r.action === 'insert') return 'Created'
+    if (r.action === 'delete') return 'Deleted'
+    const d = r.detail ?? {}
+    const parts = Object.entries(d)
+      .filter(([k]) => k in AUDIT_FIELD)
+      .map(([k, v]) => `${AUDIT_FIELD[k]}: ${v === null ? '—' : String(v)}`)
+    return parts.length > 0 ? parts.join(' · ') : 'No visible change'
+  }
+
+  return (
+    <div className="table-scroll">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Tier</th>
+            <th>Who</th>
+            <th>Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id}>
+              <td className="nowrap">{new Date(r.at).toLocaleString()}</td>
+              <td>{(r.target_id && rateTier.get(r.target_id)) || tierOfRow(r, jobs, grades)}</td>
+              {/* A null actor means the change was made in the Supabase
+                  dashboard rather than through the app. */}
+              <td>{(r.actor && who.get(r.actor)) || <span className="muted">Database</span>}</td>
+              <td>{describe(r)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function tierOfRow(r: AuditRow, jobs: Job[], grades: Grade[]) {
+  const job = jobs.find((j) => j.id === r.target_id)
+  if (!job) return ''
+  return grades.find((g) => g.id === job.grade_id)?.name ?? 'No tag'
 }
 
 /* ------------------------------------------------------------------ */
@@ -1474,8 +2078,8 @@ function UnitPicker({
   value: string
   onChange: (v: string) => void
   ariaLabel: string
-  /** Offer "Tiered by hour" in the list — the create window's two hourly
-   *  columns hang off it. The edit window has its own tier switch. */
+  /** Offer "Tiered by hour" in the list. Picking it is what turns a rate
+   *  into a two-step hourly one, in the create window and in Manage. */
   allowTiered?: boolean
 }) {
   const [custom, setCustom] = useState(
@@ -1871,265 +2475,6 @@ function CreateRatesModal({
           </div>
         </div>
       </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Edit window — one existing contract at a time                      */
-/* ------------------------------------------------------------------ */
-
-function ContractModal({
-  stations,
-  grades,
-  job,
-  currentRate,
-  onClose,
-  onSaved,
-}: {
-  stations: Station[]
-  grades: Grade[]
-  job: Job
-  currentRate: Rate | null
-  onClose: () => void
-  onSaved: (submittedForApproval: boolean) => void
-}) {
-  const overlayProps = useOverlayClose(onClose)
-  const [stationId, setStationId] = useState(job.station_id)
-  const [gradeId, setGradeId] = useState(job.grade_id ?? '')
-  const [description, setDescription] = useState(job.name)
-  // Same convention as the create window: paid by the hour is a UNIT choice,
-  // not a separate switch, so the two windows are filled in the same way.
-  const [unit, setUnit] = useState(currentRate?.tier2_rate != null ? TIERED : job.unit)
-  const tiered = unit === TIERED
-  const [rate, setRate] = useState(currentRate ? String(Number(currentRate.rate)) : '')
-  const [tier2, setTier2] = useState(
-    currentRate?.tier2_rate != null ? String(Number(currentRate.tier2_rate)) : '',
-  )
-  const [effectiveFrom, setEffectiveFrom] = useState(currentRate?.effective_from ?? todayISO())
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-
-  async function save(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    if (!stationId) return setError('Choose a station tag.')
-    if (!description.trim()) return setError('Enter the piece rate work description.')
-    const rateValue = Number(rate)
-    if (rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
-      return setError('Enter a valid non-negative rate.')
-    }
-    const tier2Value = tiered ? Number(tier2) : null
-    if (tiered && (tier2.trim() === '' || Number.isNaN(tier2Value) || (tier2Value as number) < 0)) {
-      return setError('Enter a valid non-negative Tier 2 rate.')
-    }
-    if (!effectiveFrom) {
-      return setError('Pick an effective date.')
-    }
-    setSaving(true)
-    try {
-      let submitted = false
-      const fields = {
-        station_id: stationId,
-        grade_id: gradeId || null,
-        name: description.trim(),
-        // Tiered work is stored as "/hour" — the tiering itself lives in
-        // the rate row's tier2_rate, exactly as the create window writes it.
-        unit: tiered ? '/hour' : unit.trim() || 'unit',
-      }
-      // Only send the identity fields (station/tag/description/unit) when
-      // one actually changed — Postgres re-checks the station+tag+name
-      // uniqueness constraint against every other row whenever an UPDATE
-      // touches those columns, even to the same value, so resaving just
-      // the rate on an unrelated field would otherwise fail if some other
-      // job happens to share that combination.
-      const identityChanged =
-        fields.station_id !== job.station_id ||
-        fields.grade_id !== job.grade_id ||
-        fields.name !== job.name ||
-        fields.unit !== job.unit
-      if (identityChanged) {
-        const { error } = await supabase.from('jobs').update(fields).eq('id', job.id)
-        if (error) throw new Error(saveMessage(error.message))
-      }
-      const unchanged =
-        currentRate &&
-        Number(currentRate.rate) === rateValue &&
-        (currentRate.tier2_rate ?? null) === tier2Value &&
-        currentRate.effective_from === effectiveFrom
-      if (!unchanged) {
-        const { error } = await supabase
-          .from('piece_rates')
-          .upsert(
-            { job_id: job.id, rate: rateValue, tier2_rate: tier2Value, effective_from: effectiveFrom },
-            { onConflict: 'job_id,effective_from' },
-          )
-        if (error) throw new Error(error.message)
-        // A price change on an APPROVED contract must go through verify +
-        // approve again — otherwise editing the rate would bypass the flow.
-        if (job.approval_status === 'approved') {
-          submitted = true
-          const { error: reErr } = await supabase
-            .from('jobs')
-            .update({
-              approval_status: 'pending',
-              verified_by: null,
-              verified_at: null,
-              approved_by: null,
-              approved_at: null,
-            } as never)
-            .eq('id', job.id)
-          if (reErr) throw new Error(reErr.message)
-        }
-      }
-      onSaved(submitted)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  // Laid out as ONE row of the create window's grid, column for column, so
-  // editing a rate is filled in the same way it was written.
-  return (
-    <div className="modal-overlay" {...overlayProps}>
-      <form className={`modal modal-xwide ${tiered ? 'tiered' : ''}`} onSubmit={save}>
-        <div className="row-form spread">
-          <h2>Edit piece rate</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-
-        {error && <div className="error">{error}</div>}
-
-        <div className={`pr-grid ${tiered ? 'tiered' : ''}`}>
-          <div className="pr-grid-head">
-            <span>Tier Tag</span>
-            <span>Station Tag</span>
-            <span>Piece Rate Work Description</span>
-            <span>Unit</span>
-            <span>Piece Rate (RM)</span>
-            {tiered && <span>Tier 1 — 1st to 4th /hr</span>}
-            {tiered && <span>Tier 2 — 5th onward /hr</span>}
-            <span>Effective date</span>
-            <span />
-          </div>
-
-          <div className="pr-grid-row">
-            <div className="pr-cell">
-              <span className="pr-cell-label">Tier Tag</span>
-              <Select
-                block
-                value={gradeId}
-                onChange={setGradeId}
-                options={[
-                  { value: '', label: 'All positions' },
-                  ...tierTagOptions(grades, job.grade_id),
-                ]}
-                placeholder="Choose tier tag"
-                ariaLabel="Tier tag"
-              />
-            </div>
-
-            <div className="pr-cell">
-              <span className="pr-cell-label">Station Tag</span>
-              <Select
-                block
-                value={stationId}
-                onChange={setStationId}
-                options={stationOptions(stations)}
-                placeholder="Choose station tag"
-                ariaLabel="Station tag"
-              />
-            </div>
-
-            <div className="pr-cell wide">
-              <span className="pr-cell-label">Piece Rate Work Description</span>
-              <input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                aria-label="Piece rate work description"
-              />
-            </div>
-
-            <div className="pr-cell">
-              <span className="pr-cell-label">Unit</span>
-              <UnitPicker
-                allowTiered
-                value={unit}
-                onChange={(v) => setUnit(v)}
-                ariaLabel="Unit"
-              />
-            </div>
-
-            <div className="pr-cell">
-              <span className="pr-cell-label">Piece Rate (RM)</span>
-              {tiered ? (
-                <span className="pr-none">—</span>
-              ) : (
-                <input
-                  inputMode="decimal"
-                  value={rate}
-                  onChange={(e) => setRate(e.target.value)}
-                  aria-label="Piece rate"
-                />
-              )}
-            </div>
-
-            {tiered && (
-              <>
-                <div className="pr-cell">
-                  <span className="pr-cell-label">Tier 1 — 1st to 4th /hr</span>
-                  <input
-                    inputMode="decimal"
-                    value={rate}
-                    onChange={(e) => setRate(e.target.value)}
-                    aria-label="Tier 1 rate"
-                  />
-                </div>
-                <div className="pr-cell">
-                  <span className="pr-cell-label">Tier 2 — 5th onward /hr</span>
-                  <input
-                    inputMode="decimal"
-                    value={tier2}
-                    onChange={(e) => setTier2(e.target.value)}
-                    aria-label="Tier 2 rate"
-                  />
-                </div>
-              </>
-            )}
-
-            <div className="pr-cell">
-              <span className="pr-cell-label">Effective date</span>
-              <input
-                type="date"
-                value={effectiveFrom}
-                onChange={(e) => setEffectiveFrom(e.target.value)}
-                aria-label="Effective date"
-              />
-            </div>
-
-            <span />
-          </div>
-        </div>
-
-        {tiered && (
-          <p className="small muted" style={{ margin: 0 }}>
-            Every hour resets: the first 4 units done pay Tier 1, the 5th unit
-            onward that same hour pays Tier 2 — then it starts over next hour.
-          </p>
-        )}
-        <p className="small muted" style={{ margin: 0 }}>
-          Payroll uses whichever rate is effective on the day worked.
-        </p>
-
-        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn" type="submit" disabled={saving}>
-            {saving ? 'Saving…' : 'Save changes'}
-          </button>
-        </div>
-      </form>
     </div>
   )
 }

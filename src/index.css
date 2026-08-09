@@ -2383,19 +2383,36 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* line, so a whole batch of rates goes in without reopening.           */
 /* ------------------------------------------------------------------ */
 /* Manage window — the contract read across: one column per tier tag that
-   is paid for the work, and what each of them gets down the rows. */
+   is paid for the work, and what each of them gets down the rows. Wider
+   than an ordinary window and loose on its feet, so three tier columns
+   read as three columns rather than as one crowded block. */
+.modal.modal-manage { max-width: min(980px, 96vw); }
 .pr-manage { min-width: max-content; }
-.pr-manage th, .pr-manage td { vertical-align: top; }
+.pr-manage th, .pr-manage td { vertical-align: top; padding: 0.7rem 1.1rem; }
 /* The row labels down the left are quieter than the tier names on top —
    they name the line, the tier columns are what is being compared. */
 .pr-manage tbody th {
   text-align: left; font-weight: 600; color: var(--muted);
-  white-space: nowrap; padding-right: 1.2rem;
+  white-space: nowrap; padding-right: 1.6rem;
 }
-/* The work description sits where the two headings meet, so the window
-   says which job before it says who is paid for it. */
 .pr-manage-corner { font-weight: 800; color: var(--accent-strong); }
-.pr-manage tbody td { min-width: 9rem; }
+/* The work description is the one thing on the sheet that names what all
+   the columns are about, so it carries the weight the labels do not. */
+/* Beats `.table th`, which sets every heading in small uppercase — right
+   for a column label, wrong for the work's actual name. */
+.table th.pr-manage-work {
+  font-size: 1rem; font-weight: 700; color: var(--text);
+  text-transform: none; letter-spacing: 0;
+}
+.pr-manage tbody td { min-width: 10.5rem; }
+.pr-manage input { width: 100%; min-width: 0; }
+.pr-manage-edit { display: flex; flex-direction: column; gap: 0.35rem; }
+
+/* Window tools — history, edit, delete — in the corner beside the close. */
+.manage-tools { gap: 0.3rem; }
+/* Pressed state for a tool that switches the window to another face. */
+.icon-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.nowrap { white-space: nowrap; }
 
 .modal.modal-xwide { max-width: min(1320px, 96vw); }
 /* Paid by the hour puts two more columns on every line, so the window
