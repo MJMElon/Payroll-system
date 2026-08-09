@@ -1070,6 +1070,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   overflow-x: auto; padding-bottom: 0.35rem;
   scroll-snap-type: x mandatory; margin: 0 -0.1rem;
 }
+/* While a name is being dragged the snap lets go, so the strip can slide
+   toward the next team under the held name instead of bouncing back. */
+.mob-teamscroll.free { scroll-snap-type: none; }
 /* One team fills the width, with the add block beside it as the only
    thing peeking — a half-shown second team read as a layout fault. */
 .mob-teamcol {

@@ -4579,6 +4579,25 @@ function TeamTab({
   const [pickedStation, setPickedStation] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
+  // While a held name hovers near the strip's edge, the strip slides
+  // itself toward the next team — the finger is busy holding the name,
+  // so the scrolling has to be done for it.
+  const slideDir = useRef(0)
+  const slideTimer = useRef<number | null>(null)
+  function setSlide(dir: number) {
+    slideDir.current = dir
+    if (dir === 0) {
+      if (slideTimer.current != null) {
+        window.clearInterval(slideTimer.current)
+        slideTimer.current = null
+      }
+    } else if (slideTimer.current == null) {
+      slideTimer.current = window.setInterval(() => {
+        scrollRef.current?.scrollBy({ left: slideDir.current * 14 })
+      }, 24)
+    }
+  }
+  useEffect(() => () => setSlide(0), [])
   // Moving is a MODE, entered from the move button beside +. Inside it a
   // name drags straight away and nothing is written until Save, so a
   // reshuffle is one decision rather than a write per drag.
@@ -5024,6 +5043,7 @@ function TeamTab({
               onDragEnd={() => {
                 setDragId(null)
                 setOverGrade(null)
+                setSlide(0)
               }}
             >
               {moveMode && <span className="mob-member-grip" aria-hidden="true">⋮⋮</span>}
@@ -5135,7 +5155,24 @@ function TeamTab({
 
       {runsTeams ? (
         <>
-          <div className="mob-teamscroll" ref={scrollRef}>
+          <div
+            /* Snap is released while a name is held — mandatory snapping
+               would pull the strip straight back mid-slide. It returns on
+               drop, settling the strip on the nearest column. */
+            className={`mob-teamscroll ${dragId ? 'free' : ''}`}
+            ref={scrollRef}
+            onDragOver={(e) => {
+              // Lanes preventDefault and let the event bubble here, so the
+              // edge check runs wherever the name is held.
+              const el = scrollRef.current
+              if (!el) return
+              const r = el.getBoundingClientRect()
+              const EDGE = 56
+              setSlide(e.clientX < r.left + EDGE ? -1 : e.clientX > r.right - EDGE ? 1 : 0)
+            }}
+            onDragLeave={() => setSlide(0)}
+            onDrop={() => setSlide(0)}
+          >
             {teamColumns.map((col) => (
               <div className="mob-teamcol" key={col.key}>
                 <div className="mob-teamcol-name">{col.name}</div>
