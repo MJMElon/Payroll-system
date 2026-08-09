@@ -1784,6 +1784,8 @@ function ClockCard({
   // clock chip when it is time to clock out.
   const [open, setOpen] = useState(false)
   const [showWeek, setShowWeek] = useState(false)
+  // The day tapped on the week strip — its float shows the ins and outs.
+  const [dayInfo, setDayInfo] = useState<string | null>(null)
   const camera = useRef<HTMLInputElement>(null)
 
   const today = todayISO()
@@ -1970,17 +1972,78 @@ function ClockCard({
     </svg>
   )
 
+  /** A tapped day, told in full: the first in, the last out, the hours. */
+  function dayDetail(iso: string) {
+    const rows = shifts
+      .filter((s) => (s.work_date ?? '') === iso)
+      .sort((a, b) => a.clock_in.localeCompare(b.clock_in))
+    const outs = rows.filter((s) => s.clock_out != null).map((s) => s.clock_out!).sort()
+    const mins = rows.reduce(
+      (t, s) =>
+        t + (s.clock_out ? (new Date(s.clock_out).getTime() - new Date(s.clock_in).getTime()) / 60_000 : 0),
+      0,
+    )
+    const h = Math.floor(mins / 60)
+    return {
+      firstIn: rows[0]?.clock_in ?? null,
+      lastOut: outs[outs.length - 1] ?? null,
+      stillIn: rows.some((s) => s.clock_out == null),
+      span: mins > 0 ? (h > 0 ? `${h}h ${Math.round(mins % 60)}m` : `${Math.round(mins)}m`) : null,
+    }
+  }
+
   const weekStrip = (
-    <div className="mob-weekstrip">
-      {week.map((d) => (
-        <div className={`mob-weekday ${d.iso === today ? 'today' : ''}`} key={d.iso}>
-          <span className="d">{d.label}</span>
-          <span className={`mark ${d.stamped ? (d.running ? 'running' : 'ok') : ''}`}>
-            {d.stamped ? (d.running ? '•' : '✓') : '·'}
-          </span>
-          <span className="h">{d.span ?? (d.running ? 'in' : '')}</span>
-        </div>
-      ))}
+    <div className="mob-weekwrap">
+      <div className="mob-weekstrip">
+        {week.map((d) => (
+          <button
+            type="button"
+            className={`mob-weekday ${d.iso === today ? 'today' : ''} ${dayInfo === d.iso ? 'picked' : ''}`}
+            key={d.iso}
+            onClick={() => setDayInfo((cur) => (cur === d.iso ? null : d.iso))}
+          >
+            <span className="d">{d.label}</span>
+            <span className={`mark ${d.stamped ? (d.running ? 'running' : 'ok') : ''}`}>
+              {d.stamped ? (d.running ? '•' : '✓') : '·'}
+            </span>
+            <span className="h">{d.span ?? (d.running ? 'in' : '')}</span>
+          </button>
+        ))}
+      </div>
+      {dayInfo && (() => {
+        const d = dayDetail(dayInfo)
+        return (
+          <div className="mob-dayfloat">
+            <div className="mob-dayfloat-head">
+              <span className="mob-dayfloat-date">
+                {new Date(dayInfo + 'T00:00:00').toLocaleDateString(undefined, {
+                  weekday: 'long', day: 'numeric', month: 'short',
+                })}
+              </span>
+              <button
+                type="button"
+                className="mob-dayfloat-x"
+                onClick={() => setDayInfo(null)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mob-row">
+              <span className="mob-field-label">Clock in</span>
+              <span>{d.firstIn ? clockTime(d.firstIn) : '—'}</span>
+            </div>
+            <div className="mob-row">
+              <span className="mob-field-label">Clock out</span>
+              <span>{d.lastOut ? clockTime(d.lastOut) : d.stillIn ? 'Still in' : '—'}</span>
+            </div>
+            <div className="mob-row">
+              <span className="mob-field-label">Work hours</span>
+              <span>{d.span ?? '—'}</span>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 
@@ -2037,24 +2100,44 @@ function ClockCard({
           history button beside it opens the week. */}
       {!expanded ? (
         <div className="mob-clockmini">
-          <button className="mob-clockchip" onClick={() => setOpen(true)}>
-            {clockIcon}
-            <span>
-              {running
-                ? `In ${clockTime(running.clock_in)}`
-                : `${hoursToday.toFixed(2)} h today`}
-            </span>
-          </button>
+          {running ? (
+            <>
+              {/* The stamp already made, and the one still to make — the
+                  out is a button because it is the next thing done. */}
+              <button className="mob-clockpair" onClick={() => setOpen(true)} title="Open today's attendance">
+                <span className="mob-field-label">Clock in :</span>
+                <span className="t">{clockTime(running.clock_in)}</span>
+              </button>
+              <span className="mob-clockpair as-row">
+                <span className="mob-field-label">Clock out :</span>
+                <button
+                  className="mob-clockoutmini"
+                  onClick={clockOut}
+                  disabled={busy || !profileId}
+                >
+                  {busy ? 'Saving…' : 'Clock out'}
+                </button>
+              </span>
+            </>
+          ) : (
+            <button className="mob-clockchip" onClick={() => setOpen(true)}>
+              {clockIcon}
+              <span>{hoursToday.toFixed(2)} h today</span>
+            </button>
+          )}
           <button
-            className={`mob-icon-btn ${showWeek ? 'on' : ''}`}
-            onClick={() => setShowWeek((v) => !v)}
+            className={`mob-icon-btn week-toggle ${showWeek ? 'on' : ''}`}
+            onClick={() => {
+              setShowWeek((v) => !v)
+              setDayInfo(null)
+            }}
             title="This week's attendance"
             aria-label="This week's attendance"
+            aria-expanded={showWeek}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="5" width="18" height="16" rx="3" />
-              <path d="M3 10h18M8 3v4M16 3v4" />
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 9l7 6 7-6" />
             </svg>
           </button>
         </div>
