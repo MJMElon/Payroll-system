@@ -915,13 +915,23 @@ create policy "own pending entries editable" on public.production_entries
     and approval_status in ('pending', 'rejected')
   );
 
+-- The tag editor's Edit tick (Work entry setting) reaches other people's
+-- entries too, while they are still in (or thrown out of) the queue.
+drop policy if exists "editors update production" on public.production_entries;
+create policy "editors update production" on public.production_entries
+  for update using (
+    'edit-entry' = any(public.my_capabilities())
+    and approval_status in ('pending', 'rejected')
+  );
+
 drop policy if exists "delete production" on public.production_entries;
 create policy "delete production" on public.production_entries
   for delete using (
     public.my_role() in ('admin', 'manager')
     or public.my_tag_tier() = 1
     or (
-      (created_by = auth.uid() or user_id = auth.uid())
+      ('delete-entry' = any(public.my_capabilities())
+        or created_by = auth.uid() or user_id = auth.uid())
       and approval_status in ('pending', 'rejected')
     )
   );

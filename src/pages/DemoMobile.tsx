@@ -969,6 +969,7 @@ function PerformanceTab({
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
+        canEdit={tierCaps.includes('edit-entry')}
         onOpen={setDetail}
         onBack={() => setSub(null)}
       />
@@ -2485,6 +2486,7 @@ function RecordTab({
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
+        canEdit={effectiveCapabilities(tier).includes('edit-entry')}
         onOpen={setDetail}
         onBack={() => setView('form')}
       />
@@ -2802,6 +2804,7 @@ function RecordHistory({
   stations,
   jobs,
   amountFor,
+  canEdit,
   onOpen,
   onBack,
 }: {
@@ -2809,12 +2812,60 @@ function RecordHistory({
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
+  /** The tier's Edit tick (Work entry setting) — without it, no pencil. */
+  canEdit: boolean
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
   const [rangeKey, setRangeKey] = useState<(typeof HISTORY_RANGES)[number]['key']>('today')
   const [rows, setRows] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
+  // The entry whose pencil was tapped, and the number being retyped.
+  const [editing, setEditing] = useState<ProductionEntry | null>(null)
+  const [editQty, setEditQty] = useState('')
+  const [editErr, setEditErr] = useState<string | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  // Only work still in (or thrown out of) the queue may be reworked —
+  // an approved number is settled.
+  const editable = (e: ProductionEntry) =>
+    canEdit && ['pending', 'rejected', undefined].includes(e.approval_status as never)
+
+  async function saveEdit() {
+    if (!editing) return
+    const qty = Number(editQty)
+    if (editQty.trim() === '' || !Number.isFinite(qty) || qty <= 0) {
+      return setEditErr('Work done must be a positive number.')
+    }
+    setSavingEdit(true)
+    setEditErr(null)
+    // A fixed entry goes back through verify and approve.
+    const { data, error } = await supabase
+      .from('production_entries')
+      .update({
+        quantity: qty,
+        approval_status: 'pending',
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      } as never)
+      .eq('id', editing.id)
+      .select('id')
+    setSavingEdit(false)
+    if (error) return setEditErr(error.message)
+    if (!data || data.length === 0) {
+      return setEditErr('The database would not let you edit this entry.')
+    }
+    setRows((rs) =>
+      rs.map((r) =>
+        r.id === editing.id
+          ? { ...r, quantity: qty, approval_status: 'pending', verified_by: null, approved_by: null }
+          : r,
+      ),
+    )
+    setEditing(null)
+  }
 
   useEffect(() => {
     if (!profileId) return
@@ -2870,23 +2921,64 @@ function RecordHistory({
               {rangeKey === 'today' ? 'Nothing submitted today.' : 'Nothing submitted in this range.'}
             </div>
           ) : (
-            rows.map((e) => (
-              <button className="mob-entry" key={e.id} onClick={() => onOpen(e)}>
-                <span className="mob-entry-main">
+            rows.map((e) =>
+              editing?.id === e.id ? (
+                <div className="mob-entry-edit" key={e.id}>
                   <span className="mob-entry-name">{jobName(e.job_id)}</span>
-                  <span className="mob-station-meta">
-                    {stationName(e.station_id)} ·{' '}
-                    {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-                      day: '2-digit', month: 'short',
-                    })}
-                  </span>
-                </span>
-                <span className="mob-entry-side">
-                  <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-                  {statusChip(e.approval_status)}
-                </span>
-              </button>
-            ))
+                  {editErr && <div className="error">{editErr}</div>}
+                  <div className="mob-entry-edit-row">
+                    <input
+                      className="mob-input"
+                      inputMode="decimal"
+                      value={editQty}
+                      onChange={(ev) => setEditQty(ev.target.value)}
+                      aria-label="Work done"
+                      autoFocus
+                    />
+                    <button className="mob-mini ghost" onClick={() => setEditing(null)}>Cancel</button>
+                    <button className="mob-mini go" disabled={savingEdit} onClick={saveEdit}>
+                      {savingEdit ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                  <div className="mob-station-meta">Saving sends it for verification again.</div>
+                </div>
+              ) : (
+                <div className="mob-entry-wrap" key={e.id}>
+                  <button className="mob-entry" onClick={() => onOpen(e)}>
+                    <span className="mob-entry-main">
+                      <span className="mob-entry-name">{jobName(e.job_id)}</span>
+                      <span className="mob-station-meta">
+                        {stationName(e.station_id)} ·{' '}
+                        {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+                          day: '2-digit', month: 'short',
+                        })}
+                      </span>
+                    </span>
+                    <span className="mob-entry-side">
+                      <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                      {statusChip(e.approval_status)}
+                    </span>
+                  </button>
+                  {editable(e) && (
+                    <button
+                      className="mob-entry-pen"
+                      title="Edit this record"
+                      aria-label={`Edit ${jobName(e.job_id)}`}
+                      onClick={() => {
+                        setEditing(e)
+                        setEditQty(String(Number(e.quantity)))
+                        setEditErr(null)
+                      }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ),
+            )
           )}
         </div>
       </div>

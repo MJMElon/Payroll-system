@@ -1392,6 +1392,24 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-param { font-weight: 700; font-size: 0.95rem; font-family: 'Montserrat', sans-serif; }
 
 /* Entry rows (Record + Profile lists) */
+/* A history row with its pencil riding beside it — the row stays the
+   tap-to-open button it was, the pencil is its own smaller target. */
+.mob-entry-wrap { display: flex; align-items: stretch; gap: 0.35rem; }
+.mob-entry-wrap .mob-entry { flex: 1; min-width: 0; }
+.mob-entry-pen {
+  flex: none; width: 38px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  display: flex; align-items: center; justify-content: center;
+}
+.mob-entry-pen:hover { border-color: var(--accent); color: var(--accent-strong); }
+.mob-entry-edit {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.55rem 0.6rem; border-radius: 12px;
+  background: var(--bg); border: 1px solid var(--border);
+}
+.mob-entry-edit-row { display: flex; gap: 0.4rem; align-items: center; }
+.mob-entry-edit-row .mob-input { flex: 1; min-width: 0; }
+
 .mob-entry {
   appearance: none; background: none; border: none; cursor: pointer; text-align: left;
   display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
