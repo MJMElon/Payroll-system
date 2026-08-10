@@ -74,6 +74,11 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   { key: 'team-assign', label: 'Claim Sign Ups & Set Tier', group: 'Team manage setting' },
   { key: 'team-create', label: 'Add New Team', group: 'Team manage setting' },
   { key: 'worker-edit', label: 'Edit Profile Details', group: 'Team manage setting' },
+  // The staff number is the payroll key, so changing it is NOT part of
+  // "Edit Profile Details": it is its own grant, and it also decides
+  // whether a person may retype their OWN Worker ID on the mobile
+  // Profile tab. Unticked, the ID is read-only everywhere but tier 1.
+  { key: 'worker-id-edit', label: 'Edit Worker ID (Staff no.)', group: 'Team manage setting' },
   { key: 'worker-salary', label: 'Edit Basic Salary', group: 'Team manage setting' },
   { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
 ]

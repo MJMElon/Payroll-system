@@ -1564,7 +1564,7 @@ update public.grades g set capabilities = g.capabilities || '{team-create}'
     and not 'team-create' = any(g.capabilities);
 
 update public.grades set capabilities =
-  '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,team-create,worker-edit,worker-salary,station-create}'
+  '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,team-create,worker-edit,worker-id-edit,worker-salary,station-create}'
   where sort_order = 1;
 
 -- ---------------------------------------------------------------------------
@@ -1713,3 +1713,63 @@ alter table public.attendance add column if not exists out_photo_path text;
 alter table public.attendance add column if not exists out_latitude double precision;
 alter table public.attendance add column if not exists out_longitude double precision;
 alter table public.attendance add column if not exists out_accuracy_m double precision;
+
+-- ---------------------------------------------------------------------------
+-- Worker ID edit is its own grant (Team manage setting -> "Edit Worker ID").
+--
+-- The staff number is the payroll key, so changing one is deliberately NOT
+-- part of "Edit Profile Details": only tier 1, admins, and tiers with the
+-- worker-id-edit tick may write it — on anybody's profile in Team Manage
+-- AND on their OWN profile from the mobile Profile tab.
+--
+-- A row policy cannot be limited to one column, so the gate is a trigger:
+-- any UPDATE that actually changes employee_code is refused unless the
+-- caller holds the grant. Statements with no PostgREST caller (the SQL
+-- editor, migrations — auth.uid() is null there) pass untouched.
+-- ---------------------------------------------------------------------------
+create or replace function public.guard_employee_code()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.employee_code is distinct from old.employee_code
+     and auth.uid() is not null
+     and not (
+       public.my_role() = 'admin'
+       or public.my_tag_tier() = 1
+       or 'worker-id-edit' = any(public.my_capabilities())
+     )
+  then
+    raise exception 'Your tier is not allowed to change a Worker ID.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists guard_employee_code on public.access_profiles;
+create trigger guard_employee_code
+  before update on public.access_profiles
+  for each row execute function public.guard_employee_code();
+
+-- The mobile self-edit door learns the same rule: without the grant the
+-- Worker ID it was sent is ignored and the stored one kept, so saving a
+-- new phone number still works for every tier.
+create or replace function public.set_my_details(code text, phone_no text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.access_profiles
+     set employee_code = case
+           when public.my_role() = 'admin'
+             or public.my_tag_tier() = 1
+             or 'worker-id-edit' = any(public.my_capabilities())
+           then nullif(btrim(coalesce(code, '')), '')
+           else employee_code
+         end,
+         phone = nullif(btrim(coalesce(phone_no, '')), '')
+   where id = auth.uid();
+$$;

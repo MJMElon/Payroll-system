@@ -182,6 +182,9 @@ export default function WorkerManagement() {
   const seesAll = isTop || myCaps.includes('user-access')
   // Granted functions. Building your OWN branch is always allowed.
   const canEditProfile = isTop || myCaps.includes('worker-edit')
+  // The Worker ID is the payroll key, so retyping it is not covered by
+  // the general profile grant — it takes its own tick.
+  const canEditWorkerId = isTop || myCaps.includes('worker-id-edit')
   // Pay is its own grant, so a lower tier can keep details tidy without
   // ever seeing what anyone earns.
   const canEditSalary = isTop || myCaps.includes('worker-salary')
@@ -1305,6 +1308,7 @@ export default function WorkerManagement() {
               jobs={jobs}
               rates={rates}
               canEditProfile={canEditProfile}
+              canEditWorkerId={canEditWorkerId}
               canEditSalary={canEditSalary && worksAtAStation(tierOf(selected))}
               onSave={(patch) => saveProfile(selected, patch)}
               onClose={() => setSelectedId(null)}
@@ -1381,6 +1385,7 @@ function WorkerPanel({
   jobs,
   rates,
   canEditProfile,
+  canEditWorkerId,
   canEditSalary,
   onSave,
   onClose,
@@ -1392,6 +1397,7 @@ function WorkerPanel({
   jobs: Job[]
   rates: PieceRate[]
   canEditProfile: boolean
+  canEditWorkerId: boolean
   canEditSalary: boolean
   onSave: (patch: Record<string, unknown>) => Promise<boolean>
   onClose: () => void
@@ -1420,9 +1426,9 @@ function WorkerPanel({
     const patch: Record<string, unknown> = {}
     if (canEditProfile) {
       patch.full_name = form.full_name.trim() || null
-      patch.employee_code = form.employee_code.trim() || null
       patch.phone = form.phone.trim() || null
     }
+    if (canEditWorkerId) patch.employee_code = form.employee_code.trim() || null
     if (canEditSalary) {
       const v = form.basic_salary.trim()
       patch.basic_salary = v === '' ? null : Number(v)
@@ -1459,7 +1465,7 @@ function WorkerPanel({
     .filter((j) => j.grade_id === null || j.grade_id === person.grade_id)
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  const canEdit = canEditProfile || canEditSalary
+  const canEdit = canEditProfile || canEditWorkerId || canEditSalary
   const tierChip = grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : null
 
   return (
@@ -1482,7 +1488,11 @@ function WorkerPanel({
             <>
               <Row label="Tier" value={tierChip} />
               <EditRow label="Name" value={form.full_name} onChange={set('full_name')} />
-              <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} />
+              {canEditWorkerId ? (
+                <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} />
+              ) : (
+                <Row label="Staff no." value={person.employee_code} />
+              )}
               <Row label="Station" value={stationText} />
               <Row label="Team" value={team?.name} />
               <Row label="Email" value={person.email} />
@@ -1492,6 +1502,9 @@ function WorkerPanel({
             <>
               <Row label="Tier" value={tierChip} />
               <Row label="Name" value={displayName(person)} />
+              {canEditWorkerId && (
+                <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} />
+              )}
               <Row label="Station" value={stationText} />
             </>
           )}
