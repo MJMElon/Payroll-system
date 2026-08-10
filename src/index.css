@@ -2519,9 +2519,13 @@ button.mob-breakrow {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Masterlist: every tier column the same width; a long tier name wraps to
-   a second line rather than widening its column. */
-.table th.pr-tagcol { width: 9rem; min-width: 9rem; white-space: normal; }
+/* Masterlist: the work description takes the room; unit, every tier rate
+   and the effective date share ONE width (long tier names wrap instead of
+   widening their column); actions is only as wide as its button, so no
+   dead gap opens before it. */
+.table th.pr-desc { min-width: 18rem; }
+.table th.pr-eqcol { width: 9rem; min-width: 9rem; white-space: normal; }
+.table th.pr-actcol { width: 4.5rem; min-width: 4.5rem; }
 
 /* A yes/no answer read at a glance, where a disabled tick box would look
    like something you were meant to be able to press. */
@@ -2590,6 +2594,15 @@ button.mob-breakrow {
    the same column names as the create window. No dropdown ever opens in
    it, so it does not need the create grid's landing room. */
 .pr-grid.pr-confirm { min-height: 0; }
+/* A tiered proposal drops the flat-rate column entirely — its line runs
+   8 tracks, with the two hourly columns named as the rate. */
+.pr-grid.pr-confirm.tiered .pr-grid-head,
+.pr-grid.pr-confirm.tiered .pr-grid-row {
+  grid-template-columns:
+    minmax(190px, 1.3fr) minmax(190px, 1.3fr) minmax(178px, 1.3fr)
+    minmax(120px, 0.9fr) minmax(150px, 1fr) minmax(150px, 1fr)
+    minmax(130px, 0.95fr) 34px;
+}
 .pr-cell-val {
   display: flex; align-items: center; min-height: 40px;
   font-size: 0.92rem; overflow-wrap: anywhere;

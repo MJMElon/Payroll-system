@@ -790,14 +790,22 @@ function ProposalLine({
   const tiered = rate?.tier2_rate != null
   return (
     <div className={`pr-grid pr-confirm ${tiered ? 'tiered' : ''}`}>
+      {/* A tiered proposal has no flat rate, so that column is not shown
+          at all — its two hourly columns carry the "Piece Rate (RM)" name
+          instead, so the amounts read as rates. */}
       <div className="pr-grid-head">
         <span>Tier Tag</span>
         <span>Station Tag</span>
         <span>Piece Rate Work Description</span>
         <span>Unit</span>
-        <span>Piece Rate (RM)</span>
-        {tiered && <span>Tier 1 — 1st to 4th /hr</span>}
-        {tiered && <span>Tier 2 — 5th onward /hr</span>}
+        {tiered ? (
+          <>
+            <span>Piece Rate (RM) — 1st to 4th /hr</span>
+            <span>Piece Rate (RM) — 5th onward /hr</span>
+          </>
+        ) : (
+          <span>Piece Rate (RM)</span>
+        )}
         <span>Effective date</span>
         <span />
       </div>
@@ -808,14 +816,19 @@ function ProposalLine({
         <ProposalCell label="Station Tag">{stationName}</ProposalCell>
         <ProposalCell label="Piece Rate Work Description" wide>{job.name}</ProposalCell>
         <ProposalCell label="Unit">{tiered ? '/hour (tiered)' : job.unit}</ProposalCell>
-        <ProposalCell label="Piece Rate (RM)">
-          {tiered ? '—' : rate ? Number(rate.rate).toFixed(2) : '—'}
-        </ProposalCell>
-        {tiered && (
-          <ProposalCell label="Tier 1 — 1st to 4th /hr">{Number(rate!.rate).toFixed(2)}</ProposalCell>
-        )}
-        {tiered && (
-          <ProposalCell label="Tier 2 — 5th onward /hr">{Number(rate!.tier2_rate).toFixed(2)}</ProposalCell>
+        {tiered ? (
+          <>
+            <ProposalCell label="Piece Rate (RM) — 1st to 4th /hr">
+              {Number(rate!.rate).toFixed(2)}
+            </ProposalCell>
+            <ProposalCell label="Piece Rate (RM) — 5th onward /hr">
+              {Number(rate!.tier2_rate).toFixed(2)}
+            </ProposalCell>
+          </>
+        ) : (
+          <ProposalCell label="Piece Rate (RM)">
+            {rate ? Number(rate.rate).toFixed(2) : '—'}
+          </ProposalCell>
         )}
         <ProposalCell label="Effective date">{rate ? rate.effective_from : '—'}</ProposalCell>
       </div>
@@ -990,7 +1003,7 @@ function RatesList({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search work description…"
+            placeholder="Search to filter…"
             style={{ minWidth: '220px' }}
           />
           <button className="btn ghost" onClick={exportCsv}>Export CSV</button>
@@ -1001,15 +1014,15 @@ function RatesList({
           <thead>
             <tr>
               <th>Station</th>
-              <th>Work description</th>
-              <th>Unit</th>
-              {/* Every tier column the same width; a long tier name wraps
-                  to a second line instead of widening its column. */}
+              {/* The description gets the room; unit, tier rates and date
+                  share one width; actions is just wide enough for its eye. */}
+              <th className="pr-desc">Work description</th>
+              <th className="pr-eqcol">Unit</th>
               {tagCols.map((c) => (
-                <th key={c.key} className="right pr-tagcol">{c.label} (RM)</th>
+                <th key={c.key} className="right pr-eqcol">{c.label} (RM)</th>
               ))}
-              <th>Effective date</th>
-              <th className="right">Actions</th>
+              <th className="pr-eqcol">Effective date</th>
+              <th className="right pr-actcol">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1097,10 +1110,6 @@ interface RateDraft {
   rate: string
   tier2: string
   effectiveFrom: string
-  /** Offered in the mobile work entry screen. */
-  onMobile: boolean
-  /** Counted on the mobile Mill output dashboard. */
-  onMill: boolean
 }
 
 /** One line of the before/after sheet shown before anything is written. */
@@ -1151,8 +1160,6 @@ function GroupManageModal({
             rate: r ? String(Number(r.rate)) : '',
             tier2: r?.tier2_rate != null ? String(Number(r.tier2_rate)) : '',
             effectiveFrom: r?.effective_from ?? todayISO(),
-            onMobile: j.record_job !== false,
-            onMill: j.show_on_mill !== false,
           } as RateDraft,
         ]
       }),
@@ -1160,6 +1167,14 @@ function GroupManageModal({
 
   const [mode, setMode] = useState<'view' | 'edit' | 'history'>('view')
   const [name, setName] = useState(jobs[0]?.name ?? '')
+  // The two mobile switches belong to the WORK, not to one tier: the
+  // record is entered once by the operator, and once approved it pays
+  // every tier its own rate — so on/off is one answer for the whole
+  // piece rate, written onto every tier's row together.
+  const groupOnMobile = jobs.some((j) => j.record_job !== false)
+  const groupOnMill = jobs.some((j) => j.show_on_mill !== false)
+  const [onMobile, setOnMobile] = useState(groupOnMobile)
+  const [onMill, setOnMill] = useState(groupOnMill)
   const [draft, setDraft] = useState<Record<string, RateDraft>>(blankDraft)
   const [confirm, setConfirm] = useState<'save' | 'archive' | null>(null)
   const [remark, setRemark] = useState('')
@@ -1171,6 +1186,8 @@ function GroupManageModal({
   function startEdit() {
     setName(jobs[0]?.name ?? '')
     setDraft(blankDraft())
+    setOnMobile(groupOnMobile)
+    setOnMill(groupOnMill)
     onError(null)
     setMode('edit')
   }
@@ -1178,6 +1195,8 @@ function GroupManageModal({
   function cancelEdit() {
     setName(jobs[0]?.name ?? '')
     setDraft(blankDraft())
+    setOnMobile(groupOnMobile)
+    setOnMill(groupOnMill)
     onError(null)
     setMode('view')
   }
@@ -1192,6 +1211,20 @@ function GroupManageModal({
     const oldName = jobs[0]?.name ?? ''
     if (name.trim() && name.trim() !== oldName) {
       out.push({ what: 'Work description', before: oldName, after: name.trim() })
+    }
+    if (onMobile !== groupOnMobile) {
+      out.push({
+        what: 'Show on mobile apps work entry (whole work)',
+        before: groupOnMobile ? 'Yes' : 'No',
+        after: onMobile ? 'Yes' : 'No',
+      })
+    }
+    if (onMill !== groupOnMill) {
+      out.push({
+        what: 'Show on mill performance (whole work)',
+        before: groupOnMill ? 'Yes' : 'No',
+        after: onMill ? 'Yes' : 'No',
+      })
     }
     for (const j of jobs) {
       const d = draft[j.id]
@@ -1223,20 +1256,6 @@ function GroupManageModal({
           what: `${tier} · effective date`,
           before: r?.effective_from ?? '—',
           after: d.effectiveFrom || '—',
-        })
-      }
-      if (d.onMobile !== (j.record_job !== false)) {
-        out.push({
-          what: `${tier} · show on mobile apps work entry`,
-          before: j.record_job !== false ? 'Yes' : 'No',
-          after: d.onMobile ? 'Yes' : 'No',
-        })
-      }
-      if (d.onMill !== (j.show_on_mill !== false)) {
-        out.push({
-          what: `${tier} · show on mill performance`,
-          before: j.show_on_mill !== false ? 'Yes' : 'No',
-          after: d.onMill ? 'Yes' : 'No',
         })
       }
     }
@@ -1288,12 +1307,13 @@ function GroupManageModal({
           if (error) throw new Error(saveMessage(error.message))
         }
 
-        // Both switches live on the jobs row, and both arrived after the
-        // first release — a database that has not had setup.sql re-run says
-        // which column is missing rather than showing a Postgres error.
+        // Both switches are one answer for the whole work, written onto
+        // every tier's row. They live on the jobs row and arrived after
+        // the first release — a database that has not had setup.sql re-run
+        // says which column is missing rather than a raw Postgres error.
         const flags: Record<string, boolean> = {}
-        if (d.onMobile !== (j.record_job !== false)) flags.record_job = d.onMobile
-        if (d.onMill !== (j.show_on_mill !== false)) flags.show_on_mill = d.onMill
+        if ((j.record_job !== false) !== onMobile) flags.record_job = onMobile
+        if ((j.show_on_mill !== false) !== onMill) flags.show_on_mill = onMill
         if (Object.keys(flags).length > 0) {
           const { error } = await supabase.from('jobs').update(flags).eq('id', j.id)
           if (error) {
@@ -1582,59 +1602,59 @@ function GroupManageModal({
                   ))}
                 </tr>
 
+                {/* ONE answer for the whole work, not one per tier: the
+                    record is entered once by the operator and, approved,
+                    pays every tier its own rate. */}
                 <tr>
                   <th scope="row">Show on mobile apps work entry</th>
-                  {jobs.map((j) => (
-                    <td key={j.id}>
-                      {editing ? (
-                        <label
-                          className="checkbox tickword"
-                          style={{ margin: 0 }}
-                          title="Untick for an incentive or support rate — paid through payroll, never offered as a record to submit."
-                        >
-                          <input
-                            type="checkbox"
-                            checked={draft[j.id]?.onMobile ?? true}
-                            onChange={(e) => patch(j.id, { onMobile: e.target.checked })}
-                          />{' '}
-                          <span className="tickword-text">
-                            {(draft[j.id]?.onMobile ?? true)
-                              ? 'Shown on mobile apps'
-                              : 'Not shown on mobile apps'}
-                          </span>
-                        </label>
-                      ) : (j.record_job !== false) ? (
-                        <span className="tickmark yes">✓ Shown on mobile apps</span>
-                      ) : (
-                        <span className="tickmark no">✕ Not shown on mobile apps</span>
-                      )}
-                    </td>
-                  ))}
+                  <td colSpan={jobs.length}>
+                    {editing ? (
+                      <label
+                        className="checkbox tickword"
+                        style={{ margin: 0 }}
+                        title="One setting for this work across every tier. Untick for an incentive or support rate — paid through payroll, never offered as a record to submit."
+                      >
+                        <input
+                          type="checkbox"
+                          checked={onMobile}
+                          onChange={(e) => setOnMobile(e.target.checked)}
+                        />{' '}
+                        <span className="tickword-text">
+                          {onMobile ? 'Shown on mobile apps' : 'Not shown on mobile apps'}
+                        </span>
+                      </label>
+                    ) : groupOnMobile ? (
+                      <span className="tickmark yes">✓ Shown on mobile apps</span>
+                    ) : (
+                      <span className="tickmark no">✕ Not shown on mobile apps</span>
+                    )}
+                  </td>
                 </tr>
 
                 <tr>
                   <th scope="row">Show on mill performance</th>
-                  {jobs.map((j) => (
-                    <td key={j.id}>
-                      {editing ? (
-                        <label
-                          className="checkbox"
-                          style={{ margin: 0 }}
-                          title="Ticked: this work is counted on the mobile Mill output dashboard."
-                        >
-                          <input
-                            type="checkbox"
-                            checked={draft[j.id]?.onMill ?? true}
-                            onChange={(e) => patch(j.id, { onMill: e.target.checked })}
-                          />
-                        </label>
-                      ) : (j.show_on_mill !== false) ? (
-                        <span className="tickmark yes" aria-label="Yes">✓</span>
-                      ) : (
-                        <span className="tickmark no" aria-label="No">✕</span>
-                      )}
-                    </td>
-                  ))}
+                  <td colSpan={jobs.length}>
+                    {editing ? (
+                      <label
+                        className="checkbox tickword"
+                        style={{ margin: 0 }}
+                        title="One setting for this work across every tier. Ticked: this work is counted on the mobile Mill output dashboard."
+                      >
+                        <input
+                          type="checkbox"
+                          checked={onMill}
+                          onChange={(e) => setOnMill(e.target.checked)}
+                        />{' '}
+                        <span className="tickword-text">
+                          {onMill ? 'Counted on mill performance' : 'Not counted on mill performance'}
+                        </span>
+                      </label>
+                    ) : groupOnMill ? (
+                      <span className="tickmark yes">✓ Counted on mill performance</span>
+                    ) : (
+                      <span className="tickmark no">✕ Not counted on mill performance</span>
+                    )}
+                  </td>
                 </tr>
 
               </tbody>
@@ -2007,7 +2027,7 @@ function HistoryList({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search work description…"
+            placeholder="Search to filter…"
             style={{ minWidth: '220px' }}
           />
         </div>
