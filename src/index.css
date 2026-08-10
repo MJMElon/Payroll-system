@@ -2411,6 +2411,31 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .pr-manage tbody td { min-width: 12rem; }
 .pr-manage input { width: 100%; min-width: 0; }
 .pr-manage-edit { display: flex; flex-direction: column; gap: 0.35rem; }
+/* The edit face keeps the read face's layout — number where the number
+   was, unit under it, date where the date was. Inputs are drawn as quietly
+   as the text they replace; the dashed underline is the only hint a cell
+   has gone live. */
+.pr-manage .quiet-input,
+.pr-manage input.quiet-input {
+  border: none; border-bottom: 1px dashed var(--accent);
+  border-radius: 0; background: transparent;
+  padding: 0 0.1rem; min-height: 0; font: inherit;
+}
+.pr-manage .quiet-input.num { width: 6ch; font-weight: 700; }
+.pr-manage .quiet-input.date { width: auto; font-size: inherit; }
+.pr-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
+/* The tiered lines right-align their numbers in view; keep the boxes on
+   the same edge while editing. */
+.pr-manage-edit .rate-tiered { align-items: flex-end; }
+.pr-manage-edit .rate-tier-line { display: inline-flex; align-items: baseline; }
+/* The unit sits under the number as a small muted line in view — its
+   picker takes the same seat, at the same size. */
+.pr-manage-edit .ui-select-trigger {
+  min-height: 0; padding: 0.15rem 0.5rem; font-size: 0.8rem; color: var(--muted);
+}
+.pr-manage .checkbox.tickword {
+  font-size: 1rem; font-weight: 800; color: var(--muted); white-space: nowrap;
+}
 
 /* A yes/no answer read at a glance, where a disabled tick box would look
    like something you were meant to be able to press. */

@@ -1606,6 +1606,7 @@ function GroupManageModal({
                   <th scope="row" className="pr-manage-work">
                     {editing ? (
                       <input
+                        className="quiet-input"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         aria-label="Work description"
@@ -1621,29 +1622,48 @@ function GroupManageModal({
                     return (
                       <td key={j.id}>
                         {editing ? (
+                          /* Same shape as the read face — the number where
+                             the number was, the unit under it — only now the
+                             number is a box and the unit is its picker. */
                           <div className="pr-manage-edit">
+                            {tiered ? (
+                              <span className="rate-tiered">
+                                <span className="rate-tier-line">
+                                  <span className="rate-tier-lbl">1st–4th</span>
+                                  <input
+                                    className="quiet-input num"
+                                    inputMode="decimal"
+                                    value={d?.rate ?? ''}
+                                    onChange={(e) => patch(j.id, { rate: e.target.value })}
+                                    aria-label={`${gradeName(j.grade_id)} tier 1 rate`}
+                                  />
+                                </span>
+                                <span className="rate-tier-line">
+                                  <span className="rate-tier-lbl">5th+</span>
+                                  <input
+                                    className="quiet-input num"
+                                    inputMode="decimal"
+                                    value={d?.tier2 ?? ''}
+                                    onChange={(e) => patch(j.id, { tier2: e.target.value })}
+                                    aria-label={`${gradeName(j.grade_id)} tier 2 rate`}
+                                  />
+                                </span>
+                              </span>
+                            ) : (
+                              <input
+                                className="quiet-input num"
+                                inputMode="decimal"
+                                value={d?.rate ?? ''}
+                                onChange={(e) => patch(j.id, { rate: e.target.value })}
+                                aria-label={`${gradeName(j.grade_id)} rate`}
+                              />
+                            )}
                             <UnitPicker
                               allowTiered
                               value={d?.unit ?? j.unit}
                               onChange={(v) => patch(j.id, { unit: v })}
                               ariaLabel={`${gradeName(j.grade_id)} unit`}
                             />
-                            <input
-                              inputMode="decimal"
-                              value={d?.rate ?? ''}
-                              onChange={(e) => patch(j.id, { rate: e.target.value })}
-                              aria-label={`${gradeName(j.grade_id)} ${tiered ? 'tier 1 rate' : 'rate'}`}
-                              placeholder={tiered ? 'Tier 1 — 1st to 4th /hr' : 'Piece rate (RM)'}
-                            />
-                            {tiered && (
-                              <input
-                                inputMode="decimal"
-                                value={d?.tier2 ?? ''}
-                                onChange={(e) => patch(j.id, { tier2: e.target.value })}
-                                aria-label={`${gradeName(j.grade_id)} tier 2 rate`}
-                                placeholder="Tier 2 — 5th onward /hr"
-                              />
-                            )}
                           </div>
                         ) : (
                           <>
@@ -1662,6 +1682,7 @@ function GroupManageModal({
                     <td key={j.id}>
                       {editing ? (
                         <input
+                          className="quiet-input date"
                           type="date"
                           value={draft[j.id]?.effectiveFrom ?? ''}
                           onChange={(e) => patch(j.id, { effectiveFrom: e.target.value })}
@@ -1680,7 +1701,7 @@ function GroupManageModal({
                     <td key={j.id}>
                       {editing ? (
                         <label
-                          className="checkbox"
+                          className="checkbox tickword"
                           style={{ margin: 0 }}
                           title="Untick for an incentive or support rate — paid through payroll, never offered as a record to submit."
                         >
@@ -1688,12 +1709,15 @@ function GroupManageModal({
                             type="checkbox"
                             checked={draft[j.id]?.onMobile ?? true}
                             onChange={(e) => patch(j.id, { onMobile: e.target.checked })}
-                          />
+                          />{' '}
+                          {(draft[j.id]?.onMobile ?? true)
+                            ? 'Shown on mobile apps'
+                            : 'Not shown on mobile apps'}
                         </label>
                       ) : (j.record_job !== false) ? (
-                        <span className="tickmark yes" aria-label="Yes">✓</span>
+                        <span className="tickmark yes">✓ Shown on mobile apps</span>
                       ) : (
-                        <span className="tickmark no" aria-label="No">✕</span>
+                        <span className="tickmark no">✕ Not shown on mobile apps</span>
                       )}
                     </td>
                   ))}
