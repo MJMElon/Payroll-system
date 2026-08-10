@@ -377,18 +377,20 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
     0 6px 16px rgba(25, 35, 50, 0.13);
 }
 
-/* Page sidebar (e.g. Piece Rate Module sections) */
-.sidebar-layout { display: flex; gap: 1.5rem; align-items: flex-start; }
+/* Page sidebar (e.g. Piece Rate Module sections). Kept tight against the
+   left edge: the tables beside it are the wide part of the page, and every
+   pixel the rail gives up is a pixel of column width. */
+.sidebar-layout { display: flex; gap: 1rem; align-items: flex-start; }
 .sidebar-nav {
   display: flex; flex-direction: column; gap: 0.15rem;
-  min-width: 190px; flex-shrink: 0;
-  border-right: 1px solid var(--border); padding-right: 1rem;
+  min-width: 165px; flex-shrink: 0;
+  border-right: 1px solid var(--border); padding-right: 0.7rem;
 }
 .sidebar-link {
-  display: flex; align-items: center; gap: 0.6rem;
+  display: flex; align-items: center; gap: 0.5rem;
   appearance: none; background: none; border: none; cursor: pointer;
-  text-align: left; padding: 0.6rem 0.7rem; border-radius: 10px;
-  font-size: 0.92rem; color: var(--muted);
+  text-align: left; padding: 0.55rem 0.55rem; border-radius: 10px;
+  font-size: 0.88rem; color: var(--muted);
 }
 .sidebar-link svg { flex-shrink: 0; }
 .sidebar-link .count-badge.static { margin-left: auto; }
@@ -1405,6 +1407,24 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-param { font-weight: 700; font-size: 0.95rem; font-family: 'Montserrat', sans-serif; }
 
 /* Entry rows (Record + Profile lists) */
+/* A history row with its pencil riding beside it — the row stays the
+   tap-to-open button it was, the pencil is its own smaller target. */
+.mob-entry-wrap { display: flex; align-items: stretch; gap: 0.35rem; }
+.mob-entry-wrap .mob-entry { flex: 1; min-width: 0; }
+.mob-entry-pen {
+  flex: none; width: 38px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  display: flex; align-items: center; justify-content: center;
+}
+.mob-entry-pen:hover { border-color: var(--accent); color: var(--accent-strong); }
+.mob-entry-edit {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.55rem 0.6rem; border-radius: 12px;
+  background: var(--bg); border: 1px solid var(--border);
+}
+.mob-entry-edit-row { display: flex; gap: 0.4rem; align-items: center; }
+.mob-entry-edit-row .mob-input { flex: 1; min-width: 0; }
+
 .mob-entry {
   appearance: none; background: none; border: none; cursor: pointer; text-align: left;
   display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
@@ -2377,19 +2397,69 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* line, so a whole batch of rates goes in without reopening.           */
 /* ------------------------------------------------------------------ */
 /* Manage window — the contract read across: one column per tier tag that
-   is paid for the work, and what each of them gets down the rows. */
+   is paid for the work, and what each of them gets down the rows. Wider
+   than an ordinary window and loose on its feet, so three tier columns
+   read as three columns rather than as one crowded block. */
+.modal.modal-manage { max-width: min(1180px, 96vw); }
 .pr-manage { min-width: max-content; }
-.pr-manage th, .pr-manage td { vertical-align: top; }
+.pr-manage th, .pr-manage td { vertical-align: top; padding: 0.85rem 1.4rem; }
 /* The row labels down the left are quieter than the tier names on top —
    they name the line, the tier columns are what is being compared. */
 .pr-manage tbody th {
   text-align: left; font-weight: 600; color: var(--muted);
-  white-space: nowrap; padding-right: 1.2rem;
+  white-space: nowrap; padding-right: 1.6rem;
 }
-/* The work description sits where the two headings meet, so the window
-   says which job before it says who is paid for it. */
 .pr-manage-corner { font-weight: 800; color: var(--accent-strong); }
-.pr-manage tbody td { min-width: 9rem; }
+/* `.table` only clears the last row's cell borders, not its row label. */
+.pr-manage tr:last-child th { border-bottom: none; }
+/* The work description is the one thing on the sheet that names what all
+   the columns are about, so it carries the weight the labels do not. */
+/* Beats `.table th`, which sets every heading in small uppercase — right
+   for a column label, wrong for the work's actual name. */
+.table th.pr-manage-work {
+  font-size: 1rem; font-weight: 700; color: var(--text);
+  text-transform: none; letter-spacing: 0;
+}
+.pr-manage tbody td { min-width: 12rem; }
+.pr-manage input { width: 100%; min-width: 0; }
+.pr-manage-edit { display: flex; flex-direction: column; gap: 0.35rem; }
+/* The edit face keeps the read face's layout — number where the number
+   was, unit under it, date where the date was. Inputs are drawn as quietly
+   as the text they replace; the dashed underline is the only hint a cell
+   has gone live. */
+.pr-manage .quiet-input,
+.pr-manage input.quiet-input {
+  border: none; border-bottom: 1px dashed var(--accent);
+  border-radius: 0; background: transparent;
+  padding: 0 0.1rem; min-height: 0; font: inherit;
+}
+.pr-manage .quiet-input.num { width: 6ch; font-weight: 700; }
+.pr-manage .quiet-input.date { width: auto; font-size: inherit; }
+.pr-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
+/* The tiered lines right-align their numbers in view; keep the boxes on
+   the same edge while editing. */
+.pr-manage-edit .rate-tiered { align-items: flex-end; }
+.pr-manage-edit .rate-tier-line { display: inline-flex; align-items: baseline; }
+/* The unit sits under the number as a small muted line in view — its
+   picker takes the same seat, at the same size. */
+.pr-manage-edit .ui-select-trigger {
+  min-height: 0; padding: 0.15rem 0.5rem; font-size: 0.8rem; color: var(--muted);
+}
+.pr-manage .checkbox.tickword {
+  font-size: 1rem; font-weight: 800; color: var(--muted); white-space: nowrap;
+}
+
+/* A yes/no answer read at a glance, where a disabled tick box would look
+   like something you were meant to be able to press. */
+.tickmark { font-weight: 800; font-size: 1rem; }
+.tickmark.yes { color: #1d7a45; }
+.tickmark.no { color: var(--muted); }
+
+/* Window tools — history, edit, archive — in the corner beside the close. */
+.manage-tools { gap: 0.3rem; }
+/* Pressed state for a tool that switches the window to another face. */
+.icon-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.nowrap { white-space: nowrap; }
 
 .modal.modal-xwide { max-width: min(1320px, 96vw); }
 /* Paid by the hour puts two more columns on every line, so the window
@@ -2441,6 +2511,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* Column names ride at the top on a wide window; on a narrow one they
    move into each cell so a stacked row still says what it is. */
 .pr-cell-label { display: none; font-size: 0.7rem; font-weight: 700; color: var(--muted); }
+
+/* The verify/approve window shows the proposal as ONE read-only line under
+   the same column names as the create window. No dropdown ever opens in
+   it, so it does not need the create grid's landing room. */
+.pr-grid.pr-confirm { min-height: 0; }
+.pr-cell-val {
+  display: flex; align-items: center; min-height: 40px;
+  font-size: 0.92rem; overflow-wrap: anywhere;
+}
 
 .pr-rate-cell { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
 .pr-tier-inputs { display: flex; gap: 0.3rem; }

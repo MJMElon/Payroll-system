@@ -127,6 +127,13 @@ const EyeIcon = () => (
     <circle cx="12" cy="12" r="3" />
   </svg>
 )
+const PencilIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+  </svg>
+)
+
 const TrashIcon = () => (
   <svg {...iconProps}>
     <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
@@ -183,6 +190,7 @@ export default function Operation() {
   // inside the pop-out shows its new status without closing anything.
   const [detailKey, setDetailKey] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [editEntry, setEditEntry] = useState<ProductionEntry | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -286,6 +294,7 @@ export default function Operation() {
   // Adding and deleting follow their own ticks from the tag editor (Work
   // entry setting: Add New / Delete); managers and tier 1 hold every tick.
   const canAddEntry = canManage || myCaps.includes('data-entry')
+  const canEditEntry = canManage || myCaps.includes('edit-entry')
   const canDeleteEntry = canManage || myCaps.includes('delete-entry')
 
   const bestRate = useMemo(() => {
@@ -610,6 +619,19 @@ export default function Operation() {
                     >
                       <EyeIcon />
                     </button>
+                    {canEditEntry && g.entries.every(canModify) && (
+                      <button
+                        className="icon-btn sm"
+                        title={g.entries.length > 1 ? 'Open to edit one of these entries' : 'Edit this work record'}
+                        aria-label={`Edit ${personName(first)} ${jobName(g.jobId)}`}
+                        disabled={busy === g.key}
+                        onClick={() =>
+                          g.entries.length === 1 ? setEditEntry(g.entries[0]) : setDetailKey(g.key)
+                        }
+                      >
+                        <PencilIcon />
+                      </button>
+                    )}
                     {canDrop && (
                       <button
                         className="icon-btn sm danger"
@@ -847,6 +869,31 @@ export default function Operation() {
           badge={badge}
           onAct={act}
           onActMany={actMany}
+          canEditFor={(e) => canEditEntry && canModify(e)}
+          onEdit={(e) => {
+            setDetailKey(null)
+            setEditEntry(e)
+          }}
+        />
+      )}
+
+      {editEntry && (
+        <AddRecordModal
+          stations={stations}
+          jobs={jobs}
+          people={people}
+          bestRate={bestRate}
+          amountFor={amountFor}
+          lockedPeriods={lockedPeriods}
+          presetStationId={editEntry.station_id}
+          myId={profile?.id ?? null}
+          entry={editEntry}
+          onClose={() => setEditEntry(null)}
+          onSaved={() => {
+            setEditEntry(null)
+            setNotice('Entry updated — it goes through verify and approve again.')
+            loadEntries()
+          }}
         />
       )}
     </div>
@@ -877,6 +924,8 @@ function GroupModal({
   badge,
   onAct,
   onActMany,
+  canEditFor,
+  onEdit,
 }: {
   group: WorkGroup
   onClose: () => void
@@ -894,6 +943,8 @@ function GroupModal({
   badge: (s: string) => JSX.Element
   onAct: (e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') => void
   onActMany: (list: ProductionEntry[], next: 'verified' | 'approved') => void
+  canEditFor: (e: ProductionEntry) => boolean
+  onEdit: (e: ProductionEntry) => void
 }) {
   const overlay = useOverlayClose(onClose)
   // A clicked photo floats over the record instead of leaving for a tab,
@@ -1029,6 +1080,16 @@ function GroupModal({
                             )}
                           </td>
                           <td className="right nowrap op-tl-actions">
+                            {canEditFor(e) && (
+                              <button
+                                className="linkbtn"
+                                disabled={busy === e.id}
+                                title="Edit this entry"
+                                onClick={() => onEdit(e)}
+                              >
+                                ✎ Edit
+                              </button>
+                            )}
                             {step === 'verified' && (
                               <button className="linkbtn" disabled={busy === e.id} onClick={() => onAct(e, 'verified')}>
                                 ✓ Verify
@@ -1171,6 +1232,7 @@ function AddRecordModal({
   lockedPeriods,
   presetStationId,
   myId,
+  entry = null,
   onClose,
   onSaved,
 }: {
@@ -1182,15 +1244,18 @@ function AddRecordModal({
   lockedPeriods: { period_start: string; period_end: string }[]
   presetStationId: string | null
   myId: string | null
+  /** An existing entry turns the window into its editor: same fields,
+   *  prefilled, and saving resubmits it through verify and approve. */
+  entry?: ProductionEntry | null
   onClose: () => void
   onSaved: () => void
 }) {
   const overlay = useOverlayClose(onClose)
-  const [workDate, setWorkDate] = useState(todayISO())
-  const [stationId, setStationId] = useState(presetStationId ?? '')
-  const [jobId, setJobId] = useState('')
-  const [employeeId, setEmployeeId] = useState('')
-  const [quantity, setQuantity] = useState('')
+  const [workDate, setWorkDate] = useState(entry?.work_date ?? todayISO())
+  const [stationId, setStationId] = useState(entry?.station_id ?? presetStationId ?? '')
+  const [jobId, setJobId] = useState(entry?.job_id ?? '')
+  const [employeeId, setEmployeeId] = useState(entry?.user_id ?? '')
+  const [quantity, setQuantity] = useState(entry ? String(Number(entry.quantity)) : '')
   const [photo, setPhoto] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -1239,22 +1304,51 @@ function AddRecordModal({
     if (qty > 200 && !window.confirm(`Work done ${qty} looks unusually large. Save anyway?`)) return
     setSaving(true)
     try {
-      const { data, error: insErr } = await supabase
-        .from('production_entries')
-        .insert({
-          work_date: workDate,
-          station_id: stationId,
-          job_id: jobId,
-          user_id: employeeId,
-          quantity: qty,
-          created_by: myId,
-          // Desktop entries join the same verify -> approve queue as
-          // mobile ones.
-          approval_status: 'pending',
-        })
-        .select()
-        .single()
-      if (insErr) throw new Error(insErr.message)
+      let data: { id: string } | null = null
+      if (entry) {
+        // A fixed entry goes back through the queue — otherwise editing
+        // an approved number would smuggle it past verify and approve.
+        const { data: rows, error: updErr } = await supabase
+          .from('production_entries')
+          .update({
+            work_date: workDate,
+            station_id: stationId,
+            job_id: jobId,
+            user_id: employeeId,
+            quantity: qty,
+            approval_status: 'pending',
+            verified_by: null,
+            verified_at: null,
+            approved_by: null,
+            approved_at: null,
+          } as never)
+          .eq('id', entry.id)
+          .select('id')
+        if (updErr) throw new Error(updErr.message)
+        // Row security refuses silently: success with zero rows.
+        if (!rows || rows.length === 0) {
+          throw new Error('The database would not let you edit this entry.')
+        }
+        data = rows[0]
+      } else {
+        const { data: made, error: insErr } = await supabase
+          .from('production_entries')
+          .insert({
+            work_date: workDate,
+            station_id: stationId,
+            job_id: jobId,
+            user_id: employeeId,
+            quantity: qty,
+            created_by: myId,
+            // Desktop entries join the same verify -> approve queue as
+            // mobile ones.
+            approval_status: 'pending',
+          })
+          .select()
+          .single()
+        if (insErr) throw new Error(insErr.message)
+        data = made
+      }
 
       if (photo && data) {
         const isImage = photo.type.startsWith('image/')
@@ -1283,7 +1377,7 @@ function AddRecordModal({
     <div className="modal-overlay" {...overlay}>
       <form className="modal modal-view" onSubmit={save}>
         <div className="row-form spread">
-          <h2>Add Job Record</h2>
+          <h2>{entry ? 'Edit Job Record' : 'Add Job Record'}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 

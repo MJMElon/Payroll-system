@@ -27,9 +27,22 @@ export function useWideShell(gutter = 20, cap = Number.POSITIVE_INFINITY) {
   useLayoutEffect(() => {
     function measure() {
       const vw = document.documentElement.clientWidth
-      const maxw =
-        parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--maxw')) || 1080
-      const contentInner = maxw - 40 // .content's own 1.25rem left+right padding
+      // The offset must center the widened shell against the box it really
+      // sits in. Layout gives some routes a WIDER content column
+      // (.content-wide, e.g. Piece Rate), so measure the actual box —
+      // assuming --maxw there would shove the page off the left edge by
+      // half the difference. Fall back to --maxw when no box is mounted.
+      const box = document.querySelector<HTMLElement>('main.content')
+      let contentInner: number
+      if (box) {
+        const cs = getComputedStyle(box)
+        contentInner =
+          box.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+      } else {
+        const maxw =
+          parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--maxw')) || 1080
+        contentInner = Math.min(maxw, vw) - 40 // .content's own 1.25rem side padding
+      }
       const wide = Math.min(vw - gutter * 2, cap)
       if (wide > contentInner) {
         setStyle({ width: wide, marginLeft: (contentInner - wide) / 2 })

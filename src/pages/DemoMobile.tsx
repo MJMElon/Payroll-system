@@ -977,6 +977,7 @@ function PerformanceTab({
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
+        canEdit={tierCaps.includes('edit-entry')}
         onOpen={setDetail}
         onBack={() => setSub(null)}
       />
@@ -1366,6 +1367,32 @@ function PerformanceTab({
   )
 }
 
+/**
+ * One entry per work name.
+ *
+ * A work type is priced once per tier tag, so a Station Head — who may
+ * record their own tier's work and everything below it — would otherwise be
+ * offered "FFB Cages Tipped" three times over with nothing to tell the
+ * lines apart. Keep the contract closest to the person's own rank: their
+ * own tier when it is priced, then the tier below it, and a contract with
+ * no tag at all only when nothing else fits.
+ */
+function onePerWork(list: Job[], tier: Grade | null, grades: Grade[]): Job[] {
+  const rank = (j: Job) => {
+    if (!j.grade_id) return 1000
+    const g = grades.find((x) => x.id === j.grade_id)
+    if (!g) return 999
+    // Distance DOWN from the viewer's own rank — their own tier scores 0.
+    return tier ? g.sort_order - tier.sort_order : g.sort_order
+  }
+  const best = new Map<string, Job>()
+  for (const j of list) {
+    const seen = best.get(j.name)
+    if (!seen || rank(j) < rank(seen)) best.set(j.name, j)
+  }
+  return [...best.values()]
+}
+
 // Hard cap on hourly piece-work photos — a station's hourly_target is a
 // visual goal and may be lower, but no more than this converts to pay.
 const HOURLY_PHOTO_CAP = 8
@@ -1479,12 +1506,17 @@ function StationWorkPanel({
   // only, and ticked as a JOB RECORD — incentives and other support rates
   // are paid but never offered as a record to submit.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
-  const approvedJobs = jobs.filter(
-    (j) =>
-      j.station_id === station.id &&
-      j.approval_status === 'approved' &&
-      j.record_job !== false &&
-      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  const approvedJobs = onePerWork(
+    jobs.filter(
+      (j) =>
+        j.station_id === station.id &&
+        j.approval_status === 'approved' &&
+        j.active &&
+        j.record_job !== false &&
+        (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+    ),
+    tier,
+    grades,
   )
 
   // Auto-pick the job when there's only one option; otherwise wait for a choice.
@@ -2376,11 +2408,16 @@ function RecordTab({
   // JOB RECORD are offered: incentives and other support rates are priced
   // for payroll but are not a record anyone submits.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
-  const stationJobs = jobs.filter(
-    (j) =>
-      j.station_id === stationId &&
-      j.record_job !== false &&
-      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  const stationJobs = onePerWork(
+    jobs.filter(
+      (j) =>
+        j.station_id === stationId &&
+        j.active &&
+        j.record_job !== false &&
+        (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+    ),
+    tier,
+    grades,
   )
   const job = jobs.find((j) => j.id === jobId)
   const rate = jobId ? rateFor(jobId) : 0
@@ -2514,6 +2551,7 @@ function RecordTab({
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
+        canEdit={effectiveCapabilities(tier).includes('edit-entry')}
         onOpen={setDetail}
         onBack={() => setView('form')}
       />
@@ -2831,6 +2869,7 @@ function RecordHistory({
   stations,
   jobs,
   amountFor,
+  canEdit,
   onOpen,
   onBack,
 }: {
@@ -2838,12 +2877,60 @@ function RecordHistory({
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
+  /** The tier's Edit tick (Work entry setting) — without it, no pencil. */
+  canEdit: boolean
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
   const [rangeKey, setRangeKey] = useState<(typeof HISTORY_RANGES)[number]['key']>('today')
   const [rows, setRows] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
+  // The entry whose pencil was tapped, and the number being retyped.
+  const [editing, setEditing] = useState<ProductionEntry | null>(null)
+  const [editQty, setEditQty] = useState('')
+  const [editErr, setEditErr] = useState<string | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  // Only work still in (or thrown out of) the queue may be reworked —
+  // an approved number is settled.
+  const editable = (e: ProductionEntry) =>
+    canEdit && ['pending', 'rejected', undefined].includes(e.approval_status as never)
+
+  async function saveEdit() {
+    if (!editing) return
+    const qty = Number(editQty)
+    if (editQty.trim() === '' || !Number.isFinite(qty) || qty <= 0) {
+      return setEditErr('Work done must be a positive number.')
+    }
+    setSavingEdit(true)
+    setEditErr(null)
+    // A fixed entry goes back through verify and approve.
+    const { data, error } = await supabase
+      .from('production_entries')
+      .update({
+        quantity: qty,
+        approval_status: 'pending',
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      } as never)
+      .eq('id', editing.id)
+      .select('id')
+    setSavingEdit(false)
+    if (error) return setEditErr(error.message)
+    if (!data || data.length === 0) {
+      return setEditErr('The database would not let you edit this entry.')
+    }
+    setRows((rs) =>
+      rs.map((r) =>
+        r.id === editing.id
+          ? { ...r, quantity: qty, approval_status: 'pending', verified_by: null, approved_by: null }
+          : r,
+      ),
+    )
+    setEditing(null)
+  }
 
   useEffect(() => {
     if (!profileId) return
@@ -2899,23 +2986,64 @@ function RecordHistory({
               {rangeKey === 'today' ? 'Nothing submitted today.' : 'Nothing submitted in this range.'}
             </div>
           ) : (
-            rows.map((e) => (
-              <button className="mob-entry" key={e.id} onClick={() => onOpen(e)}>
-                <span className="mob-entry-main">
+            rows.map((e) =>
+              editing?.id === e.id ? (
+                <div className="mob-entry-edit" key={e.id}>
                   <span className="mob-entry-name">{jobName(e.job_id)}</span>
-                  <span className="mob-station-meta">
-                    {stationName(e.station_id)} ·{' '}
-                    {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-                      day: '2-digit', month: 'short',
-                    })}
-                  </span>
-                </span>
-                <span className="mob-entry-side">
-                  <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-                  {statusChip(e.approval_status)}
-                </span>
-              </button>
-            ))
+                  {editErr && <div className="error">{editErr}</div>}
+                  <div className="mob-entry-edit-row">
+                    <input
+                      className="mob-input"
+                      inputMode="decimal"
+                      value={editQty}
+                      onChange={(ev) => setEditQty(ev.target.value)}
+                      aria-label="Work done"
+                      autoFocus
+                    />
+                    <button className="mob-mini ghost" onClick={() => setEditing(null)}>Cancel</button>
+                    <button className="mob-mini go" disabled={savingEdit} onClick={saveEdit}>
+                      {savingEdit ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                  <div className="mob-station-meta">Saving sends it for verification again.</div>
+                </div>
+              ) : (
+                <div className="mob-entry-wrap" key={e.id}>
+                  <button className="mob-entry" onClick={() => onOpen(e)}>
+                    <span className="mob-entry-main">
+                      <span className="mob-entry-name">{jobName(e.job_id)}</span>
+                      <span className="mob-station-meta">
+                        {stationName(e.station_id)} ·{' '}
+                        {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+                          day: '2-digit', month: 'short',
+                        })}
+                      </span>
+                    </span>
+                    <span className="mob-entry-side">
+                      <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                      {statusChip(e.approval_status)}
+                    </span>
+                  </button>
+                  {editable(e) && (
+                    <button
+                      className="mob-entry-pen"
+                      title="Edit this record"
+                      aria-label={`Edit ${jobName(e.job_id)}`}
+                      onClick={() => {
+                        setEditing(e)
+                        setEditQty(String(Number(e.quantity)))
+                        setEditErr(null)
+                      }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ),
+            )
           )}
         </div>
       </div>
