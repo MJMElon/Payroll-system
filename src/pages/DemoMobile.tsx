@@ -891,7 +891,6 @@ function PerformanceTab({
   const payable = mtd.filter((e) => status(e) !== 'rejected')
   const cost = payable.reduce((s, e) => s + amountOf(e), 0)
   const mgmtWorkers = new Set(payable.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
-  const activeStations = new Set(payable.map((e) => e.station_id)).size
   // Never your own work — the same self-exclusion as the Approvals tab.
   const needsMe = (e: ProductionEntry) =>
     e.user_id !== profileId &&
@@ -899,8 +898,6 @@ function PerformanceTab({
   const awaiting = mtd.filter(needsMe)
   const rejectedWk = entries.filter((e) => status(e) === 'rejected' && e.work_date >= weekStart)
   const fmtMoney = (v: number) => (v >= 1000 ? `RM ${Math.round(v).toLocaleString()}` : RM(v))
-
-  const stationPct = approvalByStation(mtd, stations)
 
   // Payroll cost trend — last 6 months.
   const trend: { label: string; total: number }[] = []
@@ -914,9 +911,10 @@ function PerformanceTab({
     trend.push({ label: m.toLocaleDateString(undefined, { month: 'short' }), total: trendTotal })
   }
   const maxTrend = Math.max(1, ...trend.map((t) => t.total))
-  const fmtK = (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v).toString())
-
-  const flags = exceptionFlags(entries, mtd, stations, weekStart)
+  // Each month is every work record that was not rejected, priced at the
+  // rate in force on the day worked — so the bar IS the payout.
+  const fmtK = (v: number) =>
+    `RM ${v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v).toString()}`
 
   // Workforce (today).
   const today = todayISO()
@@ -996,20 +994,6 @@ function PerformanceTab({
     )
   }
 
-  const statFor = (sid: string) => {
-    const rows = mtd.filter((e) => e.station_id === sid)
-    const workers = new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
-    const output = rows.reduce((s, e) => s + e.quantity, 0)
-    // What the mill actually produced: only records that cleared approval.
-    // Pending work may still be rejected and rejected work never counted,
-    // so neither belongs in a figure read as output.
-    const approved = rows
-      .filter((e) => (e.approval_status ?? 'approved') === 'approved')
-      .reduce((s, e) => s + e.quantity, 0)
-    const done = rows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
-    const pct = rows.length > 0 ? Math.round((done / rows.length) * 100) : null
-    return { workers, output, approved, pct }
-  }
   /**
    * The Output record: every work set to "Show on mill performance", under
    * the station it belongs to, with what was approved against it this
@@ -1042,10 +1026,6 @@ function PerformanceTab({
       }))
       .filter((r) => r.works.length > 0)
   })()
-  const outputTotal = outputRecord.reduce(
-    (n, r) => n + r.works.reduce((m, w) => m + w.qty, 0),
-    0,
-  )
 
   // My own scorecard, against a target of everything I submit ending up
   // approved. Read as a meter over two windows: today first, then the week
@@ -1063,10 +1043,7 @@ function PerformanceTab({
   const reviews = canVerify || canFinal ? 1 : 0
 
   const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
-  const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
-  const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
-  const compliance = scopedRows.length > 0 ? Math.round((doneAll / scopedRows.length) * 100) : null
-  const monthLabel = new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+  const shortMonth = new Date().toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
   const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
 
   // WHICH dashboard this tab shows is set per tier, in Settings → Tags
@@ -1112,34 +1089,30 @@ function PerformanceTab({
         {showMill && (
           <>
             <div className="mob-card">
-              <div className="mob-card-label">Output record</div>
-              <div className="mob-sub">{monthLabel} · approved work records only</div>
+              <div className="mob-title">{shortMonth} Output Record</div>
               {outputRecord.length === 0 ? (
                 <div className="mob-sub">
                   No work is set to show here yet — tick “Show on mill performance”
                   on a piece rate.
                 </div>
               ) : (
-                <>
-                  {outputRecord.map((r) => (
-                    <div key={r.station.id}>
-                      <button className="mob-lineitem" onClick={() => setStation(r.station)}>
-                        <span className="mob-entry-name">{r.station.name}</span>
-                        <span className="mob-caret">›</span>
-                      </button>
-                      {r.works.map((w) => (
-                        <div className="mob-breakrow indent" key={w.name}>
-                          <span>{w.name}</span>
-                          <span className="mob-entry-amt">{fmtQty(w.qty)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                  <div className="mob-breakrow total">
-                    <span>Total approved output</span>
-                    <span className="mob-entry-amt">{fmtQty(outputTotal)}</span>
+                outputRecord.map((r) => (
+                  <div key={r.station.id}>
+                    {/* Still the way into the station's own records, but it
+                        reads as the heading of the works under it rather
+                        than as a row of its own. */}
+                    <button className="mob-breakrow station" onClick={() => setStation(r.station)}>
+                      <span>{r.station.name}</span>
+                      <span className="mob-caret">›</span>
+                    </button>
+                    {r.works.map((w) => (
+                      <div className="mob-breakrow indent" key={w.name}>
+                        <span>{w.name}</span>
+                        <span className="mob-entry-amt">{fmtQty(w.qty)}</span>
+                      </div>
+                    ))}
                   </div>
-                </>
+                ))
               )}
             </div>
 
@@ -1160,7 +1133,7 @@ function PerformanceTab({
             </div>
 
             <div className="mob-card">
-              <div className="mob-title">Payroll cost trend (6 months)</div>
+              <div className="mob-title">Payroll cost trend — RM (6 months)</div>
               <div className="mob-bars">
                 {trend.map((t) => (
                   <div className="mob-barrow" key={t.label}>
@@ -1266,130 +1239,17 @@ function PerformanceTab({
         )}
 
         {(canVerify || canFinal) && showMill && (
-          <>
-            <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Management dashboard</div>
-
-            <div className="mob-card mob-highlight">
-              <div className="mob-field-label" style={{ color: '#aeb8c4' }}>Payroll cost MTD</div>
-              <div className="mob-big">{fmtMoney(cost)}</div>
-              <div className="mob-sub">
-                {mgmtWorkers} active worker{mgmtWorkers === 1 ? '' : 's'} across {activeStations} station{activeStations === 1 ? '' : 's'}
-              </div>
+          <div className="mob-card">
+            <div className="mob-title">Avg wage / worker</div>
+            <div className="mob-breakrow">
+              <span>{shortMonth} to date</span>
+              <span className="mob-entry-amt">
+                {mgmtWorkers > 0 ? fmtMoney(cost / mgmtWorkers) : '—'}
+              </span>
             </div>
-
-            <div className="mob-grid2">
-              <div className="mob-card">
-                <div className="mob-field-label">{canFinal ? 'Pending final' : 'Pending verify'}</div>
-                <div className="mob-stat">{awaiting.length}</div>
-              </div>
-              <div className="mob-card">
-                <div className="mob-field-label">Rejected this wk</div>
-                <div className="mob-stat">{rejectedWk.length}</div>
-              </div>
-            </div>
-            <div className="mob-grid2">
-              <div className="mob-card">
-                <div className="mob-field-label">Avg wage / worker</div>
-                <div className="mob-stat">{mgmtWorkers > 0 ? fmtMoney(cost / mgmtWorkers) : '—'}</div>
-              </div>
-              <div className="mob-card">
-                <div className="mob-field-label">Compliance %</div>
-                <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
-              </div>
-            </div>
-
-            {stationPct.length > 0 && !showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Approval completion by station</div>
-                <div className="mob-bars">
-                  {stationPct.map((s) => (
-                    <div className="mob-barrow" key={s.id}>
-                      <span className="lbl station">{s.name}</span>
-                      <span className="mob-bartrack">
-                        <div className={s.pct! < 80 ? 'best' : ''} style={{ width: `${s.pct}%` }} />
-                      </span>
-                      <span className="val">{s.pct}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Payroll cost trend (6 months)</div>
-                <div className="mob-bars">
-                  {trend.map((t) => (
-                    <div className="mob-barrow" key={t.label}>
-                      <span className="lbl">{t.label}</span>
-                      <span className="mob-bartrack">
-                        <div style={{ width: `${(t.total / maxTrend) * 100}%` }} />
-                      </span>
-                      <span className="val">{fmtK(t.total)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Exception flags</div>
-                {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
-                {flags.map((f, i) => (
-                  <div className={`mob-flag ${f.kind}`} key={i}>
-                    <div className="mob-flag-title">{f.title}</div>
-                    <div>{f.text}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Workforce</div>
-                <div className="mob-breakrow">
-                  <span>Active workers today</span>
-                  <span className="mob-entry-amt">{activeToday}</span>
-                </div>
-                <div className="mob-breakrow">
-                  <span>Records submitted today</span>
-                  <span className="mob-entry-amt">{todayRows.length}</span>
-                </div>
-                <div className="mob-breakrow">
-                  <span>Stations at full coverage</span>
-                  <span className="mob-entry-amt">{coveredToday} / {stations.length}</span>
-                </div>
-              </div>
-            )}
-          </>
+          </div>
         )}
 
-        {/* The way into a station's own records. Above the station tiers
-            the Mill performance card at the top already lists them. */}
-        {showKpi && stations.length > 0 && (
-        <div className="mob-card">
-          <div className="mob-card-label">Station records</div>
-          {stations.map((s) => {
-            const st = statFor(s.id)
-            return (
-              <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
-                <span>
-                  <span className="mob-entry-name">{s.name}</span>
-                  <span className="mob-station-meta" style={{ display: 'block' }}>
-                    {st.workers > 0 ? `${st.workers} worker${st.workers === 1 ? '' : 's'} · ` : ''}
-                    {st.pct == null ? 'no records' : `${st.pct}% approved`}
-                  </span>
-                </span>
-                <span className="mob-entry-side">
-                  <span className="mob-entry-amt">{fmtQty(st.output)}</span>
-                  <span className="mob-caret">›</span>
-                </span>
-              </button>
-            )
-          })}
-        </div>
-        )}
       </div>
     </>
   )

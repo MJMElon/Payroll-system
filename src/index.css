@@ -1488,6 +1488,13 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* A work line sits under the station it belongs to, so it is stepped in
    and the station name above it reads as the heading it is. */
 .mob-breakrow.indent { padding-left: 0.7rem; }
+/* The station line is still the way into that station's records, so it is
+   a button — reset to sit in the row it shares with the works below it. */
+button.mob-breakrow {
+  appearance: none; border: none; background: none; cursor: pointer;
+  width: 100%; text-align: left; font: inherit;
+}
+.mob-breakrow.station { color: var(--text); font-weight: 700; padding-top: 0.35rem; }
 .mob-breakrow.total {
   color: var(--text); font-weight: 800; border-top: 1px solid #e4e8ed;
   padding-top: 0.4rem; margin-top: 0.2rem; font-size: 0.92rem;
