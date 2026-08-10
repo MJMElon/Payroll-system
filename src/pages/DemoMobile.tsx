@@ -59,6 +59,14 @@ const ADMIN_TIER_NAMES = /^(admin|administrator|management)$/i
 
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
+/** 1st, 2nd, 3rd, 4th — for rate terms that count off units in an hour. */
+function ordinal(n: number) {
+  const tens = n % 100
+  const suffix =
+    tens >= 11 && tens <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'
+  return `${n}${suffix}`
+}
+
 // A tiered piece rate (e.g. cage tipping) pays Tier 1 for the first N units
 // done in an hour and Tier 2 for the rest — this is that threshold.
 const TIER1_UNIT_CAP = 4
@@ -1170,8 +1178,10 @@ function PerformanceTab({
             onClick={() => setSub('history')}
             onKeyDown={(ev) => (ev.key === 'Enter' || ev.key === ' ') && setSub('history')}
           >
-            <div className="mob-card-label">My work done</div>
-            <div className="mob-sub">Tap for the work record</div>
+            <div className="mob-cardhead">
+              <span className="mob-card-label">My work done</span>
+              <span className="mob-caret" aria-hidden="true">›</span>
+            </div>
             <div className="mob-bars">
               {myWeek.map((w) => {
                 const total = myQty(w)
@@ -1208,7 +1218,7 @@ function PerformanceTab({
         {showKpi && (
           <div className="mob-grid2">
             <button className="mob-card tapcard" onClick={() => setSub('pending')}>
-              <span className="mob-field-label">Pending verify</span>
+              <span className="mob-field-label">Pending Approval</span>
               <span className="mob-stat">{(reviews > 0 ? awaiting.length : 0) + myWaiting}</span>
             </button>
             <button className="mob-card tapcard" onClick={() => setSub('rejected')}>
@@ -1352,35 +1362,35 @@ function PerformanceTab({
             </div>
           </div>
         )}
-
-        {/* The way into a station's own records. Above the station tiers
-            the Mill performance card at the top already lists them. */}
-        {showKpi && stations.length > 0 && (
-        <div className="mob-card">
-          <div className="mob-card-label">Station records</div>
-          {stations.map((s) => {
-            const st = statFor(s.id)
-            return (
-              <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
-                <span>
-                  <span className="mob-entry-name">{s.name}</span>
-                  <span className="mob-station-meta" style={{ display: 'block' }}>
-                    {st.workers > 0 ? `${st.workers} worker${st.workers === 1 ? '' : 's'} · ` : ''}
-                    {st.pct == null ? 'no records' : `${st.pct}% approved`}
-                  </span>
-                </span>
-                <span className="mob-entry-side">
-                  <span className="mob-entry-amt">{fmtQty(st.output)}</span>
-                  <span className="mob-caret">›</span>
-                </span>
-              </button>
-            )
-          })}
-        </div>
-        )}
       </div>
     </>
   )
+}
+
+/**
+ * One entry per work name.
+ *
+ * A work type is priced once per tier tag, so a Station Head — who may
+ * record their own tier's work and everything below it — would otherwise be
+ * offered "FFB Cages Tipped" three times over with nothing to tell the
+ * lines apart. Keep the contract closest to the person's own rank: their
+ * own tier when it is priced, then the tier below it, and a contract with
+ * no tag at all only when nothing else fits.
+ */
+function onePerWork(list: Job[], tier: Grade | null, grades: Grade[]): Job[] {
+  const rank = (j: Job) => {
+    if (!j.grade_id) return 1000
+    const g = grades.find((x) => x.id === j.grade_id)
+    if (!g) return 999
+    // Distance DOWN from the viewer's own rank — their own tier scores 0.
+    return tier ? g.sort_order - tier.sort_order : g.sort_order
+  }
+  const best = new Map<string, Job>()
+  for (const j of list) {
+    const seen = best.get(j.name)
+    if (!seen || rank(j) < rank(seen)) best.set(j.name, j)
+  }
+  return [...best.values()]
 }
 
 // Hard cap on hourly piece-work photos — a station's hourly_target is a
@@ -1496,12 +1506,17 @@ function StationWorkPanel({
   // only, and ticked as a JOB RECORD — incentives and other support rates
   // are paid but never offered as a record to submit.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
-  const approvedJobs = jobs.filter(
-    (j) =>
-      j.station_id === station.id &&
-      j.approval_status === 'approved' &&
-      j.record_job !== false &&
-      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  const approvedJobs = onePerWork(
+    jobs.filter(
+      (j) =>
+        j.station_id === station.id &&
+        j.approval_status === 'approved' &&
+        j.active &&
+        j.record_job !== false &&
+        (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+    ),
+    tier,
+    grades,
   )
 
   // Auto-pick the job when there's only one option; otherwise wait for a choice.
@@ -2393,11 +2408,16 @@ function RecordTab({
   // JOB RECORD are offered: incentives and other support rates are priced
   // for payroll but are not a record anyone submits.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
-  const stationJobs = jobs.filter(
-    (j) =>
-      j.station_id === stationId &&
-      j.record_job !== false &&
-      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  const stationJobs = onePerWork(
+    jobs.filter(
+      (j) =>
+        j.station_id === stationId &&
+        j.active &&
+        j.record_job !== false &&
+        (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+    ),
+    tier,
+    grades,
   )
   const job = jobs.find((j) => j.id === jobId)
   const rate = jobId ? rateFor(jobId) : 0
@@ -4143,7 +4163,7 @@ function QueueScreen({
       </div>
 
       <div className="mob-body">
-        <MobSubHeader title={kind === 'pending' ? 'Pending verify' : 'Rejected'} onBack={onBack} />
+        <MobSubHeader title={kind === 'pending' ? 'Pending Approval' : 'Rejected'} onBack={onBack} />
 
         {loading ? (
           <p className="muted small">Loading…</p>
@@ -4500,33 +4520,25 @@ function MyNumbersSection({
   const total = paid.reduce((s, e) => s + amountFor(e.job_id, e.quantity), 0)
   const days = new Set(paid.map((e) => e.work_date)).size
   const avg = days > 0 ? total / days : 0
-  const waiting = entries.filter((e) =>
-    ['pending', 'verified'].includes(e.approval_status ?? ''),
-  ).length
 
+  // What is still waiting used to sit here as a fourth tile. It is not
+  // earnings — it is a queue, and it already has its own card above with
+  // the screen behind it.
   return (
     <>
-      <div className="mob-card-label" style={{ padding: '0 0.2rem' }}>
-        This month
+      <div className="mob-sectionhead">Earning record</div>
+      <div className="mob-card">
+        <div className="mob-field-label">This month earned</div>
+        <div className="mob-stat">{RM(total)}</div>
       </div>
       <div className="mob-grid2">
-        <div className="mob-card">
-          <div className="mob-field-label">Earned</div>
-          <div className="mob-stat">{RM(total)}</div>
-        </div>
         <div className="mob-card">
           <div className="mob-field-label">Days worked</div>
           <div className="mob-stat">{days}</div>
         </div>
-      </div>
-      <div className="mob-grid2">
         <div className="mob-card">
           <div className="mob-field-label">Avg / day</div>
           <div className="mob-stat">{RM(avg)}</div>
-        </div>
-        <div className="mob-card">
-          <div className="mob-field-label">Pending approval</div>
-          <div className="mob-stat">{waiting}</div>
         </div>
       </div>
     </>
@@ -4579,9 +4591,9 @@ function ContractSection({
     .filter((x) => x.rows.length > 0 || x.grade.id === tier?.id)
 
   /**
-   * One job's terms, spelled out. A tiered rate is two different prices
-   * depending on how much is done inside the hour, so it is written as the
-   * two conditions it is rather than squeezed into one arrow.
+   * One job's terms. A tiered rate is two prices depending on how much is
+   * done inside the hour, so it is two lines — but each line is as short
+   * as the thing it says: "1st – 4th/hr", not a sentence about it.
    */
   const JobRow = ({ job }: { job: Job }) => {
     const unit = job.unit.replace('/', '')
@@ -4600,14 +4612,14 @@ function ContractSection({
         ) : (
           <>
             <div className="mob-contract-term">
-              <span>First {TIER1_UNIT_CAP} {unit}s in an hour</span>
+              <span>1st – {ordinal(TIER1_UNIT_CAP)}/hr</span>
               <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
             </div>
             <div className="mob-contract-term">
-              <span>{TIER1_UNIT_CAP + 1}th onward, same hour</span>
+              <span>{ordinal(TIER1_UNIT_CAP + 1)} onward/hr</span>
               <span className="mob-entry-amt">{RM(tier2)}{job.unit}</span>
             </div>
-            <div className="mob-contract-note">Counts back to the first rate each new hour.</div>
+            <div className="mob-contract-note">Resets every hour.</div>
           </>
         )}
       </div>
