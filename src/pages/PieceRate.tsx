@@ -20,6 +20,7 @@ import { Link } from 'react-router-dom'
 import Select, { MultiSelect, type SelectOption } from '../components/Select'
 import { useAuth } from '../context/AuthContext'
 import { useOverlayClose } from '../lib/useOverlayClose'
+import { useWideShell } from '../lib/useWideShell'
 import { effectiveCapabilities, isEntitled, tagClass } from '../lib/tags'
 import {
   profileName,
@@ -92,6 +93,9 @@ export default function PieceRate() {
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // The masterlist pivots a column per tier tag, so this page wants the
+  // real window rather than the shared reading-width cap.
+  const wideStyle = useWideShell(48, 1560)
 
   async function load() {
     const [s, g, j, r] = await Promise.all([
@@ -189,7 +193,7 @@ export default function PieceRate() {
   }
 
   return (
-    <div className="stack">
+    <div className="stack" style={wideStyle}>
       <header className="module-bar">
         <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
       </header>
@@ -277,6 +281,11 @@ export default function PieceRate() {
               grades={grades}
               jobs={jobs.filter(visibleTo)}
               rates={rates}
+              currentRate={currentRate}
+              canManage={canEditRate}
+              canDelete={canDeleteRate}
+              onChanged={load}
+              onError={setError}
             />
           )}
         </div>
@@ -1030,7 +1039,6 @@ function RatesList({
 }) {
   const [stationFilter, setStationFilter] = useState('')
   const [search, setSearch] = useState('')
-  const [showInactive, setShowInactive] = useState(false)
   // The open Manage window is held by KEY, not by a snapshot of the group:
   // deactivating a tier or renaming the work reloads `jobs`, and the window
   // has to show the reloaded rows rather than the ones it opened with.
@@ -1039,7 +1047,9 @@ function RatesList({
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
 
   const filtered = jobs
-    .filter((j) => (showInactive ? true : j.active))
+    // Archived work is not listed here — Piece Rate History keeps it, and
+    // that is also where it is restored from.
+    .filter((j) => j.active)
     .filter((j) => (stationFilter ? j.station_id === stationFilter : true))
     .filter((j) => (search.trim() ? j.name.toLowerCase().includes(search.trim().toLowerCase()) : true))
 
@@ -1050,12 +1060,12 @@ function RatesList({
     ? groupJobs(jobs).find((g) => groupKey(g) === manageKey) ?? null
     : null
   const tagCols = tagColumns(grades, filtered)
-  const colCount = 3 + tagCols.length + 2 + (canManage ? 1 : 0)
+  const colCount = 3 + tagCols.length + 1 + (canManage ? 1 : 0)
 
   // Download the visible masterlist as CSV (opens directly in Excel).
   function exportCsv() {
     const esc = (v: string) => `"${v.replace(/"/g, '""')}"`
-    const head = ['Station', 'Work description', 'Unit', ...tagCols.map((c) => `${c.label} (RM)`), 'Effective date', 'Status']
+    const head = ['Station', 'Work description', 'Unit', ...tagCols.map((c) => `${c.label} (RM)`), 'Effective date']
     const lines = [head.map(esc).join(',')]
     for (const g of groups) {
       const dates = g.jobs
@@ -1073,7 +1083,6 @@ function RatesList({
           return r.tier2_rate != null ? `${r.rate} / ${r.tier2_rate}` : String(r.rate)
         }),
         dates.length ? dates[dates.length - 1] : '',
-        g.jobs.some((j) => j.active) ? 'Active' : 'Inactive',
       ]
       lines.push(cells.map(esc).join(','))
     }
@@ -1117,7 +1126,6 @@ function RatesList({
                 <th key={c.key} className="right">{c.label} (RM)</th>
               ))}
               <th>Effective date</th>
-              <th>Status</th>
               {canManage && <th className="right">Actions</th>}
             </tr>
           </thead>
@@ -1130,16 +1138,15 @@ function RatesList({
               </tr>
             )}
             {groups.map((g) => {
-              const rowActive = g.jobs.some((j) => j.active)
               const dates = g.jobs
                 .map((j) => currentRate.get(j.id)?.effective_from)
                 .filter((d): d is string => Boolean(d))
                 .sort()
               const effectiveDate = dates.length ? dates[dates.length - 1] : null
               return (
-                <tr key={groupKey(g)} className={rowActive ? '' : 'muted'}>
+                <tr key={groupKey(g)}>
                   <td>{stationName(g.station_id)}</td>
-                  <td>{g.name}{!rowActive && ' (archived)'}</td>
+                  <td>{g.name}</td>
                   <td className="muted">{g.jobs[0]?.unit}</td>
                   {tagCols.map((c) => {
                     const j = g.jobs.find((x) => (x.grade_id ?? NO_TAG) === c.key)
@@ -1151,7 +1158,6 @@ function RatesList({
                     )
                   })}
                   <td className="muted">{effectiveDate ?? '—'}</td>
-                  <td>{rowActive ? <span className="badge ok">Active</span> : <span className="badge off">Archived</span>}</td>
                   {canManage && (
                     <td className="right">
                       <button
@@ -1173,14 +1179,7 @@ function RatesList({
       </div>
       <div className="row-form spread">
         <p className="muted small">{groups.length} work item(s) shown.</p>
-        <label className="small muted checkbox">
-          <input
-            type="checkbox"
-            checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-          />{' '}
-          Show archived
-        </label>
+        <p className="muted small">Archived work is kept in Piece Rate History.</p>
       </div>
 
       {manageGroup && (
@@ -1215,6 +1214,8 @@ interface RateDraft {
   rate: string
   tier2: string
   effectiveFrom: string
+  /** Offered in the mobile work entry screen. */
+  onMobile: boolean
 }
 
 /** One line of the before/after sheet shown before anything is written. */
@@ -1265,6 +1266,7 @@ function GroupManageModal({
             rate: r ? String(Number(r.rate)) : '',
             tier2: r?.tier2_rate != null ? String(Number(r.tier2_rate)) : '',
             effectiveFrom: r?.effective_from ?? todayISO(),
+            onMobile: j.record_job !== false,
           } as RateDraft,
         ]
       }),
@@ -1337,24 +1339,17 @@ function GroupManageModal({
           after: d.effectiveFrom || '—',
         })
       }
+      if (d.onMobile !== (j.record_job !== false)) {
+        out.push({
+          what: `${tier} · show on mobile apps work entry`,
+          before: j.record_job !== false ? 'Yes' : 'No',
+          after: d.onMobile ? 'Yes' : 'No',
+        })
+      }
     }
     return out
   })()
 
-
-  /** Tick on: the work appears in the mobile work entry screen. Tick off:
-   *  an incentive/support rate — priced for payroll, never submitted. */
-  async function setRecordJob(job: Job, on: boolean) {
-    const { error } = await supabase.from('jobs').update({ record_job: on }).eq('id', job.id)
-    if (error) {
-      onError(
-        /record_job/i.test(error.message)
-          ? 'The database is missing the record_job column — run the latest supabase/setup.sql ' +
-            '(or just: alter table public.jobs add column record_job boolean not null default true;).'
-          : error.message,
-      )
-    } else onChanged()
-  }
 
   /** Write the amendment. Every write is checked for a refusal, since row
    *  security answers "no" with zero rows rather than with an error. */
@@ -1398,6 +1393,22 @@ function GroupManageModal({
         if (unitValue !== j.unit) {
           const { error } = await supabase.from('jobs').update({ unit: unitValue }).eq('id', j.id)
           if (error) throw new Error(saveMessage(error.message))
+        }
+
+        if (d.onMobile !== (j.record_job !== false)) {
+          const { error } = await supabase
+            .from('jobs')
+            .update({ record_job: d.onMobile })
+            .eq('id', j.id)
+          if (error) {
+            throw new Error(
+              /record_job/i.test(error.message)
+                ? 'The database is missing the record_job column — run the latest ' +
+                  'supabase/setup.sql (or just: alter table public.jobs add column ' +
+                  'record_job boolean not null default true;).'
+                : error.message,
+            )
+          }
         }
 
         const r = currentRate.get(j.id)
@@ -1640,37 +1651,34 @@ function GroupManageModal({
                   ))}
                 </tr>
 
-                {!editing && (
-                  <tr>
-                    <th scope="row">Show on mobile apps work entry</th>
-                    {jobs.map((j) => (
-                      <td key={j.id}>
+                <tr>
+                  <th scope="row">Show on mobile apps work entry</th>
+                  {jobs.map((j) => (
+                    <td key={j.id}>
+                      {editing ? (
                         <label
                           className="checkbox"
                           style={{ margin: 0 }}
-                          title="Untick for an incentive or support rate — paid through payroll, never submitted as a work record."
+                          title="Untick for an incentive or support rate — paid through payroll, never offered as a record to submit."
                         >
                           <input
                             type="checkbox"
-                            checked={j.record_job !== false}
-                            disabled={!canEdit}
-                            onChange={(e) => setRecordJob(j, e.target.checked)}
+                            checked={draft[j.id]?.onMobile ?? true}
+                            onChange={(e) => patch(j.id, { onMobile: e.target.checked })}
                           />
                         </label>
-                      </td>
-                    ))}
-                  </tr>
-                )}
+                      ) : (j.record_job !== false) ? (
+                        <span className="tickmark yes" aria-label="Yes">✓</span>
+                      ) : (
+                        <span className="tickmark no" aria-label="No">✕</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
 
               </tbody>
             </table>
           </div>
-        )}
-
-        {!editing && (
-          <p className="small muted" style={{ margin: 0 }}>
-            Payroll uses whichever rate is effective on the day worked.
-          </p>
         )}
 
         {editing && (
@@ -1940,8 +1948,10 @@ interface HistoryRow {
 type HistoryGroup = JobGroup & { rows: HistoryRow[] }
 
 function buildHistory(jobs: Job[], rates: Rate[]): HistoryGroup[] {
-  const approved = jobs.filter((j) => j.approval_status === 'approved')
-  const groups = groupJobs(approved)
+  // Approved work, plus anything archived whatever state it was left in —
+  // this page is the only place archived work can still be reached.
+  const shown = jobs.filter((j) => j.approval_status === 'approved' || !j.active)
+  const groups = groupJobs(shown)
 
   const ratesByJob = new Map<string, Rate[]>()
   for (const r of rates) {
@@ -1982,14 +1992,30 @@ function HistoryList({
   grades,
   jobs,
   rates,
+  currentRate,
+  canManage,
+  canDelete,
+  onChanged,
+  onError,
 }: {
   stations: Station[]
   grades: Grade[]
   jobs: Job[]
   rates: Rate[]
+  currentRate: Map<string, Rate>
+  canManage: boolean
+  canDelete: boolean
+  onChanged: () => void
+  onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
   const [search, setSearch] = useState('')
+  // Archived work no longer shows in the masterlist, so this page is where
+  // it is looked at — and where it is restored from.
+  const [manageKey, setManageKey] = useState<string | null>(null)
+  const manageGroup = manageKey
+    ? groupJobs(jobs).find((g) => groupKey(g) === manageKey) ?? null
+    : null
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
 
@@ -2001,7 +2027,7 @@ function HistoryList({
     (a, b) => stationName(a.station_id).localeCompare(stationName(b.station_id)) || a.name.localeCompare(b.name),
   )
   const tagCols = tagColumns(grades, filteredJobs)
-  const colCount = 5 + tagCols.length + 1
+  const colCount = 5 + tagCols.length + 1 + (canManage ? 1 : 0)
   const rowCount = groups.reduce((n, g) => n + g.rows.length, 0)
 
   return (
@@ -2037,6 +2063,7 @@ function HistoryList({
                 <th key={c.key} className="right">{c.label} (RM)</th>
               ))}
               <th>Status</th>
+              {canManage && <th className="right">Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -2064,10 +2091,34 @@ function HistoryList({
                     )
                   })}
                   <td>
-                    {row.status === 'current' && <span className="badge ok">Current</span>}
-                    {row.status === 'scheduled' && <span className="badge off">Scheduled</span>}
-                    {row.status === 'inactive' && <span className="badge off">Inactive</span>}
+                    {/* An archived work has no live rate at all, so say so
+                        once on its first line instead of calling the newest
+                        period "current". */}
+                    {g.jobs.every((j) => !j.active) ? (
+                      i === 0 && <span className="badge off">Archived</span>
+                    ) : (
+                      <>
+                        {row.status === 'current' && <span className="badge ok">Current</span>}
+                        {row.status === 'scheduled' && <span className="badge off">Scheduled</span>}
+                        {row.status === 'inactive' && <span className="badge off">Superseded</span>}
+                      </>
+                    )}
                   </td>
+                  {canManage && (
+                    <td className="right">
+                      {i === 0 && (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="Open this piece rate"
+                          aria-label={`Open ${g.name}`}
+                          onClick={() => setManageKey(groupKey(g))}
+                        >
+                          <IconPencil />
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               )),
             )}
@@ -2075,6 +2126,20 @@ function HistoryList({
         </table>
       </div>
       <p className="muted small">{rowCount} rate change(s) across {groups.length} work item(s).</p>
+
+      {manageGroup && (
+        <GroupManageModal
+          jobs={manageGroup.jobs}
+          stationName={stationName(manageGroup.station_id)}
+          grades={grades}
+          currentRate={currentRate}
+          canEdit={canManage}
+          canDelete={canDelete}
+          onChanged={onChanged}
+          onError={onError}
+          onClose={() => setManageKey(null)}
+        />
+      )}
     </div>
   )
 }
@@ -2087,7 +2152,7 @@ function HistoryList({
  *  index name; say what that actually means in the window. */
 function saveMessage(message: string) {
   return message.includes('jobs_station_grade_name_idx')
-    ? 'A piece rate already exists for this exact Tier tag + Station tag + work description — edit that one instead (tick "Show archived" if it might be hidden).'
+    ? 'A piece rate already exists for this exact Tier tag + Station tag + work description — edit that one instead (look in Piece Rate History if it has been archived).'
     : message
 }
 

@@ -377,18 +377,20 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; bo
     0 6px 16px rgba(25, 35, 50, 0.13);
 }
 
-/* Page sidebar (e.g. Piece Rate Module sections) */
-.sidebar-layout { display: flex; gap: 1.5rem; align-items: flex-start; }
+/* Page sidebar (e.g. Piece Rate Module sections). Kept tight against the
+   left edge: the tables beside it are the wide part of the page, and every
+   pixel the rail gives up is a pixel of column width. */
+.sidebar-layout { display: flex; gap: 1rem; align-items: flex-start; }
 .sidebar-nav {
   display: flex; flex-direction: column; gap: 0.15rem;
-  min-width: 190px; flex-shrink: 0;
-  border-right: 1px solid var(--border); padding-right: 1rem;
+  min-width: 165px; flex-shrink: 0;
+  border-right: 1px solid var(--border); padding-right: 0.7rem;
 }
 .sidebar-link {
-  display: flex; align-items: center; gap: 0.6rem;
+  display: flex; align-items: center; gap: 0.5rem;
   appearance: none; background: none; border: none; cursor: pointer;
-  text-align: left; padding: 0.6rem 0.7rem; border-radius: 10px;
-  font-size: 0.92rem; color: var(--muted);
+  text-align: left; padding: 0.55rem 0.55rem; border-radius: 10px;
+  font-size: 0.88rem; color: var(--muted);
 }
 .sidebar-link svg { flex-shrink: 0; }
 .sidebar-link .count-badge.static { margin-left: auto; }
@@ -2386,9 +2388,9 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    is paid for the work, and what each of them gets down the rows. Wider
    than an ordinary window and loose on its feet, so three tier columns
    read as three columns rather than as one crowded block. */
-.modal.modal-manage { max-width: min(980px, 96vw); }
+.modal.modal-manage { max-width: min(1180px, 96vw); }
 .pr-manage { min-width: max-content; }
-.pr-manage th, .pr-manage td { vertical-align: top; padding: 0.7rem 1.1rem; }
+.pr-manage th, .pr-manage td { vertical-align: top; padding: 0.85rem 1.4rem; }
 /* The row labels down the left are quieter than the tier names on top —
    they name the line, the tier columns are what is being compared. */
 .pr-manage tbody th {
@@ -2396,6 +2398,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   white-space: nowrap; padding-right: 1.6rem;
 }
 .pr-manage-corner { font-weight: 800; color: var(--accent-strong); }
+/* `.table` only clears the last row's cell borders, not its row label. */
+.pr-manage tr:last-child th { border-bottom: none; }
 /* The work description is the one thing on the sheet that names what all
    the columns are about, so it carries the weight the labels do not. */
 /* Beats `.table th`, which sets every heading in small uppercase — right
@@ -2404,11 +2408,17 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font-size: 1rem; font-weight: 700; color: var(--text);
   text-transform: none; letter-spacing: 0;
 }
-.pr-manage tbody td { min-width: 10.5rem; }
+.pr-manage tbody td { min-width: 12rem; }
 .pr-manage input { width: 100%; min-width: 0; }
 .pr-manage-edit { display: flex; flex-direction: column; gap: 0.35rem; }
 
-/* Window tools — history, edit, delete — in the corner beside the close. */
+/* A yes/no answer read at a glance, where a disabled tick box would look
+   like something you were meant to be able to press. */
+.tickmark { font-weight: 800; font-size: 1rem; }
+.tickmark.yes { color: #1d7a45; }
+.tickmark.no { color: var(--muted); }
+
+/* Window tools — history, edit, archive — in the corner beside the close. */
 .manage-tools { gap: 0.3rem; }
 /* Pressed state for a tool that switches the window to another face. */
 .icon-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
