@@ -104,7 +104,7 @@ function breakdownFor(
 // specific screen to be reopened after the hour ends).
 async function autoSubmitElapsedHoursForStation(stationId: string, profileId: string) {
   const { data, error } = await supabase
-    .from('photo_records')
+    .from('operation_photos')
     .select('id, taken_at, job_id')
     .eq('station_id', stationId)
     .eq('created_by', profileId)
@@ -130,7 +130,7 @@ async function autoSubmitElapsedHoursForStation(stationId: string, profileId: st
 
   for (const { jobId: jid, workDate, ids } of groups.values()) {
     const { data: entry, error: insErr } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .insert({
         work_date: workDate,
         station_id: stationId,
@@ -143,7 +143,7 @@ async function autoSubmitElapsedHoursForStation(stationId: string, profileId: st
       .select()
       .single()
     if (insErr || !entry) continue
-    await supabase.from('photo_records').update({ entry_id: entry.id }).in('id', ids)
+    await supabase.from('operation_photos').update({ entry_id: entry.id }).in('id', ids)
   }
 }
 
@@ -235,7 +235,7 @@ export default function DemoMobile() {
   useEffect(() => {
     let cancelled = false
     supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select('job_id')
       .limit(1)
       .then(({ error: probeErr }) => {
@@ -249,9 +249,9 @@ export default function DemoMobile() {
   useEffect(() => {
     async function load() {
       const [g, s, j, r] = await Promise.all([
-        supabase.from('grades').select('*').order('sort_order'),
-        supabase.from('stations').select('*').order('sort_order'),
-        supabase.from('jobs').select('*').eq('active', true),
+        supabase.from('shared_grades').select('*').order('sort_order'),
+        supabase.from('shared_stations').select('*').order('sort_order'),
+        supabase.from('piece_rate_jobs').select('*').eq('active', true),
         supabase.from('piece_rates').select('*'),
       ])
       const err = g.error || s.error || j.error || r.error
@@ -807,7 +807,7 @@ function PerformanceTab({
     const now = new Date()
     const from = new Date(now.getFullYear(), now.getMonth() - 5, 1)
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .gte('work_date', dayISO(from))
       .then(({ data, error }) => {
@@ -833,7 +833,7 @@ function PerformanceTab({
     from.setDate(from.getDate() - 40) // covers this month + this week
     function load() {
       supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .eq('user_id', profileId)
         .gte('work_date', dayISO(from))
@@ -1538,7 +1538,7 @@ function StationWorkPanel({
       ? 'id, station_id, photo_path, taken_at, job_id, entry_id'
       : 'id, station_id, photo_path, taken_at, entry_id'
     const { data, error } = await supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select<string, PhotoRecord>(cols)
       .eq('station_id', station.id)
       .gte('taken_at', start.toISOString())
@@ -1549,7 +1549,7 @@ function StationWorkPanel({
 
     if (hourlyPieceWork) {
       const { data: entryRows, error: entryErr } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .eq('station_id', station.id)
         .eq('work_date', dayISO(viewDate))
@@ -1611,7 +1611,7 @@ function StationWorkPanel({
         .upload(path, photo, { contentType: 'image/jpeg' })
       if (upErr) throw new Error(upErr.message)
       const { error: insErr } = await supabase
-        .from('photo_records')
+        .from('operation_photos')
         .insert({
           station_id: station.id,
           photo_path: path,
@@ -1892,7 +1892,7 @@ function ClockCard({
     if (!profileId) return
     let cancelled = false
     supabase
-      .from('attendance')
+      .from('operation_attendance')
       .select('id, work_date, clock_in, clock_out')
       .eq('user_id', profileId)
       .gte('work_date', weekAgo)
@@ -2024,7 +2024,7 @@ function ClockCard({
       // closed where it lives — on screen.
       if (id && !id.startsWith(LOCAL_SHIFT)) {
         const { error } = await supabase
-          .from('attendance')
+          .from('operation_attendance')
           .update({
             clock_out: pending.at,
             out_photo_path: photoPath,
@@ -2038,7 +2038,7 @@ function ClockCard({
       setShifts((rows) => rows.map((r) => (r.id === id ? { ...r, clock_out: pending.at } : r)))
     } else {
       const { data, error } = await supabase
-        .from('attendance')
+        .from('operation_attendance')
         .insert({
           user_id: profileId,
           station_id: stationId,
@@ -2450,7 +2450,7 @@ function RecordTab({
     }
     setPulling(true)
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('quantity, approval_status')
       .eq('job_id', operatorJob.id)
       .eq('work_date', dutyDate)
@@ -2483,7 +2483,7 @@ function RecordTab({
     onError(null)
     try {
       const { data, error } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .insert({
           work_date: isASH ? dutyDate : todayISO(),
           station_id: stationId,
@@ -2507,7 +2507,7 @@ function RecordTab({
             .upload(path, compressed, { contentType: 'image/jpeg' })
           if (!upErr) {
             await supabase
-              .from('photo_records')
+              .from('operation_photos')
               .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
           }
         }
@@ -2906,7 +2906,7 @@ function RecordHistory({
     setEditErr(null)
     // A fixed entry goes back through verify and approve.
     const { data, error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .update({
         quantity: qty,
         approval_status: 'pending',
@@ -2940,7 +2940,7 @@ function RecordHistory({
     const since = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
     setLoading(true)
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .eq('user_id', profileId)
       .gte('work_date', since)
@@ -3103,7 +3103,7 @@ function EntryDetail({
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
     supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select('*')
       .eq('entry_id', entry.id)
       .then(({ data }) => setPhotos(data ?? []))
@@ -3325,7 +3325,7 @@ function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () =>
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select('*')
       .eq('entry_id', entry.id)
       .order('taken_at', { ascending: true })
@@ -3406,7 +3406,7 @@ function ReviewSections({
     const from = new Date()
     from.setDate(from.getDate() - 40) // this month and this week, both covered
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .gte('work_date', dayISO(from))
       .then(({ data, error }) => {
@@ -3527,7 +3527,7 @@ function MyWorkTab({
   async function load() {
     if (!profileId) return
     const mine = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .eq('user_id', profileId)
       .order('created_at', { ascending: false })
@@ -3539,7 +3539,7 @@ function MyWorkTab({
     // too — otherwise their own records fall through the rung test.
     if (profileId) {
       const { data: me } = await supabase
-        .from('access_profiles')
+        .from('shared_profiles')
         .select('id, full_name, email, grade_id, station_id, station_ids')
         .eq('id', profileId)
         .maybeSingle()
@@ -3550,7 +3550,7 @@ function MyWorkTab({
     let waiting: ProductionEntry[] = []
     if (canVerify || canApprove) {
       const { data } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .in('approval_status', ['pending', 'verified'])
         .order('created_at', { ascending: true })
@@ -3564,7 +3564,7 @@ function MyWorkTab({
       let byId = new Map<string, Profile>()
       if (submitterIds.length > 0) {
         const { data: p } = await supabase
-          .from('access_profiles')
+          .from('shared_profiles')
           .select('id, full_name, email, grade_id, station_id, station_ids')
           .in('id', submitterIds)
         byId = new Map(((p ?? []) as Profile[]).map((x) => [x.id, x]))
@@ -3598,7 +3598,7 @@ function MyWorkTab({
     const entryIds = [...own, ...waiting].map((e) => e.id)
     if (entryIds.length > 0) {
       const { data: ph } = await supabase
-        .from('photo_records')
+        .from('operation_photos')
         .select('id, entry_id')
         .in('entry_id', entryIds)
       const m = new Map<string, number>()
@@ -3627,7 +3627,7 @@ function MyWorkTab({
     setBusy(e.id)
     onError(null)
     const { error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .update({
         quantity: qty,
         approval_status: 'pending',
@@ -3666,7 +3666,7 @@ function MyWorkTab({
         approved_at: null,
       })
     }
-    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    const { error } = await supabase.from('operation_entries').update(fields).eq('id', e.id)
     setBusy(null)
     if (error) return onError(error.message)
     load()
@@ -3994,7 +3994,7 @@ function QueueScreen({
     const wanted = kind === 'pending' ? ['pending', 'verified'] : ['rejected']
     const [mineRes, allRes, peopleRes] = await Promise.all([
       supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .eq('user_id', profileId)
         .in('approval_status', wanted)
@@ -4006,14 +4006,14 @@ function QueueScreen({
       // down.
       reviews
         ? supabase
-            .from('production_entries')
+            .from('operation_entries')
             .select('*')
             .in('approval_status', wanted)
             .neq('user_id', profileId)
             .order('created_at', { ascending: true })
             .limit(200)
         : Promise.resolve({ data: [] as ProductionEntry[], error: null }),
-      supabase.from('access_profiles').select('id, full_name, email, grade_id'),
+      supabase.from('shared_profiles').select('id, full_name, email, grade_id'),
     ])
     if (mineRes.error) onError(mineRes.error.message)
     const byId = new Map(((peopleRes.data ?? []) as Profile[]).map((p) => [p.id, p]))
@@ -4072,7 +4072,7 @@ function QueueScreen({
         approved_at: null,
       })
     }
-    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    const { error } = await supabase.from('operation_entries').update(fields).eq('id', e.id)
     setBusy(null)
     if (error) return onError(error.message)
     load()
@@ -4408,7 +4408,7 @@ function AvatarPicker({
     if (!profile?.id) return
     let cancelled = false
     supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .select('avatar_path')
       .eq('id', profile.id)
       .maybeSingle()
@@ -4508,7 +4508,7 @@ function MyNumbersSection({
     const from = new Date()
     from.setDate(from.getDate() - 40) // this month, plus a little carry-over
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .eq('user_id', profileId)
       .gte('work_date', dayISO(from))
@@ -4703,7 +4703,7 @@ function PayslipSection({ profile }: { profile: Profile | null }) {
       setAdjs((a ?? []) as PayrollAdjustment[])
       const jobIds = [...new Set((l ?? []).map((x) => x.job_id))]
       if (jobIds.length > 0) {
-        const { data: j } = await supabase.from('jobs').select('id, name').in('id', jobIds)
+        const { data: j } = await supabase.from('piece_rate_jobs').select('id, name').in('id', jobIds)
         setJobNames(new Map((j ?? []).map((x) => [x.id as string, x.name as string])))
       }
       setLoading(false)
@@ -4867,8 +4867,8 @@ function TeamTab({
 
   async function load() {
     const [p, t] = await Promise.all([
-      supabase.from('access_profiles').select('*'),
-      supabase.from('teams').select('*').order('sort_order'),
+      supabase.from('shared_profiles').select('*'),
+      supabase.from('shared_teams').select('*').order('sort_order'),
     ])
     if (p.error) setError(p.error.message)
     else setPeople((p.data ?? []) as Profile[])
@@ -5103,7 +5103,7 @@ function TeamTab({
     setBusy(p.id)
     setError(null)
     const { error: err } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update({
         supervisor_id: profile.id,
         grade_id: placeable ? p.grade_id : floor?.id ?? p.grade_id,
@@ -5131,7 +5131,7 @@ function TeamTab({
     setBusy(p.id)
     setError(null)
     const { error: err } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update({
         supervisor_id: profile.id,
         grade_id: target.grade.id,
@@ -5173,7 +5173,7 @@ function TeamTab({
     if (clash) return setError(`This station already has a team called "${name}".`)
     setBusy('new-team')
     setError(null)
-    const { error: err } = await supabase.from('teams').insert({
+    const { error: err } = await supabase.from('shared_teams').insert({
       name,
       grade_id: teamLeaderTier.id,
       station_id: activeStation?.id ?? myStationIds[0] ?? null,
@@ -5199,7 +5199,7 @@ function TeamTab({
     setError(null)
     for (const [id, to] of staged) {
       const { error: err } = await supabase
-        .from('access_profiles')
+        .from('shared_profiles')
         .update({ grade_id: to.gradeId, team_id: to.teamId })
         .eq('id', id)
       if (err) {

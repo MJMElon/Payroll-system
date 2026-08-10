@@ -64,14 +64,14 @@ export default function AuditLogTab() {
     async function load() {
       setLoading(true)
       let q = supabase
-        .from('audit_log')
+        .from('shared_audit_log')
         .select('*')
         .order('at', { ascending: false })
         .limit(200)
       if (target) q = q.eq('target', target)
       const [{ data, error }, { data: p }] = await Promise.all([
         q,
-        supabase.from('access_profiles').select('id, full_name, email'),
+        supabase.from('shared_profiles').select('id, full_name, email'),
       ])
       if (error) setError(error.message)
       else setError(null)

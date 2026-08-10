@@ -99,11 +99,11 @@ export default function PieceRate() {
 
   async function load() {
     const [s, g, j, r] = await Promise.all([
-      supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-      supabase.from('grades').select('*').order('sort_order'),
+      supabase.from('shared_stations').select('id, name, sort_order').order('sort_order'),
+      supabase.from('shared_grades').select('*').order('sort_order'),
       // select('*') so the optional record_job flag rides along once its
       // column migration has run — and is simply absent until then.
-      supabase.from('jobs').select('*').order('name'),
+      supabase.from('piece_rate_jobs').select('*').order('name'),
       supabase
         .from('piece_rates')
         .select('id, job_id, rate, effective_from, tier2_rate')
@@ -574,7 +574,7 @@ function SubmissionsList({
    * had lost the approval. Say so instead.
    */
   async function act(job: Job, fields: Partial<Job> & { approval_status: Job['approval_status'] }) {
-    const { data, error } = await supabase.from('jobs').update(fields).eq('id', job.id).select('id')
+    const { data, error } = await supabase.from('piece_rate_jobs').update(fields).eq('id', job.id).select('id')
     if (error) return onError(error.message)
     if (!data || data.length === 0) {
       return onError(
@@ -957,7 +957,7 @@ function ViewRateModal({
     // The remark goes onto the row first: the audit trail logs the update
     // and then the delete, so the reason survives the row itself.
     const { error: remarkErr } = await supabase
-      .from('jobs')
+      .from('piece_rate_jobs')
       .update({ delete_remark: remark.trim() } as never)
       .eq('id', job.id)
     if (remarkErr) {
@@ -966,7 +966,7 @@ function ViewRateModal({
     }
     // A delete refused by row security still "succeeds" with zero rows,
     // so ask for the ids back and treat an empty answer as a refusal.
-    const { data, error } = await supabase.from('jobs').delete().eq('id', job.id).select('id')
+    const { data, error } = await supabase.from('piece_rate_jobs').delete().eq('id', job.id).select('id')
     setDeleting(false)
     if (error) {
       onError(
@@ -1385,7 +1385,7 @@ function GroupManageModal({
       if (newName !== jobs[0]?.name) {
         for (const j of jobs) {
           const { data, error } = await supabase
-            .from('jobs')
+            .from('piece_rate_jobs')
             .update({ name: newName })
             .eq('id', j.id)
             .select('id')
@@ -1413,13 +1413,13 @@ function GroupManageModal({
 
         const unitValue = tiered ? '/hour' : d.unit.trim() || 'unit'
         if (unitValue !== j.unit) {
-          const { error } = await supabase.from('jobs').update({ unit: unitValue }).eq('id', j.id)
+          const { error } = await supabase.from('piece_rate_jobs').update({ unit: unitValue }).eq('id', j.id)
           if (error) throw new Error(saveMessage(error.message))
         }
 
         if (d.onMobile !== (j.record_job !== false)) {
           const { error } = await supabase
-            .from('jobs')
+            .from('piece_rate_jobs')
             .update({ record_job: d.onMobile })
             .eq('id', j.id)
           if (error) {
@@ -1450,7 +1450,7 @@ function GroupManageModal({
         // and approve — otherwise amending the rate would bypass the flow.
         if (j.approval_status === 'approved') {
           const { error: reErr } = await supabase
-            .from('jobs')
+            .from('piece_rate_jobs')
             .update({
               approval_status: 'pending',
               verified_by: null,
@@ -1488,7 +1488,7 @@ function GroupManageModal({
     try {
       for (const j of jobs) {
         const { data, error } = await supabase
-          .from('jobs')
+          .from('piece_rate_jobs')
           .update({ active: false, delete_remark: remark.trim() } as never)
           .eq('id', j.id)
           .select('id')
@@ -1514,7 +1514,7 @@ function GroupManageModal({
     onError(null)
     const ids = jobs.map((j) => j.id)
     const { data, error } = await supabase
-      .from('jobs')
+      .from('piece_rate_jobs')
       .update({ active: true })
       .in('id', ids)
       .select('id')
@@ -1914,7 +1914,7 @@ function GroupHistory({
       for (const r of prs ?? []) rateMap.set(r.id as string, tierOfJob.get(r.job_id as string) ?? '')
 
       const { data, error } = await supabase
-        .from('audit_log')
+        .from('shared_audit_log')
         .select('id, at, actor, action, target, target_id, detail')
         .in('target_id', [...ids, ...rateMap.keys()])
         .order('at', { ascending: false })
@@ -1927,7 +1927,7 @@ function GroupHistory({
       const names = new Map<string, string>()
       if (actorIds.length > 0) {
         const { data: people } = await supabase
-          .from('access_profiles')
+          .from('shared_profiles')
           .select('id, full_name, email')
           .in('id', actorIds)
         for (const p of people ?? []) names.set(p.id as string, profileName(p as never))
@@ -2413,7 +2413,7 @@ function CreateRatesModal({
           (at.gradeId ? ` · ${nameOf(tierOptions, at.gradeId)}` : '')
         // Every new contract waits for verify + approve, admins included.
         const { data, error: jobErr } = await supabase
-          .from('jobs')
+          .from('piece_rate_jobs')
           .insert({
             station_id: at.stationId,
             grade_id: at.gradeId || null,
@@ -2443,7 +2443,7 @@ function CreateRatesModal({
         if (rateErr) {
           // Take the contract back out, so the row can simply be sent again
           // instead of colliding with a half-made entry.
-          await supabase.from('jobs').delete().eq('id', data.id)
+          await supabase.from('piece_rate_jobs').delete().eq('id', data.id)
           failure = { key: r.key, message: `Row ${n} (${where}): ${rateErr.message}` }
           stopped = true
           break

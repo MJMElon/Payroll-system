@@ -3,7 +3,7 @@
 --
 -- The Team Manage chart goes by the TIER TAG, not by the account's role, so
 -- an account tagged Operator cannot reach the tiers above it however it is
--- flagged elsewhere — and the teams table refuses a "+ Team" from below the
+-- flagged elsewhere — and the shared_teams table refuses a "+ Team" from below the
 -- tier that team belongs to. Setting your own tier is therefore a database
 -- job: the page will not let you raise yourself, by design.
 --
@@ -16,12 +16,12 @@ declare
   target_tier  text := 'Management';
   g uuid;
 begin
-  select id into g from public.grades where name = target_tier limit 1;
+  select id into g from public.shared_grades where name = target_tier limit 1;
   if g is null then
     raise exception 'No tier tag named %. Check Settings → Tier & Station Tags setting.', target_tier;
   end if;
 
-  update public.access_profiles
+  update public.shared_profiles
      set grade_id = g,
          tags_confirmed = true
    where lower(email) = lower(target_email);
@@ -36,6 +36,6 @@ select p.email,
        g.name as tier,
        g.sort_order,
        p.role
-  from public.access_profiles p
-  left join public.grades g on g.id = p.grade_id
+  from public.shared_profiles p
+  left join public.shared_grades g on g.id = p.grade_id
  where lower(p.email) = lower('coco.lau@puigroups.com');

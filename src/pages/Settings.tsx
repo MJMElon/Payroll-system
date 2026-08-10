@@ -183,9 +183,9 @@ function TagsTab() {
 
   async function load() {
     const [g, st, j] = await Promise.all([
-      supabase.from('grades').select('*').order('sort_order'),
-      supabase.from('stations').select('*').order('sort_order'),
-      supabase.from('jobs').select('id, name, station_id, active').order('name'),
+      supabase.from('shared_grades').select('*').order('sort_order'),
+      supabase.from('shared_stations').select('*').order('sort_order'),
+      supabase.from('piece_rate_jobs').select('id, name, station_id, active').order('name'),
     ])
     const err = g.error || st.error
     if (err) setError(err.message)
@@ -246,7 +246,7 @@ function TagsTab() {
       list.map((g, i) =>
         g.sort_order === i + 1
           ? null
-          : supabase.from('grades').update({ sort_order: i + 1 }).eq('id', g.id),
+          : supabase.from('shared_grades').update({ sort_order: i + 1 }).eq('id', g.id),
       ),
     )
     return results.find((r) => r?.error)?.error ?? null
@@ -254,7 +254,7 @@ function TagsTab() {
 
   async function removeTag(g: Grade) {
     if (!window.confirm(`Delete tier tag "${g.name}"?`)) return
-    const { error } = await supabase.from('grades').delete().eq('id', g.id)
+    const { error } = await supabase.from('shared_grades').delete().eq('id', g.id)
     if (error) return setError(deleteError(error, `Tier tag "${g.name}"`))
     // Closing the gap the delete left: tier 4 of 7 going means 5, 6, 7
     // move up, not that the list runs 1, 2, 3, 5, 6, 7.
@@ -271,7 +271,7 @@ function TagsTab() {
     }
     const sort = Math.max(0, ...stations.map((x) => x.sort_order)) + 1
     const { error } = await supabase
-      .from('stations')
+      .from('shared_stations')
       .insert({ name: stationName.trim(), sort_order: sort })
     if (error) return setError(saveError(error, 'station tag', stationName))
     setStationName('')
@@ -290,7 +290,7 @@ function TagsTab() {
     setDragStation(null)
     setStations(next.map((x, i) => ({ ...x, sort_order: i + 1 })))
     const results = await Promise.all(
-      next.map((x, i) => supabase.from('stations').update({ sort_order: i + 1 }).eq('id', x.id)),
+      next.map((x, i) => supabase.from('shared_stations').update({ sort_order: i + 1 }).eq('id', x.id)),
     )
     const err = results.find((r) => r.error)
     if (err?.error) setError(err.error.message)
@@ -332,7 +332,7 @@ function TagsTab() {
     if (stations.some((x) => x.id !== st.id && sameName(x.name, next))) {
       return setError(`A station tag called "${next}" already exists.`)
     }
-    const { error } = await supabase.from('stations').update({ name: next }).eq('id', st.id)
+    const { error } = await supabase.from('shared_stations').update({ name: next }).eq('id', st.id)
     if (error) return setError(saveError(error, 'station tag', next))
     cancelStationEdit()
     load()
@@ -354,7 +354,7 @@ function TagsTab() {
       )
     }
     if (!window.confirm(`Delete station tag "${st.name}"?`)) return
-    const { error } = await supabase.from('stations').delete().eq('id', st.id)
+    const { error } = await supabase.from('shared_stations').delete().eq('id', st.id)
     if (error) return setError(deleteError(error, `Station "${st.name}"`))
     setError(null)
     load()
@@ -767,9 +767,9 @@ function TierPeople({
     // for anyone never hand-ordered. select('*') because chart_pos may
     // not exist yet on an older database.
     const [pd, st, tm] = await Promise.all([
-      supabase.from('access_profiles').select('*').eq('grade_id', grade.id),
-      supabase.from('stations').select('id, sort_order'),
-      supabase.from('teams').select('id, sort_order'),
+      supabase.from('shared_profiles').select('*').eq('grade_id', grade.id),
+      supabase.from('shared_stations').select('id, sort_order'),
+      supabase.from('shared_teams').select('id, sort_order'),
     ])
     const stationRank = (p: Person) => {
       const ids =
@@ -827,7 +827,7 @@ function TierPeople({
         return
       }
       const { data } = await supabase
-        .from('access_profiles')
+        .from('shared_profiles')
         .select('id, full_name, email, grade_id')
         .or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%`)
         .order('email')
@@ -865,7 +865,7 @@ function TierPeople({
     setBusy(true)
     setError(null)
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update({
         grade_id: grade.id,
         tags_confirmed: true,
@@ -1056,8 +1056,8 @@ function TagModal({
     const ents = ALL_ENTITLEMENTS.filter((k) => entitlements.includes(k))
     const write = (f: Record<string, unknown>) =>
       grade
-        ? supabase.from('grades').update(f).eq('id', grade.id)
-        : supabase.from('grades').insert({ ...f, sort_order: nextTier })
+        ? supabase.from('shared_grades').update(f).eq('id', grade.id)
+        : supabase.from('shared_grades').insert({ ...f, sort_order: nextTier })
 
     const first = await write({ ...fields, entitlements: ents })
     // "Entitled Function" needs a column that arrived after the first

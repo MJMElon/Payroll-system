@@ -30,7 +30,7 @@ export function useAllowedModules(): string[] | null | undefined {
         )
       }
       const { data } = await supabase
-        .from('grades')
+        .from('shared_grades')
         .select('modules, sort_order')
         .eq('id', profile.grade_id)
         .maybeSingle()

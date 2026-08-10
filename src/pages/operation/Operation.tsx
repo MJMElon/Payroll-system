@@ -215,12 +215,12 @@ export default function Operation() {
   useEffect(() => {
     async function load() {
       const [s, g, j, r, p] = await Promise.all([
-        supabase.from('stations').select('*').order('sort_order'),
-        supabase.from('grades').select('*').order('sort_order'),
-        supabase.from('jobs').select('*'),
+        supabase.from('shared_stations').select('*').order('sort_order'),
+        supabase.from('shared_grades').select('*').order('sort_order'),
+        supabase.from('piece_rate_jobs').select('*'),
         supabase.from('piece_rates').select('*'),
         // grade_id rides along: it is the worker's tier tag in the table.
-        supabase.from('access_profiles').select('id, full_name, email, employee_code, grade_id'),
+        supabase.from('shared_profiles').select('id, full_name, email, employee_code, grade_id'),
       ])
       const err = s.error || g.error || j.error || r.error
       if (err) setError(err.message)
@@ -242,7 +242,7 @@ export default function Operation() {
 
   async function loadEntries() {
     let q = supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .gte('work_date', from)
       .lte('work_date', to)
@@ -263,7 +263,7 @@ export default function Operation() {
     const batches = await Promise.all(
       chunk(ids, 200).map((part) =>
         supabase
-          .from('photo_records')
+          .from('operation_photos')
           .select('id, station_id, photo_path, taken_at, entry_id')
           .in('entry_id', part),
       ),
@@ -472,7 +472,7 @@ export default function Operation() {
     setBusy(e.id)
     setError(null)
     const { error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .update(stampFor(next, reason))
       .eq('id', e.id)
     setBusy(null)
@@ -486,7 +486,7 @@ export default function Operation() {
     setBusy('bulk')
     setError(null)
     const { error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .update(stampFor(next))
       .in('id', list.map((e) => e.id))
     setBusy(null)
@@ -508,7 +508,7 @@ export default function Operation() {
     setBusy(g.key)
     setError(null)
     const { error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .delete()
       .in('id', g.entries.map((e) => e.id))
     setBusy(null)
@@ -1309,7 +1309,7 @@ function AddRecordModal({
         // A fixed entry goes back through the queue — otherwise editing
         // an approved number would smuggle it past verify and approve.
         const { data: rows, error: updErr } = await supabase
-          .from('production_entries')
+          .from('operation_entries')
           .update({
             work_date: workDate,
             station_id: stationId,
@@ -1332,7 +1332,7 @@ function AddRecordModal({
         data = rows[0]
       } else {
         const { data: made, error: insErr } = await supabase
-          .from('production_entries')
+          .from('operation_entries')
           .insert({
             work_date: workDate,
             station_id: stationId,
@@ -1361,7 +1361,7 @@ function AddRecordModal({
           .upload(path, body, { contentType: photo.type || 'image/jpeg' })
         if (upErr) throw new Error(`Record saved, but the attachment failed to upload: ${upErr.message}`)
         const { error: prErr } = await supabase
-          .from('photo_records')
+          .from('operation_photos')
           .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
         if (prErr) throw new Error(`Record saved, but the attachment couldn't be linked: ${prErr.message}`)
       }

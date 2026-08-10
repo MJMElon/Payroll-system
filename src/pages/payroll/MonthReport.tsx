@@ -44,15 +44,15 @@ export default function MonthReport() {
       const { start, end } = monthRange(month)
       const [e, p, g, s, j, r] = await Promise.all([
         supabase
-          .from('production_entries')
+          .from('operation_entries')
           .select('*')
           .gte('work_date', start)
           .lte('work_date', end)
           .eq('approval_status', 'approved'),
-        supabase.from('access_profiles').select('*'),
-        supabase.from('grades').select('*').order('sort_order'),
-        supabase.from('stations').select('*').order('sort_order'),
-        supabase.from('jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
+        supabase.from('shared_profiles').select('*'),
+        supabase.from('shared_grades').select('*').order('sort_order'),
+        supabase.from('shared_stations').select('*').order('sort_order'),
+        supabase.from('piece_rate_jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
         supabase.from('piece_rates').select('id, job_id, rate, effective_from, tier2_rate').lte('effective_from', end),
       ])
       const err = e.error || p.error || g.error || s.error || j.error || r.error
