@@ -4522,7 +4522,7 @@ function MyNumbersSection({
   // the screen behind it.
   return (
     <>
-      <div className="mob-sectionhead">Earning record</div>
+      <div className="mob-sectionhead">Payout record</div>
       <div className="mob-card">
         <div className="mob-field-label">This month earned</div>
         <div className="mob-stat">{RM(total)}</div>

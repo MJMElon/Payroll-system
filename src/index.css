@@ -954,18 +954,53 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* A tap card whose contents are block-level (meters, bars) rather than a
    label and a number — it cannot be a <button>, so it says so instead. */
 .mob-card.tapcard.block { align-items: stretch; }
-/* Its title row: the name, and the chevron that says the card opens. */
-.mob-cardhead {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-}
+/* The chevron that says the card opens. */
 .mob-cardhead .mob-caret { font-size: 1.1rem; color: var(--muted); line-height: 1; }
 /* A heading over a run of cards, with air above it so the run reads as a
-   section of its own rather than as more of the card before it. */
+   section of its own rather than as more of the card before it. Same face
+   and weight as a tab's own title, because that is what it is — the name
+   of everything below it, not a label on the first card. */
 .mob-sectionhead {
-  padding: 0.55rem 0.2rem 0;
-  font-size: 0.72rem; font-weight: 800; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 0.6rem 0.2rem 0; text-align: center;
+  font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif;
 }
+
+/* ------------------------------------------------------------------ */
+/* Titles sit in the MIDDLE — the tab's, the sub-page's, and a card's   */
+/* alike. A heading pinned left while the screen's own title is centred */
+/* reads as two different kinds of thing when it is only one.           */
+/*                                                                      */
+/* Only HEADINGS move. A label paired with a value on the same row      */
+/* (My details, the clock cells, a contract term) still reads left to   */
+/* right, because that pairing is the whole point of the row.           */
+/* ------------------------------------------------------------------ */
+.mob-card > .mob-card-label,
+.mob-body > .mob-card-label { justify-content: center; }
+.mob-card > .mob-title,
+.mob-card > .mob-stat { text-align: center; }
+/* A stat card is a label with one number under it — the label IS the
+   title there, so it centres with it. A form label is not: it belongs to
+   the field beneath it and stays where the field starts. */
+.mob-card:has(> .mob-stat) > .mob-field-label { text-align: center; }
+/* A subtitle belongs to the heading above it, so it goes where it goes. */
+.mob-card > .mob-card-label + .mob-sub,
+.mob-card > .mob-title + .mob-sub { text-align: center; }
+/* Tap cards pack to the left so their contents hug; centring the text
+   needs the children to span the card first. */
+.mob-card.tapcard { align-items: stretch; }
+/* A heading with an action beside it: three columns, so the title is
+   centred on the CARD rather than on the space left over. */
+.mob-cardhead {
+  display: grid; grid-template-columns: 16px 1fr 16px; align-items: center;
+}
+.mob-cardhead > :first-child { grid-column: 2; justify-content: center; }
+.mob-cardhead > :last-child { grid-column: 3; text-align: right; }
+/* Same three columns for a pop-out's heading and its close button. */
+.mob-modal > .mob-card-label {
+  display: grid; grid-template-columns: 26px 1fr 26px; align-items: center;
+}
+.mob-modal > .mob-card-label > :first-child { grid-column: 2; text-align: center; }
+.mob-modal > .mob-card-label > .mob-icon-btn.corner { grid-column: 3; margin-left: 0; }
 .mob-card.tapcard.block:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* A tappable row inside a card — name on the left, value and chevron
