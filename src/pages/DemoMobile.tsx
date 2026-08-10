@@ -879,17 +879,6 @@ function PerformanceTab({
   const myQty = (w: (typeof myWeek)[number]) => w.appr + w.rej + w.wait
   const myMaxQty = Math.max(1, ...myWeek.map(myQty))
 
-  // The same week, but the whole mill's approved output rather than one
-  // person's — an Admin reading the mill dashboard has few records of
-  // their own, so their personal chart would sit empty.
-  const millWeek = myWeek.map((w) => ({ label: w.label, iso: w.iso, qty: 0 }))
-  for (const e of entries) {
-    if ((e.approval_status ?? 'approved') !== 'approved') continue
-    if (!stations.some((st) => st.id === e.station_id)) continue
-    const slot = millWeek.find((w) => w.iso === e.work_date)
-    if (slot) slot.qty += e.quantity
-  }
-  const millMaxQty = Math.max(1, ...millWeek.map((w) => w.qty))
   const todayIso = todayISO()
 
   const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
@@ -1021,8 +1010,42 @@ function PerformanceTab({
     const pct = rows.length > 0 ? Math.round((done / rows.length) * 100) : null
     return { workers, output, approved, pct }
   }
-  const totalOutput = stations.reduce((s, st) => s + statFor(st.id).output, 0)
-  const totalApproved = stations.reduce((s, st) => s + statFor(st.id).approved, 0)
+  /**
+   * The Output record: every work set to "Show on mill performance", under
+   * the station it belongs to, with what was approved against it this
+   * month. Summed by work NAME rather than by contract, since the same work
+   * is priced once per tier tag and the mill does not care which tier
+   * tipped the cage. A work with nothing recorded still shows, at zero —
+   * a station that produced nothing is the thing a dashboard is for.
+   */
+  const outputRecord = (() => {
+    const millJobs = jobs.filter((j) => j.show_on_mill !== false)
+    const jobById = new Map(millJobs.map((j) => [j.id, j]))
+    const byStation = new Map(stations.map((s) => [s.id, new Map<string, number>()]))
+    for (const j of millJobs) {
+      const m = byStation.get(j.station_id)
+      if (m && !m.has(j.name)) m.set(j.name, 0)
+    }
+    for (const e of mtd) {
+      if ((e.approval_status ?? 'approved') !== 'approved') continue
+      const j = jobById.get(e.job_id)
+      const m = byStation.get(e.station_id)
+      if (!j || !m) continue
+      m.set(j.name, (m.get(j.name) ?? 0) + e.quantity)
+    }
+    return stations
+      .map((s) => ({
+        station: s,
+        works: [...(byStation.get(s.id) ?? new Map<string, number>())]
+          .map(([name, qty]) => ({ name, qty }))
+          .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name)),
+      }))
+      .filter((r) => r.works.length > 0)
+  })()
+  const outputTotal = outputRecord.reduce(
+    (n, r) => n + r.works.reduce((m, w) => m + w.qty, 0),
+    0,
+  )
 
   // My own scorecard, against a target of everything I submit ending up
   // approved. Read as a meter over two windows: today first, then the week
@@ -1083,49 +1106,41 @@ function PerformanceTab({
           </div>
         )}
 
-        {/* Admin tier and above read the mill first: what each station has
-            put out this month, then the week, then who is on, then what it
-            costs. The same cards appear once only — they are skipped in
-            their old places below. */}
+        {/* Admin tier and above read the mill first: the output record —
+            every work set to show here, under its station — then who is on,
+            then what it costs. */}
         {showMill && (
           <>
             <div className="mob-card">
-              <div className="mob-card-label">Mill Dashboard</div>
+              <div className="mob-card-label">Output record</div>
               <div className="mob-sub">{monthLabel} · approved work records only</div>
-              {stations.length === 0 ? (
-                <div className="mob-sub">No stations for your tags yet.</div>
+              {outputRecord.length === 0 ? (
+                <div className="mob-sub">
+                  No work is set to show here yet — tick “Show on mill performance”
+                  on a piece rate.
+                </div>
               ) : (
                 <>
-                  {stations.map((s) => (
-                    <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
-                      <span className="mob-entry-name">{s.name}</span>
-                      <span className="mob-entry-side">
-                        <span className="mob-entry-amt">{fmtQty(statFor(s.id).approved)}</span>
+                  {outputRecord.map((r) => (
+                    <div key={r.station.id}>
+                      <button className="mob-lineitem" onClick={() => setStation(r.station)}>
+                        <span className="mob-entry-name">{r.station.name}</span>
                         <span className="mob-caret">›</span>
-                      </span>
-                    </button>
+                      </button>
+                      {r.works.map((w) => (
+                        <div className="mob-breakrow indent" key={w.name}>
+                          <span>{w.name}</span>
+                          <span className="mob-entry-amt">{fmtQty(w.qty)}</span>
+                        </div>
+                      ))}
+                    </div>
                   ))}
                   <div className="mob-breakrow total">
                     <span>Total approved output</span>
-                    <span className="mob-entry-amt">{fmtQty(totalApproved)}</span>
+                    <span className="mob-entry-amt">{fmtQty(outputTotal)}</span>
                   </div>
                 </>
               )}
-            </div>
-
-            <div className="mob-card">
-              <div className="mob-title">Daily quantity — this week</div>
-              <div className="mob-bars">
-                {millWeek.map((w) => (
-                  <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
-                    <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
-                    <span className="mob-bartrack">
-                      <div style={{ width: `${(w.qty / millMaxQty) * 100}%` }} />
-                    </span>
-                    <span className="val">{w.qty > 0 ? fmtQty(w.qty) : '·'}</span>
-                  </div>
-                ))}
-              </div>
             </div>
 
             <div className="mob-card">
@@ -1350,17 +1365,30 @@ function PerformanceTab({
           </>
         )}
 
-        {showMill && (
-          <div className="mob-grid2">
-            <div className="mob-card">
-              <div className="mob-field-label">Output this month</div>
-              <div className="mob-stat">{fmtQty(totalOutput)}</div>
-            </div>
-            <div className="mob-card">
-              <div className="mob-field-label">Approval %</div>
-              <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
-            </div>
-          </div>
+        {/* The way into a station's own records. Above the station tiers
+            the Mill performance card at the top already lists them. */}
+        {showKpi && stations.length > 0 && (
+        <div className="mob-card">
+          <div className="mob-card-label">Station records</div>
+          {stations.map((s) => {
+            const st = statFor(s.id)
+            return (
+              <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
+                <span>
+                  <span className="mob-entry-name">{s.name}</span>
+                  <span className="mob-station-meta" style={{ display: 'block' }}>
+                    {st.workers > 0 ? `${st.workers} worker${st.workers === 1 ? '' : 's'} · ` : ''}
+                    {st.pct == null ? 'no records' : `${st.pct}% approved`}
+                  </span>
+                </span>
+                <span className="mob-entry-side">
+                  <span className="mob-entry-amt">{fmtQty(st.output)}</span>
+                  <span className="mob-caret">›</span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
         )}
       </div>
     </>

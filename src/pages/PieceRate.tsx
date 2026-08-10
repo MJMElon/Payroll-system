@@ -1238,6 +1238,8 @@ interface RateDraft {
   effectiveFrom: string
   /** Offered in the mobile work entry screen. */
   onMobile: boolean
+  /** Counted on the mobile Mill output dashboard. */
+  onMill: boolean
 }
 
 /** One line of the before/after sheet shown before anything is written. */
@@ -1289,6 +1291,7 @@ function GroupManageModal({
             tier2: r?.tier2_rate != null ? String(Number(r.tier2_rate)) : '',
             effectiveFrom: r?.effective_from ?? todayISO(),
             onMobile: j.record_job !== false,
+            onMill: j.show_on_mill !== false,
           } as RateDraft,
         ]
       }),
@@ -1368,6 +1371,13 @@ function GroupManageModal({
           after: d.onMobile ? 'Yes' : 'No',
         })
       }
+      if (d.onMill !== (j.show_on_mill !== false)) {
+        out.push({
+          what: `${tier} · show on mill performance`,
+          before: j.show_on_mill !== false ? 'Yes' : 'No',
+          after: d.onMill ? 'Yes' : 'No',
+        })
+      }
     }
     return out
   })()
@@ -1417,17 +1427,21 @@ function GroupManageModal({
           if (error) throw new Error(saveMessage(error.message))
         }
 
-        if (d.onMobile !== (j.record_job !== false)) {
-          const { error } = await supabase
-            .from('jobs')
-            .update({ record_job: d.onMobile })
-            .eq('id', j.id)
+        // Both switches live on the jobs row, and both arrived after the
+        // first release — a database that has not had setup.sql re-run says
+        // which column is missing rather than showing a Postgres error.
+        const flags: Record<string, boolean> = {}
+        if (d.onMobile !== (j.record_job !== false)) flags.record_job = d.onMobile
+        if (d.onMill !== (j.show_on_mill !== false)) flags.show_on_mill = d.onMill
+        if (Object.keys(flags).length > 0) {
+          const { error } = await supabase.from('jobs').update(flags).eq('id', j.id)
           if (error) {
+            const missing = /record_job|show_on_mill/i.exec(error.message)?.[0]
             throw new Error(
-              /record_job/i.test(error.message)
-                ? 'The database is missing the record_job column — run the latest ' +
-                  'supabase/setup.sql (or just: alter table public.jobs add column ' +
-                  'record_job boolean not null default true;).'
+              missing
+                ? `The database is missing the ${missing} column — run the latest ` +
+                  `supabase/setup.sql (or just: alter table public.jobs add column ` +
+                  `${missing} boolean not null default true;).`
                 : error.message,
             )
           }
@@ -1735,6 +1749,31 @@ function GroupManageModal({
                   ))}
                 </tr>
 
+                <tr>
+                  <th scope="row">Show on mill performance</th>
+                  {jobs.map((j) => (
+                    <td key={j.id}>
+                      {editing ? (
+                        <label
+                          className="checkbox"
+                          style={{ margin: 0 }}
+                          title="Ticked: this work is counted on the mobile Mill output dashboard."
+                        >
+                          <input
+                            type="checkbox"
+                            checked={draft[j.id]?.onMill ?? true}
+                            onChange={(e) => patch(j.id, { onMill: e.target.checked })}
+                          />
+                        </label>
+                      ) : (j.show_on_mill !== false) ? (
+                        <span className="tickmark yes" aria-label="Yes">✓</span>
+                      ) : (
+                        <span className="tickmark no" aria-label="No">✕</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+
               </tbody>
             </table>
           </div>
@@ -1871,6 +1910,7 @@ const AUDIT_FIELD: Record<string, string> = {
   approval_status: 'Approval',
   active: 'In the masterlist',
   record_job: 'Show on mobile work entry',
+  show_on_mill: 'Show on mill performance',
   delete_remark: 'Archive reason',
   verified_by: 'Verified by',
   approved_by: 'Approved by',

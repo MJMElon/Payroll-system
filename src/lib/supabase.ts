@@ -157,6 +157,9 @@ export interface Job {
   // payroll, never submitted as a job record. Optional: absent until the
   // column migration has run, and older queries don't select it.
   record_job?: boolean | null
+  // Ticked (default): this work is counted on the mobile Mill output
+  // dashboard. Optional: absent until the column migration has run.
+  show_on_mill?: boolean | null
 }
 
 export interface PieceRate {
