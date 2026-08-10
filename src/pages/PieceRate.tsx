@@ -690,6 +690,19 @@ function SubmissionsList({
                           <IconCheck />
                         </button>
                       )}
+                      {/* A tier holding BOTH functions chooses on the row:
+                          verify only, or approve in one step. */}
+                      {j.approval_status === 'pending' && canFinal && (
+                        <button
+                          type="button"
+                          className="icon-btn ok"
+                          title="Approve directly"
+                          aria-label={`Approve ${j.name} directly`}
+                          onClick={() => setConfirm({ job: j, mode: 'approve' })}
+                        >
+                          <IconDoubleCheck />
+                        </button>
+                      )}
                       {j.approval_status === 'verified' && canFinal && (
                         <button
                           type="button"
@@ -778,8 +791,10 @@ function SubmissionsList({
 }
 
 /** One question before the pen moves: shows the proposal being acted on
- *  and asks for a yes. Approving and verifying also offer Reject here, so
- *  a checker who spots a wrong rate turns it away in the same window. */
+ *  and asks for a yes — laid out as one line under column names, the same
+ *  way a line reads in the create window. Approving and verifying also
+ *  offer Reject here, so a checker who spots a wrong rate turns it away
+ *  in the same window. */
 function ConfirmActionModal({
   job,
   mode,
@@ -810,55 +825,63 @@ function ConfirmActionModal({
   }
   const yes = { verify: 'Yes, verify', approve: 'Yes, approve', reject: 'Yes, reject' }
 
+  // One read-only cell of the line, with its column name repeated inside
+  // for the narrow-screen stacked layout (same trick as the create grid).
+  const Cell = ({ label, wide, children }: { label: string; wide?: boolean; children: ReactNode }) => (
+    <div className={`pr-cell ${wide ? 'wide' : ''}`}>
+      <span className="pr-cell-label">{label}</span>
+      <span className="pr-cell-val">{children}</span>
+    </div>
+  )
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`modal modal-xwide ${tiered ? 'tiered' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="row-form spread">
           <h2>{titles[mode]}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
-        <div className="stack" style={{ gap: '0.4rem' }}>
-          <div className="view-row">
-            <span className="view-label">Tier</span>
-            <span className="view-value">
+        <div className={`pr-grid pr-confirm ${tiered ? 'tiered' : ''}`}>
+          <div className="pr-grid-head">
+            <span>Tier Tag</span>
+            <span>Station Tag</span>
+            <span>Piece Rate Work Description</span>
+            <span>Unit</span>
+            <span>Piece Rate (RM)</span>
+            {tiered && <span>Tier 1 — 1st to 4th /hr</span>}
+            {tiered && <span>Tier 2 — 5th onward /hr</span>}
+            <span>Effective date</span>
+            <span />
+          </div>
+          <div className="pr-grid-row">
+            <Cell label="Tier Tag">
               {grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : 'All positions'}
-            </span>
-          </div>
-          <div className="view-row">
-            <span className="view-label">Station</span>
-            <span className="view-value">{stationName}</span>
-          </div>
-          <div className="view-row">
-            <span className="view-label">Work description</span>
-            <span className="view-value">{job.name}</span>
-          </div>
-          {tiered ? (
-            <>
-              <div className="view-row">
-                <span className="view-label">Tier 1 — 1st to 4th /hr</span>
-                <span className="view-value">RM {Number(rate!.rate).toFixed(2)}</span>
-              </div>
-              <div className="view-row">
-                <span className="view-label">Tier 2 — 5th onward /hr</span>
-                <span className="view-value">RM {Number(rate!.tier2_rate).toFixed(2)}</span>
-              </div>
-            </>
-          ) : (
-            <div className="view-row">
-              <span className="view-label">Proposed rate</span>
-              <span className="view-value">{rate ? `RM ${Number(rate.rate).toFixed(2)}` : '—'}</span>
-            </div>
-          )}
-          <div className="view-row">
-            <span className="view-label">Unit</span>
-            <span className="view-value">{job.unit}</span>
-          </div>
-          <div className="view-row">
-            <span className="view-label">Effective date</span>
-            <span className="view-value">{rate ? rate.effective_from : '—'}</span>
+            </Cell>
+            <Cell label="Station Tag">{stationName}</Cell>
+            <Cell label="Piece Rate Work Description" wide>{job.name}</Cell>
+            <Cell label="Unit">{tiered ? '/hour (tiered)' : job.unit}</Cell>
+            <Cell label="Piece Rate (RM)">
+              {tiered ? '—' : rate ? Number(rate.rate).toFixed(2) : '—'}
+            </Cell>
+            {tiered && (
+              <Cell label="Tier 1 — 1st to 4th /hr">{Number(rate!.rate).toFixed(2)}</Cell>
+            )}
+            {tiered && (
+              <Cell label="Tier 2 — 5th onward /hr">{Number(rate!.tier2_rate).toFixed(2)}</Cell>
+            )}
+            <Cell label="Effective date">{rate ? rate.effective_from : '—'}</Cell>
           </div>
         </div>
+
+        {mode === 'approve' && job.approval_status === 'pending' && (
+          <p className="small muted" style={{ margin: 0 }}>
+            This approves it in one step — the separate verify step is skipped.
+          </p>
+        )}
 
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
@@ -1060,7 +1083,7 @@ function RatesList({
     ? groupJobs(jobs).find((g) => groupKey(g) === manageKey) ?? null
     : null
   const tagCols = tagColumns(grades, filtered)
-  const colCount = 3 + tagCols.length + 1 + (canManage ? 1 : 0)
+  const colCount = 3 + tagCols.length + 1 + 1
 
   // Download the visible masterlist as CSV (opens directly in Excel).
   function exportCsv() {
@@ -1126,7 +1149,7 @@ function RatesList({
                 <th key={c.key} className="right">{c.label} (RM)</th>
               ))}
               <th>Effective date</th>
-              {canManage && <th className="right">Actions</th>}
+              <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1158,19 +1181,19 @@ function RatesList({
                     )
                   })}
                   <td className="muted">{effectiveDate ?? '—'}</td>
-                  {canManage && (
-                    <td className="right">
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title="Edit this piece rate"
-                        aria-label={`Edit ${g.name}`}
-                        onClick={() => setManageKey(groupKey(g))}
-                      >
-                        <IconPencil />
-                      </button>
-                    </td>
-                  )}
+                  {/* The list only VIEWS: the window it opens starts
+                      read-only, and the pencil to edit lives inside it. */}
+                  <td className="right">
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title="View this piece rate"
+                      aria-label={`View ${g.name}`}
+                      onClick={() => setManageKey(groupKey(g))}
+                    >
+                      <IconEye />
+                    </button>
+                  </td>
                 </tr>
               )
             })}

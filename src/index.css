@@ -2475,6 +2475,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    move into each cell so a stacked row still says what it is. */
 .pr-cell-label { display: none; font-size: 0.7rem; font-weight: 700; color: var(--muted); }
 
+/* The verify/approve window shows the proposal as ONE read-only line under
+   the same column names as the create window. No dropdown ever opens in
+   it, so it does not need the create grid's landing room. */
+.pr-grid.pr-confirm { min-height: 0; }
+.pr-cell-val {
+  display: flex; align-items: center; min-height: 40px;
+  font-size: 0.92rem; overflow-wrap: anywhere;
+}
+
 .pr-rate-cell { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
 .pr-tier-inputs { display: flex; gap: 0.3rem; }
 .pr-tier-inputs label { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
