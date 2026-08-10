@@ -952,6 +952,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* A tap card whose contents are block-level (meters, bars) rather than a
    label and a number — it cannot be a <button>, so it says so instead. */
 .mob-card.tapcard.block { align-items: stretch; }
+/* Its title row: the name, and the chevron that says the card opens. */
+.mob-cardhead {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+}
+.mob-cardhead .mob-caret { font-size: 1.1rem; color: var(--muted); line-height: 1; }
+/* A heading over a run of cards, with air above it so the run reads as a
+   section of its own rather than as more of the card before it. */
+.mob-sectionhead {
+  padding: 0.55rem 0.2rem 0;
+  font-size: 0.72rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
 .mob-card.tapcard.block:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* A tappable row inside a card — name on the left, value and chevron
