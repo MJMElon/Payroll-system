@@ -255,7 +255,6 @@ export default function PieceRate() {
                   canResubmit={canManage || canCreate || isApprover}
                   canVerify={canVerify}
                   canFinal={canFinal}
-                  canDelete={canDeleteRate}
                   myEmail={profile?.email ?? 'unknown'}
                   onChanged={load}
                   onError={setError}
@@ -539,7 +538,6 @@ function SubmissionsList({
   canResubmit,
   canVerify,
   canFinal,
-  canDelete,
   myEmail,
   onChanged,
   onError,
@@ -552,13 +550,11 @@ function SubmissionsList({
   canResubmit: boolean
   canVerify: boolean
   canFinal: boolean
-  canDelete: boolean
   myEmail: string
   onChanged: () => void
   onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
-  const [viewing, setViewing] = useState<Job | null>(null)
   // The double-check window: which proposal, and what the click meant.
   const [confirm, setConfirm] = useState<{ job: Job; mode: 'verify' | 'approve' | 'reject' } | null>(null)
 
@@ -621,7 +617,7 @@ function SubmissionsList({
     <div className="card stack">
       <div className="row-form spread">
         <h3>
-          Pending Piece Rate Approval
+          Piece Rate Pending Approval
           {pendingCount > 0 && (
             <span className="count-badge static" style={{ marginLeft: '0.5rem' }}>{pendingCount}</span>
           )}
@@ -670,15 +666,6 @@ function SubmissionsList({
                   <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
                   <td className="right">
                     <span className="row-actions">
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title="View details"
-                        aria-label={`View ${j.name}`}
-                        onClick={() => setViewing(j)}
-                      >
-                        <IconEye />
-                      </button>
                       {j.approval_status === 'pending' && canVerify && (
                         <button
                           type="button"
@@ -771,21 +758,6 @@ function SubmissionsList({
         />
       )}
 
-      {viewing && (
-        <ViewRateModal
-          job={viewing}
-          rate={currentRate.get(viewing.id)}
-          stationName={stationName(viewing.station_id)}
-          grades={grades}
-          canDelete={canDelete}
-          onClose={() => setViewing(null)}
-          onChanged={() => {
-            setViewing(null)
-            onChanged()
-          }}
-          onError={onError}
-        />
-      )}
     </div>
   )
 }
@@ -818,14 +790,22 @@ function ProposalLine({
   const tiered = rate?.tier2_rate != null
   return (
     <div className={`pr-grid pr-confirm ${tiered ? 'tiered' : ''}`}>
+      {/* A tiered proposal has no flat rate, so that column is not shown
+          at all — its two hourly columns carry the "Piece Rate (RM)" name
+          instead, so the amounts read as rates. */}
       <div className="pr-grid-head">
         <span>Tier Tag</span>
         <span>Station Tag</span>
         <span>Piece Rate Work Description</span>
         <span>Unit</span>
-        <span>Piece Rate (RM)</span>
-        {tiered && <span>Tier 1 — 1st to 4th /hr</span>}
-        {tiered && <span>Tier 2 — 5th onward /hr</span>}
+        {tiered ? (
+          <>
+            <span>Piece Rate (RM) — 1st to 4th /hr</span>
+            <span>Piece Rate (RM) — 5th onward /hr</span>
+          </>
+        ) : (
+          <span>Piece Rate (RM)</span>
+        )}
         <span>Effective date</span>
         <span />
       </div>
@@ -836,14 +816,19 @@ function ProposalLine({
         <ProposalCell label="Station Tag">{stationName}</ProposalCell>
         <ProposalCell label="Piece Rate Work Description" wide>{job.name}</ProposalCell>
         <ProposalCell label="Unit">{tiered ? '/hour (tiered)' : job.unit}</ProposalCell>
-        <ProposalCell label="Piece Rate (RM)">
-          {tiered ? '—' : rate ? Number(rate.rate).toFixed(2) : '—'}
-        </ProposalCell>
-        {tiered && (
-          <ProposalCell label="Tier 1 — 1st to 4th /hr">{Number(rate!.rate).toFixed(2)}</ProposalCell>
-        )}
-        {tiered && (
-          <ProposalCell label="Tier 2 — 5th onward /hr">{Number(rate!.tier2_rate).toFixed(2)}</ProposalCell>
+        {tiered ? (
+          <>
+            <ProposalCell label="Piece Rate (RM) — 1st to 4th /hr">
+              {Number(rate!.rate).toFixed(2)}
+            </ProposalCell>
+            <ProposalCell label="Piece Rate (RM) — 5th onward /hr">
+              {Number(rate!.tier2_rate).toFixed(2)}
+            </ProposalCell>
+          </>
+        ) : (
+          <ProposalCell label="Piece Rate (RM)">
+            {rate ? Number(rate.rate).toFixed(2) : '—'}
+          </ProposalCell>
         )}
         <ProposalCell label="Effective date">{rate ? rate.effective_from : '—'}</ProposalCell>
       </div>
@@ -917,119 +902,6 @@ function ConfirmActionModal({
             {yes[mode]}
           </button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-/** The full details of one proposal, and the place a proposal dies: the
- *  delete asks for a remark saying why, writes it onto the row, then
- *  removes it — so the audit log holds both the reason and the rate. */
-function ViewRateModal({
-  job,
-  rate,
-  stationName,
-  grades,
-  canDelete,
-  onClose,
-  onChanged,
-  onError,
-}: {
-  job: Job
-  rate: Rate | undefined
-  stationName: string
-  grades: Grade[]
-  canDelete: boolean
-  onClose: () => void
-  onChanged: () => void
-  onError: (m: string | null) => void
-}) {
-  const [remark, setRemark] = useState('')
-  const [confirming, setConfirming] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-
-  const tiered = rate?.tier2_rate != null
-
-  async function destroy() {
-    if (!remark.trim()) return onError('Say why this proposed piece rate is being deleted.')
-    setDeleting(true)
-    onError(null)
-    // The remark goes onto the row first: the audit trail logs the update
-    // and then the delete, so the reason survives the row itself.
-    const { error: remarkErr } = await supabase
-      .from('piece_rate_jobs')
-      .update({ delete_remark: remark.trim() } as never)
-      .eq('id', job.id)
-    if (remarkErr) {
-      setDeleting(false)
-      return onError(remarkErr.message)
-    }
-    // A delete refused by row security still "succeeds" with zero rows,
-    // so ask for the ids back and treat an empty answer as a refusal.
-    const { data, error } = await supabase.from('piece_rate_jobs').delete().eq('id', job.id).select('id')
-    setDeleting(false)
-    if (error) {
-      onError(
-        error.message.includes('foreign key')
-          ? 'This piece rate is already used in production or payroll records, so it cannot be deleted.'
-          : error.message,
-      )
-    } else if (!data || data.length === 0) {
-      onError('You are not allowed to delete this piece rate.')
-    } else {
-      onChanged()
-    }
-  }
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className={`modal modal-xwide ${tiered ? 'tiered' : ''}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="row-form spread">
-          <h2>Piece rate details</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-
-        <ProposalLine job={job} rate={rate} stationName={stationName} grades={grades} />
-
-        <div className="row-form" style={{ gap: '0.8rem', alignItems: 'center' }}>
-          <span className={STATUS_CLASS[job.approval_status]}>{STATUS_LABEL[job.approval_status]}</span>
-          {job.verified_by && <span className="muted small">Verified by {job.verified_by}</span>}
-          {job.approved_by && <span className="muted small">Approved by {job.approved_by}</span>}
-        </div>
-
-        {canDelete && !confirming && (
-          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-            <button className="btn ghost danger" onClick={() => setConfirming(true)}>
-              Delete piece rate
-            </button>
-          </div>
-        )}
-        {canDelete && confirming && (
-          <div className="stack" style={{ gap: '0.5rem' }}>
-            <label className="field">
-              <span>Why is this proposed piece rate being deleted?</span>
-              <textarea
-                rows={2}
-                value={remark}
-                onChange={(e) => setRemark(e.target.value)}
-                autoFocus
-              />
-            </label>
-            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-              <button className="btn ghost" onClick={() => setConfirming(false)}>Keep it</button>
-              <button
-                className="btn danger"
-                disabled={deleting || !remark.trim()}
-                onClick={destroy}
-              >
-                {deleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
@@ -1131,7 +1003,7 @@ function RatesList({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search work description…"
+            placeholder="Search to filter…"
             style={{ minWidth: '220px' }}
           />
           <button className="btn ghost" onClick={exportCsv}>Export CSV</button>
@@ -1142,13 +1014,15 @@ function RatesList({
           <thead>
             <tr>
               <th>Station</th>
-              <th>Work description</th>
-              <th>Unit</th>
+              {/* The description gets the room; unit, tier rates and date
+                  share one width; actions is just wide enough for its eye. */}
+              <th className="pr-desc">Work description</th>
+              <th className="pr-eqcol">Unit</th>
               {tagCols.map((c) => (
-                <th key={c.key} className="right">{c.label} (RM)</th>
+                <th key={c.key} className="right pr-eqcol">{c.label} (RM)</th>
               ))}
-              <th>Effective date</th>
-              <th className="right">Actions</th>
+              <th className="pr-eqcol">Effective date</th>
+              <th className="right pr-actcol">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1236,8 +1110,6 @@ interface RateDraft {
   rate: string
   tier2: string
   effectiveFrom: string
-  /** Offered in the mobile work entry screen. */
-  onMobile: boolean
 }
 
 /** One line of the before/after sheet shown before anything is written. */
@@ -1288,7 +1160,6 @@ function GroupManageModal({
             rate: r ? String(Number(r.rate)) : '',
             tier2: r?.tier2_rate != null ? String(Number(r.tier2_rate)) : '',
             effectiveFrom: r?.effective_from ?? todayISO(),
-            onMobile: j.record_job !== false,
           } as RateDraft,
         ]
       }),
@@ -1296,6 +1167,14 @@ function GroupManageModal({
 
   const [mode, setMode] = useState<'view' | 'edit' | 'history'>('view')
   const [name, setName] = useState(jobs[0]?.name ?? '')
+  // The two mobile switches belong to the WORK, not to one tier: the
+  // record is entered once by the operator, and once approved it pays
+  // every tier its own rate — so on/off is one answer for the whole
+  // piece rate, written onto every tier's row together.
+  const groupOnMobile = jobs.some((j) => j.record_job !== false)
+  const groupOnMill = jobs.some((j) => j.show_on_mill !== false)
+  const [onMobile, setOnMobile] = useState(groupOnMobile)
+  const [onMill, setOnMill] = useState(groupOnMill)
   const [draft, setDraft] = useState<Record<string, RateDraft>>(blankDraft)
   const [confirm, setConfirm] = useState<'save' | 'archive' | null>(null)
   const [remark, setRemark] = useState('')
@@ -1307,6 +1186,8 @@ function GroupManageModal({
   function startEdit() {
     setName(jobs[0]?.name ?? '')
     setDraft(blankDraft())
+    setOnMobile(groupOnMobile)
+    setOnMill(groupOnMill)
     onError(null)
     setMode('edit')
   }
@@ -1314,6 +1195,8 @@ function GroupManageModal({
   function cancelEdit() {
     setName(jobs[0]?.name ?? '')
     setDraft(blankDraft())
+    setOnMobile(groupOnMobile)
+    setOnMill(groupOnMill)
     onError(null)
     setMode('view')
   }
@@ -1328,6 +1211,20 @@ function GroupManageModal({
     const oldName = jobs[0]?.name ?? ''
     if (name.trim() && name.trim() !== oldName) {
       out.push({ what: 'Work description', before: oldName, after: name.trim() })
+    }
+    if (onMobile !== groupOnMobile) {
+      out.push({
+        what: 'Show on mobile apps work entry (whole work)',
+        before: groupOnMobile ? 'Yes' : 'No',
+        after: onMobile ? 'Yes' : 'No',
+      })
+    }
+    if (onMill !== groupOnMill) {
+      out.push({
+        what: 'Show on mill performance (whole work)',
+        before: groupOnMill ? 'Yes' : 'No',
+        after: onMill ? 'Yes' : 'No',
+      })
     }
     for (const j of jobs) {
       const d = draft[j.id]
@@ -1359,13 +1256,6 @@ function GroupManageModal({
           what: `${tier} · effective date`,
           before: r?.effective_from ?? '—',
           after: d.effectiveFrom || '—',
-        })
-      }
-      if (d.onMobile !== (j.record_job !== false)) {
-        out.push({
-          what: `${tier} · show on mobile apps work entry`,
-          before: j.record_job !== false ? 'Yes' : 'No',
-          after: d.onMobile ? 'Yes' : 'No',
         })
       }
     }
@@ -1417,17 +1307,22 @@ function GroupManageModal({
           if (error) throw new Error(saveMessage(error.message))
         }
 
-        if (d.onMobile !== (j.record_job !== false)) {
-          const { error } = await supabase
-            .from('piece_rate_jobs')
-            .update({ record_job: d.onMobile })
-            .eq('id', j.id)
+        // Both switches are one answer for the whole work, written onto
+        // every tier's row. They live on the jobs row and arrived after
+        // the first release — a database that has not had setup.sql re-run
+        // says which column is missing rather than a raw Postgres error.
+        const flags: Record<string, boolean> = {}
+        if ((j.record_job !== false) !== onMobile) flags.record_job = onMobile
+        if ((j.show_on_mill !== false) !== onMill) flags.show_on_mill = onMill
+        if (Object.keys(flags).length > 0) {
+          const { error } = await supabase.from('piece_rate_jobs').update(flags).eq('id', j.id)
           if (error) {
+            const missing = /record_job|show_on_mill/i.exec(error.message)?.[0]
             throw new Error(
-              /record_job/i.test(error.message)
-                ? 'The database is missing the record_job column — run the latest ' +
-                  'supabase/setup.sql (or just: alter table public.jobs add column ' +
-                  'record_job boolean not null default true;).'
+              missing
+                ? `The database is missing the ${missing} column — run the latest ` +
+                  `supabase/setup.sql (or just: alter table public.piece_rate_jobs add column ` +
+                  `${missing} boolean not null default true;).`
                 : error.message,
             )
           }
@@ -1707,32 +1602,59 @@ function GroupManageModal({
                   ))}
                 </tr>
 
+                {/* ONE answer for the whole work, not one per tier: the
+                    record is entered once by the operator and, approved,
+                    pays every tier its own rate. */}
                 <tr>
                   <th scope="row">Show on mobile apps work entry</th>
-                  {jobs.map((j) => (
-                    <td key={j.id}>
-                      {editing ? (
-                        <label
-                          className="checkbox tickword"
-                          style={{ margin: 0 }}
-                          title="Untick for an incentive or support rate — paid through payroll, never offered as a record to submit."
-                        >
-                          <input
-                            type="checkbox"
-                            checked={draft[j.id]?.onMobile ?? true}
-                            onChange={(e) => patch(j.id, { onMobile: e.target.checked })}
-                          />{' '}
-                          {(draft[j.id]?.onMobile ?? true)
-                            ? 'Shown on mobile apps'
-                            : 'Not shown on mobile apps'}
-                        </label>
-                      ) : (j.record_job !== false) ? (
-                        <span className="tickmark yes">✓ Shown on mobile apps</span>
-                      ) : (
-                        <span className="tickmark no">✕ Not shown on mobile apps</span>
-                      )}
-                    </td>
-                  ))}
+                  <td colSpan={jobs.length}>
+                    {editing ? (
+                      <label
+                        className="checkbox tickword"
+                        style={{ margin: 0 }}
+                        title="One setting for this work across every tier. Untick for an incentive or support rate — paid through payroll, never offered as a record to submit."
+                      >
+                        <input
+                          type="checkbox"
+                          checked={onMobile}
+                          onChange={(e) => setOnMobile(e.target.checked)}
+                        />{' '}
+                        <span className="tickword-text">
+                          {onMobile ? 'Shown on mobile apps' : 'Not shown on mobile apps'}
+                        </span>
+                      </label>
+                    ) : groupOnMobile ? (
+                      <span className="tickmark yes">✓ Shown on mobile apps</span>
+                    ) : (
+                      <span className="tickmark no">✕ Not shown on mobile apps</span>
+                    )}
+                  </td>
+                </tr>
+
+                <tr>
+                  <th scope="row">Show on mill performance</th>
+                  <td colSpan={jobs.length}>
+                    {editing ? (
+                      <label
+                        className="checkbox tickword"
+                        style={{ margin: 0 }}
+                        title="One setting for this work across every tier. Ticked: this work is counted on the mobile Mill output dashboard."
+                      >
+                        <input
+                          type="checkbox"
+                          checked={onMill}
+                          onChange={(e) => setOnMill(e.target.checked)}
+                        />{' '}
+                        <span className="tickword-text">
+                          {onMill ? 'Counted on mill performance' : 'Not counted on mill performance'}
+                        </span>
+                      </label>
+                    ) : groupOnMill ? (
+                      <span className="tickmark yes">✓ Counted on mill performance</span>
+                    ) : (
+                      <span className="tickmark no">✕ Not counted on mill performance</span>
+                    )}
+                  </td>
                 </tr>
 
               </tbody>
@@ -1871,6 +1793,7 @@ const AUDIT_FIELD: Record<string, string> = {
   approval_status: 'Approval',
   active: 'In the masterlist',
   record_job: 'Show on mobile work entry',
+  show_on_mill: 'Show on mill performance',
   delete_remark: 'Archive reason',
   verified_by: 'Verified by',
   approved_by: 'Approved by',
@@ -2104,7 +2027,7 @@ function HistoryList({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search work description…"
+            placeholder="Search to filter…"
             style={{ minWidth: '220px' }}
           />
         </div>

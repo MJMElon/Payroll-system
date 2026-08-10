@@ -215,6 +215,13 @@ alter table public.piece_rate_jobs drop constraint if exists jobs_station_id_nam
 -- delete entry (which snapshots the whole row) carries the reason why.
 alter table public.piece_rate_jobs add column if not exists delete_remark text;
 
+-- Which screens a contract appears on, set per contract in the Piece Rate
+-- module's Manage window. Both default to true so existing work keeps
+-- showing where it always did:
+--   record_job    -> offered in the mobile work entry screen
+--   show_on_mill  -> counted on the mobile Mill output dashboard
+alter table public.piece_rate_jobs add column if not exists show_on_mill boolean not null default true;
+
 -- Grade tag assigned to a worker/user (their station tag is workers.station_id).
 alter table public.shared_workers add column if not exists grade_id uuid references public.shared_grades (id);
 

@@ -1070,7 +1070,7 @@ function TagModal({
       if (error) return setError(saveError(error, 'tier tag', name))
       return setError(
         'Saved — except "Entitled Function", which needs one line of SQL. In Supabase → ' +
-          'SQL editor run:  alter table public.grades add column if not exists entitlements text[];  ' +
+          'SQL editor run:  alter table public.shared_grades add column if not exists entitlements text[];  ' +
           'then set it again.',
       )
     }

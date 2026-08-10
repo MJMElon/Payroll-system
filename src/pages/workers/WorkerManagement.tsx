@@ -762,7 +762,7 @@ export default function WorkerManagement() {
       setError(
         /chart_pos/i.test(err.message)
           ? 'The database is missing the chart_pos column — run the latest supabase/setup.sql ' +
-            '(or just: alter table public.access_profiles add column chart_pos int;).'
+            '(or just: alter table public.shared_profiles add column chart_pos int;).'
           : err.message,
       )
     } else if (results.length > 0 && results.every((r) => !r.data || r.data.length === 0)) {
