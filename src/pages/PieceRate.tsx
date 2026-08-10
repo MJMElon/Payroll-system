@@ -1539,6 +1539,19 @@ function GroupManageModal({
         <div className="row-form spread">
           <h2>{stationName}</h2>
           <div className="row-form manage-tools">
+            {/* Reading the history? The eye beside it goes back to the
+                piece rate itself. */}
+            {mode === 'history' && (
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => setMode('view')}
+                title="View this piece rate"
+                aria-label="View this piece rate"
+              >
+                <IconEye />
+              </button>
+            )}
             {!editing && (
               <button
                 type="button"
