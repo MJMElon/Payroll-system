@@ -790,6 +790,67 @@ function SubmissionsList({
   )
 }
 
+/** One read-only cell of a proposal line, its column name repeated inside
+ *  for the narrow-screen stacked layout (same trick as the create grid). */
+function ProposalCell({ label, wide, children }: { label: string; wide?: boolean; children: ReactNode }) {
+  return (
+    <div className={`pr-cell ${wide ? 'wide' : ''}`}>
+      <span className="pr-cell-label">{label}</span>
+      <span className="pr-cell-val">{children}</span>
+    </div>
+  )
+}
+
+/** One proposal as one line under column names — the same shape a line has
+ *  in the create window. Shared by the view and confirm windows. */
+function ProposalLine({
+  job,
+  rate,
+  stationName,
+  grades,
+}: {
+  job: Job
+  rate: Rate | undefined
+  stationName: string
+  grades: Grade[]
+}) {
+  const grade = grades.find((g) => g.id === job.grade_id)
+  const tiered = rate?.tier2_rate != null
+  return (
+    <div className={`pr-grid pr-confirm ${tiered ? 'tiered' : ''}`}>
+      <div className="pr-grid-head">
+        <span>Tier Tag</span>
+        <span>Station Tag</span>
+        <span>Piece Rate Work Description</span>
+        <span>Unit</span>
+        <span>Piece Rate (RM)</span>
+        {tiered && <span>Tier 1 — 1st to 4th /hr</span>}
+        {tiered && <span>Tier 2 — 5th onward /hr</span>}
+        <span>Effective date</span>
+        <span />
+      </div>
+      <div className="pr-grid-row">
+        <ProposalCell label="Tier Tag">
+          {grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : 'All positions'}
+        </ProposalCell>
+        <ProposalCell label="Station Tag">{stationName}</ProposalCell>
+        <ProposalCell label="Piece Rate Work Description" wide>{job.name}</ProposalCell>
+        <ProposalCell label="Unit">{tiered ? '/hour (tiered)' : job.unit}</ProposalCell>
+        <ProposalCell label="Piece Rate (RM)">
+          {tiered ? '—' : rate ? Number(rate.rate).toFixed(2) : '—'}
+        </ProposalCell>
+        {tiered && (
+          <ProposalCell label="Tier 1 — 1st to 4th /hr">{Number(rate!.rate).toFixed(2)}</ProposalCell>
+        )}
+        {tiered && (
+          <ProposalCell label="Tier 2 — 5th onward /hr">{Number(rate!.tier2_rate).toFixed(2)}</ProposalCell>
+        )}
+        <ProposalCell label="Effective date">{rate ? rate.effective_from : '—'}</ProposalCell>
+      </div>
+    </div>
+  )
+}
+
 /** One question before the pen moves: shows the proposal being acted on
  *  and asks for a yes — laid out as one line under column names, the same
  *  way a line reads in the create window. Approving and verifying also
@@ -816,7 +877,6 @@ function ConfirmActionModal({
   onConfirm: () => void
   onReject: () => void
 }) {
-  const grade = grades.find((g) => g.id === job.grade_id)
   const tiered = rate?.tier2_rate != null
   const titles = {
     verify: 'Verify this piece rate?',
@@ -824,15 +884,6 @@ function ConfirmActionModal({
     reject: 'Reject this piece rate?',
   }
   const yes = { verify: 'Yes, verify', approve: 'Yes, approve', reject: 'Yes, reject' }
-
-  // One read-only cell of the line, with its column name repeated inside
-  // for the narrow-screen stacked layout (same trick as the create grid).
-  const Cell = ({ label, wide, children }: { label: string; wide?: boolean; children: ReactNode }) => (
-    <div className={`pr-cell ${wide ? 'wide' : ''}`}>
-      <span className="pr-cell-label">{label}</span>
-      <span className="pr-cell-val">{children}</span>
-    </div>
-  )
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -845,37 +896,7 @@ function ConfirmActionModal({
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
-        <div className={`pr-grid pr-confirm ${tiered ? 'tiered' : ''}`}>
-          <div className="pr-grid-head">
-            <span>Tier Tag</span>
-            <span>Station Tag</span>
-            <span>Piece Rate Work Description</span>
-            <span>Unit</span>
-            <span>Piece Rate (RM)</span>
-            {tiered && <span>Tier 1 — 1st to 4th /hr</span>}
-            {tiered && <span>Tier 2 — 5th onward /hr</span>}
-            <span>Effective date</span>
-            <span />
-          </div>
-          <div className="pr-grid-row">
-            <Cell label="Tier Tag">
-              {grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : 'All positions'}
-            </Cell>
-            <Cell label="Station Tag">{stationName}</Cell>
-            <Cell label="Piece Rate Work Description" wide>{job.name}</Cell>
-            <Cell label="Unit">{tiered ? '/hour (tiered)' : job.unit}</Cell>
-            <Cell label="Piece Rate (RM)">
-              {tiered ? '—' : rate ? Number(rate.rate).toFixed(2) : '—'}
-            </Cell>
-            {tiered && (
-              <Cell label="Tier 1 — 1st to 4th /hr">{Number(rate!.rate).toFixed(2)}</Cell>
-            )}
-            {tiered && (
-              <Cell label="Tier 2 — 5th onward /hr">{Number(rate!.tier2_rate).toFixed(2)}</Cell>
-            )}
-            <Cell label="Effective date">{rate ? rate.effective_from : '—'}</Cell>
-          </div>
-        </div>
+        <ProposalLine job={job} rate={rate} stationName={stationName} grades={grades} />
 
         {mode === 'approve' && job.approval_status === 'pending' && (
           <p className="small muted" style={{ margin: 0 }}>
@@ -927,7 +948,6 @@ function ViewRateModal({
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
-  const grade = grades.find((g) => g.id === job.grade_id)
   const tiered = rate?.tier2_rate != null
 
   async function destroy() {
@@ -961,44 +981,23 @@ function ViewRateModal({
     }
   }
 
-  const Row = ({ label, children }: { label: string; children: ReactNode }) => (
-    <div className="view-row">
-      <span className="view-label">{label}</span>
-      <span className="view-value">{children}</span>
-    </div>
-  )
-
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`modal modal-xwide ${tiered ? 'tiered' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="row-form spread">
           <h2>Piece rate details</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
-        <div className="stack" style={{ gap: '0.4rem' }}>
-          <Row label="Tier">
-            {grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : 'All positions'}
-          </Row>
-          <Row label="Station">{stationName}</Row>
-          <Row label="Work description">{job.name}</Row>
-          {tiered ? (
-            <>
-              <Row label="Tier 1 — 1st to 4th /hr">RM {Number(rate!.rate).toFixed(2)}</Row>
-              <Row label="Tier 2 — 5th onward /hr">RM {Number(rate!.tier2_rate).toFixed(2)}</Row>
-            </>
-          ) : (
-            <Row label="Proposed rate">
-              {rate ? `RM ${Number(rate.rate).toFixed(2)}` : '—'}
-            </Row>
-          )}
-          <Row label="Unit">{job.unit}</Row>
-          <Row label="Effective date">{rate ? rate.effective_from : '—'}</Row>
-          <Row label="Status">
-            <span className={STATUS_CLASS[job.approval_status]}>{STATUS_LABEL[job.approval_status]}</span>
-          </Row>
-          {job.verified_by && <Row label="Verified by">{job.verified_by}</Row>}
-          {job.approved_by && <Row label="Approved by">{job.approved_by}</Row>}
+        <ProposalLine job={job} rate={rate} stationName={stationName} grades={grades} />
+
+        <div className="row-form" style={{ gap: '0.8rem', alignItems: 'center' }}>
+          <span className={STATUS_CLASS[job.approval_status]}>{STATUS_LABEL[job.approval_status]}</span>
+          {job.verified_by && <span className="muted small">Verified by {job.verified_by}</span>}
+          {job.approved_by && <span className="muted small">Approved by {job.approved_by}</span>}
         </div>
 
         {canDelete && !confirming && (
