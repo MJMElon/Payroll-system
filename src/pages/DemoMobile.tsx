@@ -792,7 +792,7 @@ function PerformanceTab({
   const [station, setStation] = useState<Station | null>(null)
   // The screens this tab drills into: the work record behind "My work
   // done", and the two queues behind the cards under it.
-  const [sub, setSub] = useState<null | 'history' | 'pending' | 'rejected'>(null)
+  const [sub, setSub] = useState<null | 'history' | 'pending' | 'rejected' | 'output'>(null)
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const tierCaps = effectiveCapabilities(tier)
@@ -897,7 +897,6 @@ function PerformanceTab({
     ((canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'))
   const awaiting = mtd.filter(needsMe)
   const rejectedWk = entries.filter((e) => status(e) === 'rejected' && e.work_date >= weekStart)
-  const fmtMoney = (v: number) => (v >= 1000 ? `RM ${Math.round(v).toLocaleString()}` : RM(v))
 
   // Payroll cost trend — last 6 months.
   const trend: { label: string; total: number }[] = []
@@ -912,9 +911,9 @@ function PerformanceTab({
   }
   const maxTrend = Math.max(1, ...trend.map((t) => t.total))
   // Each month is every work record that was not rejected, priced at the
-  // rate in force on the day worked — so the bar IS the payout.
-  const fmtK = (v: number) =>
-    `RM ${v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v).toString()}`
+  // rate in force on the day worked — so the bar IS the payout. The unit
+  // is said once as a column heading rather than on every bar.
+  const fmtK = (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v).toString())
 
   // Workforce (today).
   const today = todayISO()
@@ -971,6 +970,21 @@ function PerformanceTab({
     )
   }
 
+  if (sub === 'output') {
+    return (
+      <OutputRecordScreen
+        stations={stations}
+        jobs={jobs}
+        entries={entries}
+        onStation={(st) => {
+          setSub(null)
+          setStation(st)
+        }}
+        onBack={() => setSub(null)}
+      />
+    )
+  }
+
   if (sub === 'pending' || sub === 'rejected') {
     return (
       <QueueScreen
@@ -994,38 +1008,7 @@ function PerformanceTab({
     )
   }
 
-  /**
-   * The Output record: every work set to "Show on mill performance", under
-   * the station it belongs to, with what was approved against it this
-   * month. Summed by work NAME rather than by contract, since the same work
-   * is priced once per tier tag and the mill does not care which tier
-   * tipped the cage. A work with nothing recorded still shows, at zero —
-   * a station that produced nothing is the thing a dashboard is for.
-   */
-  const outputRecord = (() => {
-    const millJobs = jobs.filter((j) => j.show_on_mill !== false)
-    const jobById = new Map(millJobs.map((j) => [j.id, j]))
-    const byStation = new Map(stations.map((s) => [s.id, new Map<string, number>()]))
-    for (const j of millJobs) {
-      const m = byStation.get(j.station_id)
-      if (m && !m.has(j.name)) m.set(j.name, 0)
-    }
-    for (const e of mtd) {
-      if ((e.approval_status ?? 'approved') !== 'approved') continue
-      const j = jobById.get(e.job_id)
-      const m = byStation.get(e.station_id)
-      if (!j || !m) continue
-      m.set(j.name, (m.get(j.name) ?? 0) + e.quantity)
-    }
-    return stations
-      .map((s) => ({
-        station: s,
-        works: [...(byStation.get(s.id) ?? new Map<string, number>())]
-          .map(([name, qty]) => ({ name, qty }))
-          .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name)),
-      }))
-      .filter((r) => r.works.length > 0)
-  })()
+  const outputRecord = buildOutputRecord(stations, jobs, mtd)
 
   // My own scorecard, against a target of everything I submit ending up
   // approved. Read as a meter over two windows: today first, then the week
@@ -1088,8 +1071,14 @@ function PerformanceTab({
             then what it costs. */}
         {showMill && (
           <>
-            <div className="mob-card">
-              <div className="mob-title">{shortMonth} Output Record</div>
+            {/* The whole card opens the record over today, 7 days and 30
+                days — for the stations this tier may see, which is the
+                list it was handed. */}
+            <button className="mob-card mob-card-tap" onClick={() => setSub('output')}>
+              <div className="mob-title spread">
+                <span>{shortMonth} Output Record</span>
+                <span className="mob-caret">›</span>
+              </div>
               {outputRecord.length === 0 ? (
                 <div className="mob-sub">
                   No work is set to show here yet — tick “Show on mill performance”
@@ -1098,13 +1087,7 @@ function PerformanceTab({
               ) : (
                 outputRecord.map((r) => (
                   <div key={r.station.id}>
-                    {/* Still the way into the station's own records, but it
-                        reads as the heading of the works under it rather
-                        than as a row of its own. */}
-                    <button className="mob-breakrow station" onClick={() => setStation(r.station)}>
-                      <span>{r.station.name}</span>
-                      <span className="mob-caret">›</span>
-                    </button>
+                    <div className="mob-breakrow station">{r.station.name}</div>
                     {r.works.map((w) => (
                       <div className="mob-breakrow indent" key={w.name}>
                         <span>{w.name}</span>
@@ -1114,7 +1097,7 @@ function PerformanceTab({
                   </div>
                 ))
               )}
-            </div>
+            </button>
 
             <div className="mob-card">
               <div className="mob-title">Workforce</div>
@@ -1133,7 +1116,8 @@ function PerformanceTab({
             </div>
 
             <div className="mob-card">
-              <div className="mob-title">Payroll cost trend — RM (6 months)</div>
+              <div className="mob-title">Payroll cost trend</div>
+              <div className="mob-barhead"><span className="val">RM</span></div>
               <div className="mob-bars">
                 {trend.map((t) => (
                   <div className="mob-barrow" key={t.label}>
@@ -1242,9 +1226,9 @@ function PerformanceTab({
           <div className="mob-card">
             <div className="mob-title">Avg wage / worker</div>
             <div className="mob-breakrow">
-              <span>{shortMonth} to date</span>
+              <span>RM / Worker</span>
               <span className="mob-entry-amt">
-                {mgmtWorkers > 0 ? fmtMoney(cost / mgmtWorkers) : '—'}
+                {mgmtWorkers > 0 ? Math.round(cost / mgmtWorkers).toLocaleString() : '—'}
               </span>
             </div>
           </div>
@@ -1279,6 +1263,141 @@ function onePerWork(list: Job[], tier: Grade | null, grades: Grade[]): Job[] {
     if (!seen || rank(j) < rank(seen)) best.set(j.name, j)
   }
   return [...best.values()]
+}
+
+/* ------------------------------------------------------------------ */
+/* Output record — the same sheet as the dashboard card, over a window  */
+/* you choose. The station list handed in is already what this tier may */
+/* see, so a station-scoped tier reads its own station here and a       */
+/* mill-wide one reads every station, with no extra filtering.          */
+/* ------------------------------------------------------------------ */
+
+const OUTPUT_RANGES = [
+  { key: 'today', label: 'Today', days: 0 },
+  { key: 'week', label: '7 days', days: 6 },
+  { key: 'month', label: '30 days', days: 29 },
+] as const
+
+function OutputRecordScreen({
+  stations,
+  jobs,
+  entries,
+  onStation,
+  onBack,
+}: {
+  stations: Station[]
+  jobs: Job[]
+  entries: ProductionEntry[]
+  onStation: (s: Station) => void
+  onBack: () => void
+}) {
+  const [range, setRange] = useState<(typeof OUTPUT_RANGES)[number]['key']>('today')
+  const chosen = OUTPUT_RANGES.find((r) => r.key === range) ?? OUTPUT_RANGES[0]
+
+  const from = new Date()
+  from.setDate(from.getDate() - chosen.days)
+  const fromISO = dayISO(from)
+  const rows = entries.filter((e) => e.work_date >= fromISO)
+  const record = buildOutputRecord(stations, jobs, rows)
+  const total = record.reduce((n, r) => n + r.works.reduce((m, w) => m + w.qty, 0), 0)
+  const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
+
+  return (
+    <>
+      <div className="mob-header">
+        <button className="mob-back" onClick={onBack} aria-label="Back">‹</button>
+        <span className="mob-brand">Output record</span>
+      </div>
+      <div className="mob-body">
+        <div className="mob-queue-chips">
+          {OUTPUT_RANGES.map((r) => (
+            <button key={r.key} className={range === r.key ? 'on' : ''} onClick={() => setRange(r.key)}>
+              {r.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
+          Approved work records · {stations.length === 1 ? stations[0].name : `${stations.length} stations`}
+        </div>
+
+        {record.length === 0 ? (
+          <div className="mob-card">
+            <div className="mob-sub">Nothing set to show on the mill dashboard yet.</div>
+          </div>
+        ) : (
+          record.map((r) => (
+            <div className="mob-card" key={r.station.id}>
+              <button className="mob-title spread" onClick={() => onStation(r.station)}>
+                <span>{r.station.name}</span>
+                <span className="mob-caret">›</span>
+              </button>
+              {r.works.map((w) => (
+                <div className="mob-breakrow" key={w.name}>
+                  <span>{w.name}</span>
+                  <span className="mob-entry-amt">{fmtQty(w.qty)}</span>
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+
+        {record.length > 0 && (
+          <div className="mob-card">
+            <div className="mob-breakrow total">
+              <span>Total approved output</span>
+              <span className="mob-entry-amt">{fmtQty(total)}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+/** One station's line on the Output record, and the works under it. */
+interface OutputRow {
+  station: Station
+  works: { name: string; qty: number }[]
+}
+
+/**
+ * The Output record: every work set to "Show on mill performance", under
+ * the station it belongs to, with what was APPROVED against it over the
+ * rows given.
+ *
+ * Summed by work NAME rather than by contract, since the same work is
+ * priced once per tier tag and the mill does not care which tier tipped
+ * the cage. A work with nothing recorded still shows, at zero — a station
+ * that produced nothing is the thing a dashboard is for.
+ *
+ * `stations` is already the list this tier may see, so a station-scoped
+ * tier gets its own station and a mill-wide one gets them all, with no
+ * further filtering here.
+ */
+function buildOutputRecord(stations: Station[], jobs: Job[], rows: ProductionEntry[]): OutputRow[] {
+  const millJobs = jobs.filter((j) => j.show_on_mill !== false)
+  const jobById = new Map(millJobs.map((j) => [j.id, j]))
+  const byStation = new Map(stations.map((s) => [s.id, new Map<string, number>()]))
+  for (const j of millJobs) {
+    const m = byStation.get(j.station_id)
+    if (m && !m.has(j.name)) m.set(j.name, 0)
+  }
+  for (const e of rows) {
+    if ((e.approval_status ?? 'approved') !== 'approved') continue
+    const j = jobById.get(e.job_id)
+    const m = byStation.get(e.station_id)
+    if (!j || !m) continue
+    m.set(j.name, (m.get(j.name) ?? 0) + e.quantity)
+  }
+  return stations
+    .map((s) => ({
+      station: s,
+      works: [...(byStation.get(s.id) ?? new Map<string, number>())]
+        .map(([name, qty]) => ({ name, qty }))
+        .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name)),
+    }))
+    .filter((r) => r.works.length > 0)
 }
 
 // Hard cap on hourly piece-work photos — a station's hourly_target is a
