@@ -1753,12 +1753,13 @@ button.mob-breakrow {
 .mob-big { font-size: 1.9rem; font-weight: 800; font-family: 'Montserrat', sans-serif; }
 .mob-title { font-weight: 700; font-size: 0.82rem; }
 /* A heading that carries a caret to its right, and is sometimes the button
-   that opens what it heads. */
+   that opens what it heads. The caret is mirrored by a hidden one on the
+   left in the markup, so the middle child is the true centre of the row. */
 .mob-title.spread {
   display: flex; justify-content: space-between; align-items: center;
   appearance: none; background: none; border: none; padding: 0; width: 100%;
   font: inherit; font-weight: 700; font-size: 0.82rem; color: inherit;
-  text-align: left;
+  text-align: center;
 }
 button.mob-title.spread { cursor: pointer; }
 /* A whole card that is one tap target. Keeps the card's own look — only

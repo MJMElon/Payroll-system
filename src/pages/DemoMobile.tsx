@@ -551,6 +551,13 @@ function TabBar({
  * different on each screen, and the page's own name sat somewhere else
  * again. One arrow, one title, one place.
  */
+/** Today / 7 days / 30 days — the windows every record screen offers. */
+const DAY_RANGES = [
+  { key: 'today', label: 'Today', days: 0 },
+  { key: '7d', label: '7 days', days: 6 },
+  { key: '30d', label: '30 days', days: 29 },
+] as const
+
 function MobSubHeader({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <div className="mob-subhead">
@@ -1075,7 +1082,10 @@ function PerformanceTab({
                 days — for the stations this tier may see, which is the
                 list it was handed. */}
             <button className="mob-card mob-card-tap" onClick={() => setSub('output')}>
+              {/* The caret is mirrored by an invisible one on the left, so
+                  the heading sits centred rather than pushed off by it. */}
               <div className="mob-title spread">
+                <span className="mob-caret" aria-hidden="true" style={{ visibility: 'hidden' }}>›</span>
                 <span>{shortMonth} Output Record</span>
                 <span className="mob-caret">›</span>
               </div>
@@ -1272,12 +1282,6 @@ function onePerWork(list: Job[], tier: Grade | null, grades: Grade[]): Job[] {
 /* mill-wide one reads every station, with no extra filtering.          */
 /* ------------------------------------------------------------------ */
 
-const OUTPUT_RANGES = [
-  { key: 'today', label: 'Today', days: 0 },
-  { key: 'week', label: '7 days', days: 6 },
-  { key: 'month', label: '30 days', days: 29 },
-] as const
-
 function OutputRecordScreen({
   stations,
   jobs,
@@ -1291,26 +1295,22 @@ function OutputRecordScreen({
   onStation: (s: Station) => void
   onBack: () => void
 }) {
-  const [range, setRange] = useState<(typeof OUTPUT_RANGES)[number]['key']>('today')
-  const chosen = OUTPUT_RANGES.find((r) => r.key === range) ?? OUTPUT_RANGES[0]
+  const [range, setRange] = useState<(typeof DAY_RANGES)[number]['key']>('today')
+  const chosen = DAY_RANGES.find((r) => r.key === range) ?? DAY_RANGES[0]
 
   const from = new Date()
   from.setDate(from.getDate() - chosen.days)
   const fromISO = dayISO(from)
   const rows = entries.filter((e) => e.work_date >= fromISO)
   const record = buildOutputRecord(stations, jobs, rows)
-  const total = record.reduce((n, r) => n + r.works.reduce((m, w) => m + w.qty, 0), 0)
   const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
 
   return (
     <>
-      <div className="mob-header">
-        <button className="mob-back" onClick={onBack} aria-label="Back">‹</button>
-        <span className="mob-brand">Output record</span>
-      </div>
       <div className="mob-body">
+        <MobSubHeader title="Output record" onBack={onBack} />
         <div className="mob-queue-chips">
-          {OUTPUT_RANGES.map((r) => (
+          {DAY_RANGES.map((r) => (
             <button key={r.key} className={range === r.key ? 'on' : ''} onClick={() => setRange(r.key)}>
               {r.label}
             </button>
@@ -1329,6 +1329,7 @@ function OutputRecordScreen({
           record.map((r) => (
             <div className="mob-card" key={r.station.id}>
               <button className="mob-title spread" onClick={() => onStation(r.station)}>
+                <span className="mob-caret" aria-hidden="true" style={{ visibility: 'hidden' }}>›</span>
                 <span>{r.station.name}</span>
                 <span className="mob-caret">›</span>
               </button>
@@ -1340,15 +1341,6 @@ function OutputRecordScreen({
               ))}
             </div>
           ))
-        )}
-
-        {record.length > 0 && (
-          <div className="mob-card">
-            <div className="mob-breakrow total">
-              <span>Total approved output</span>
-              <span className="mob-entry-amt">{fmtQty(total)}</span>
-            </div>
-          </div>
         )}
       </div>
     </>
@@ -2865,12 +2857,6 @@ function RecordTab({
 /* there. Tapping a row opens the full submitted record.               */
 /* ------------------------------------------------------------------ */
 
-const HISTORY_RANGES = [
-  { key: 'today', label: 'Today', days: 0 },
-  { key: '7d', label: '7 days', days: 6 },
-  { key: '30d', label: '30 days', days: 29 },
-] as const
-
 function RecordHistory({
   profileId,
   stations,
@@ -2889,7 +2875,7 @@ function RecordHistory({
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
-  const [rangeKey, setRangeKey] = useState<(typeof HISTORY_RANGES)[number]['key']>('today')
+  const [rangeKey, setRangeKey] = useState<(typeof DAY_RANGES)[number]['key']>('today')
   const [rows, setRows] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
   // The entry whose pencil was tapped, and the number being retyped.
@@ -2941,7 +2927,7 @@ function RecordHistory({
 
   useEffect(() => {
     if (!profileId) return
-    const range = HISTORY_RANGES.find((r) => r.key === rangeKey)!
+    const range = DAY_RANGES.find((r) => r.key === rangeKey)!
     const d = new Date()
     d.setDate(d.getDate() - range.days)
     const since = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
@@ -2972,7 +2958,7 @@ function RecordHistory({
         <MobSubHeader title="Work Record History" onBack={onBack} />
 
         <div className="mob-seg" role="tablist">
-          {HISTORY_RANGES.map((r) => (
+          {DAY_RANGES.map((r) => (
             <button
               key={r.key}
               role="tab"
