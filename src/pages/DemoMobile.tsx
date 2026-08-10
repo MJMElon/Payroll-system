@@ -4220,6 +4220,10 @@ function ProfileTab({
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ employee_code: '', phone: '' })
+  // The Worker ID is the payroll key: retyping it — even your own — takes
+  // the "Edit Worker ID" tick on the tier tag. Without it the row stays a
+  // plain value while the phone stays editable.
+  const canEditWorkerId = effectiveCapabilities(tier).includes('worker-id-edit')
   // What was just saved, so the card shows the new value without waiting
   // for the whole app's profile to be reloaded.
   const [saved, setSaved] = useState<{ employee_code: string; phone: string } | null>(null)
@@ -4331,7 +4335,7 @@ function ProfileTab({
             <>
               <div className="mob-row">
                 <span className="mob-field-label">Worker ID</span>
-                {editing ? (
+                {editing && canEditWorkerId ? (
                   <input
                     className="mob-row-input"
                     value={form.employee_code}

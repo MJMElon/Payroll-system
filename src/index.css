@@ -2469,16 +2469,25 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   padding: 0 0.1rem; min-height: 0; font: inherit;
 }
 .pr-manage .quiet-input.num { width: 6ch; font-weight: 700; }
+/* The work title reads at its own length; its box should too, not run a
+   dashed line across the whole (often very wide) column. */
+.pr-manage th input.quiet-input { width: min(100%, 30ch); }
 .pr-manage .quiet-input.date { width: auto; font-size: inherit; }
 .pr-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
+/* Everything hugs the left of the cell exactly where the read face put
+   it — nothing stretches to the cell's far edge just because the cell
+   is wide (a one-tier window makes a VERY wide cell). */
+.pr-manage-edit { align-items: flex-start; }
 /* The tiered lines right-align their numbers in view; keep the boxes on
    the same edge while editing. */
 .pr-manage-edit .rate-tiered { align-items: flex-end; }
 .pr-manage-edit .rate-tier-line { display: inline-flex; align-items: baseline; }
 /* The unit sits under the number as a small muted line in view — its
-   picker takes the same seat, at the same size. */
+   picker takes the same seat, at the same size, as wide as its words. */
+.pr-manage-edit .ui-select.block { width: max-content; min-width: 9.5rem; max-width: 100%; }
 .pr-manage-edit .ui-select-trigger {
   min-height: 0; padding: 0.15rem 0.5rem; font-size: 0.8rem; color: var(--muted);
+  gap: 0.4rem;
 }
 .pr-manage .checkbox.tickword {
   font-size: 1rem; font-weight: 800; color: var(--muted); white-space: nowrap;
