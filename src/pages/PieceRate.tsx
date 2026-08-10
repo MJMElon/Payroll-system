@@ -255,7 +255,6 @@ export default function PieceRate() {
                   canResubmit={canManage || canCreate || isApprover}
                   canVerify={canVerify}
                   canFinal={canFinal}
-                  canDelete={canDeleteRate}
                   myEmail={profile?.email ?? 'unknown'}
                   onChanged={load}
                   onError={setError}
@@ -539,7 +538,6 @@ function SubmissionsList({
   canResubmit,
   canVerify,
   canFinal,
-  canDelete,
   myEmail,
   onChanged,
   onError,
@@ -552,13 +550,11 @@ function SubmissionsList({
   canResubmit: boolean
   canVerify: boolean
   canFinal: boolean
-  canDelete: boolean
   myEmail: string
   onChanged: () => void
   onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
-  const [viewing, setViewing] = useState<Job | null>(null)
   // The double-check window: which proposal, and what the click meant.
   const [confirm, setConfirm] = useState<{ job: Job; mode: 'verify' | 'approve' | 'reject' } | null>(null)
 
@@ -621,7 +617,7 @@ function SubmissionsList({
     <div className="card stack">
       <div className="row-form spread">
         <h3>
-          Pending Piece Rate Approval
+          Piece Rate Pending Approval
           {pendingCount > 0 && (
             <span className="count-badge static" style={{ marginLeft: '0.5rem' }}>{pendingCount}</span>
           )}
@@ -670,15 +666,6 @@ function SubmissionsList({
                   <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
                   <td className="right">
                     <span className="row-actions">
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title="View details"
-                        aria-label={`View ${j.name}`}
-                        onClick={() => setViewing(j)}
-                      >
-                        <IconEye />
-                      </button>
                       {j.approval_status === 'pending' && canVerify && (
                         <button
                           type="button"
@@ -771,21 +758,6 @@ function SubmissionsList({
         />
       )}
 
-      {viewing && (
-        <ViewRateModal
-          job={viewing}
-          rate={currentRate.get(viewing.id)}
-          stationName={stationName(viewing.station_id)}
-          grades={grades}
-          canDelete={canDelete}
-          onClose={() => setViewing(null)}
-          onChanged={() => {
-            setViewing(null)
-            onChanged()
-          }}
-          onError={onError}
-        />
-      )}
     </div>
   )
 }
@@ -922,119 +894,6 @@ function ConfirmActionModal({
   )
 }
 
-/** The full details of one proposal, and the place a proposal dies: the
- *  delete asks for a remark saying why, writes it onto the row, then
- *  removes it — so the audit log holds both the reason and the rate. */
-function ViewRateModal({
-  job,
-  rate,
-  stationName,
-  grades,
-  canDelete,
-  onClose,
-  onChanged,
-  onError,
-}: {
-  job: Job
-  rate: Rate | undefined
-  stationName: string
-  grades: Grade[]
-  canDelete: boolean
-  onClose: () => void
-  onChanged: () => void
-  onError: (m: string | null) => void
-}) {
-  const [remark, setRemark] = useState('')
-  const [confirming, setConfirming] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-
-  const tiered = rate?.tier2_rate != null
-
-  async function destroy() {
-    if (!remark.trim()) return onError('Say why this proposed piece rate is being deleted.')
-    setDeleting(true)
-    onError(null)
-    // The remark goes onto the row first: the audit trail logs the update
-    // and then the delete, so the reason survives the row itself.
-    const { error: remarkErr } = await supabase
-      .from('jobs')
-      .update({ delete_remark: remark.trim() } as never)
-      .eq('id', job.id)
-    if (remarkErr) {
-      setDeleting(false)
-      return onError(remarkErr.message)
-    }
-    // A delete refused by row security still "succeeds" with zero rows,
-    // so ask for the ids back and treat an empty answer as a refusal.
-    const { data, error } = await supabase.from('jobs').delete().eq('id', job.id).select('id')
-    setDeleting(false)
-    if (error) {
-      onError(
-        error.message.includes('foreign key')
-          ? 'This piece rate is already used in production or payroll records, so it cannot be deleted.'
-          : error.message,
-      )
-    } else if (!data || data.length === 0) {
-      onError('You are not allowed to delete this piece rate.')
-    } else {
-      onChanged()
-    }
-  }
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className={`modal modal-xwide ${tiered ? 'tiered' : ''}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="row-form spread">
-          <h2>Piece rate details</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-
-        <ProposalLine job={job} rate={rate} stationName={stationName} grades={grades} />
-
-        <div className="row-form" style={{ gap: '0.8rem', alignItems: 'center' }}>
-          <span className={STATUS_CLASS[job.approval_status]}>{STATUS_LABEL[job.approval_status]}</span>
-          {job.verified_by && <span className="muted small">Verified by {job.verified_by}</span>}
-          {job.approved_by && <span className="muted small">Approved by {job.approved_by}</span>}
-        </div>
-
-        {canDelete && !confirming && (
-          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-            <button className="btn ghost danger" onClick={() => setConfirming(true)}>
-              Delete piece rate
-            </button>
-          </div>
-        )}
-        {canDelete && confirming && (
-          <div className="stack" style={{ gap: '0.5rem' }}>
-            <label className="field">
-              <span>Why is this proposed piece rate being deleted?</span>
-              <textarea
-                rows={2}
-                value={remark}
-                onChange={(e) => setRemark(e.target.value)}
-                autoFocus
-              />
-            </label>
-            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-              <button className="btn ghost" onClick={() => setConfirming(false)}>Keep it</button>
-              <button
-                className="btn danger"
-                disabled={deleting || !remark.trim()}
-                onClick={destroy}
-              >
-                {deleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 /* ------------------------------------------------------------------ */
 /* Piece Rate Masterlist — approved contracts, pivoted so each tag/    */
 /* position for a Station + Work description is its own column.       */
@@ -1144,8 +1003,10 @@ function RatesList({
               <th>Station</th>
               <th>Work description</th>
               <th>Unit</th>
+              {/* Every tier column the same width; a long tier name wraps
+                  to a second line instead of widening its column. */}
               {tagCols.map((c) => (
-                <th key={c.key} className="right">{c.label} (RM)</th>
+                <th key={c.key} className="right pr-tagcol">{c.label} (RM)</th>
               ))}
               <th>Effective date</th>
               <th className="right">Actions</th>
@@ -1736,9 +1597,11 @@ function GroupManageModal({
                             checked={draft[j.id]?.onMobile ?? true}
                             onChange={(e) => patch(j.id, { onMobile: e.target.checked })}
                           />{' '}
-                          {(draft[j.id]?.onMobile ?? true)
-                            ? 'Shown on mobile apps'
-                            : 'Not shown on mobile apps'}
+                          <span className="tickword-text">
+                            {(draft[j.id]?.onMobile ?? true)
+                              ? 'Shown on mobile apps'
+                              : 'Not shown on mobile apps'}
+                          </span>
                         </label>
                       ) : (j.record_job !== false) ? (
                         <span className="tickmark yes">✓ Shown on mobile apps</span>

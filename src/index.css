@@ -2495,6 +2495,26 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .pr-manage .checkbox.tickword {
   font-size: 1rem; font-weight: 800; color: var(--muted); white-space: nowrap;
 }
+/* The tick takes the SAME room in both faces and both states: the label
+   is a fixed-width box and the words live in a shrinkable span, so the
+   column's width never follows the text — ticking a box cannot move the
+   table by even a pixel. */
+.pr-manage .tickmark,
+.pr-manage .checkbox.tickword {
+  display: inline-flex; width: 15rem; max-width: 100%;
+  font-size: 0.9rem; white-space: nowrap;
+}
+/* `.pr-manage input` is width:100% for the quiet boxes — that must not
+   apply to the tick box itself, or it swallows the label's whole width
+   and squeezes the words out. */
+.pr-manage .checkbox.tickword input { width: auto; flex: 0 0 auto; }
+.pr-manage .tickword-text {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Masterlist: every tier column the same width; a long tier name wraps to
+   a second line rather than widening its column. */
+.table th.pr-tagcol { width: 9rem; min-width: 9rem; white-space: normal; }
 
 /* A yes/no answer read at a glance, where a disabled tick box would look
    like something you were meant to be able to press. */
