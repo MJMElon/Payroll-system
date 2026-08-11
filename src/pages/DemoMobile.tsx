@@ -231,6 +231,20 @@ function clockTime(iso: string) {
 }
 
 /**
+ * A record refused by row-level security. The table's insert policy still
+ * goes by the account's ROLE on a database that has not had the latest
+ * setup.sql run, so a tier holding "Add New" is still turned away — a
+ * migration to run rather than anything the user did wrong. Said plainly,
+ * because the raw Postgres wording names a policy nobody has seen.
+ */
+function entryHelp(message: string) {
+  return /row-level security|violates row-level/i.test(message)
+    ? 'The database refused this record. Recording follows the tier tag\'s "Add New" tick — ' +
+        'run supabase/fix-entry-insert.sql (or the latest supabase/setup.sql) so it agrees.'
+    : message
+}
+
+/**
  * The one failure worth spelling out: the attendance table does not exist
  * yet, which is a migration to run rather than anything the user did wrong.
  */
@@ -3007,7 +3021,7 @@ function RecordTab({
       retakePhoto()
       setRecorded((n) => n + 1)
     } catch (err) {
-      onError(err instanceof Error ? err.message : String(err))
+      onError(entryHelp(err instanceof Error ? err.message : String(err)))
     } finally {
       setSubmitting(false)
     }

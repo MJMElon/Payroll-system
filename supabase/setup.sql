@@ -816,10 +816,24 @@ drop policy if exists "authenticated read production" on public.operation_entrie
 create policy "authenticated read production" on public.operation_entries
   for select using (auth.uid() is not null);
 
+-- Recording work is a TAG function — "Add New" under Work entry setting —
+-- which is what the mobile Record tab and the Daily Job Record form gate
+-- their buttons on. This policy used to go by the account's ROLE alone,
+-- and the two disagreed: roleForTier() hands tier 3 the 'engineer' role,
+-- which is neither admin/manager nor operator, so every record that tier
+-- submitted was refused; so was an operator-role account whose station
+-- tags are empty. The button worked, the write did not, and nothing
+-- reached the pending list.
 drop policy if exists "insert production" on public.operation_entries;
 create policy "insert production" on public.operation_entries
   for insert with check (
-    public.my_role() in ('admin', 'manager')
+    -- Tier 1 is the super admin: every function, whatever is stored.
+    public.my_tag_tier() = 1
+    -- The tick itself, the same one the screens read.
+    or 'data-entry' = any(public.my_capabilities())
+    -- The original rule, kept so nothing that could record before stops:
+    -- an account no tag has claimed yet, and the station-scoped operator.
+    or public.my_role() in ('admin', 'manager')
     or (
       public.my_role() = 'operator'
       and exists (
