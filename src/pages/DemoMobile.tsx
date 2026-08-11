@@ -297,18 +297,28 @@ export default function DemoMobile() {
   )
 
   // The preview obeys the SELECTED tier's capabilities — only tiers with
-  // the data-entry capability may submit records. Tiers holding verify or
-  // approve (Engineer / Manager / Management) get the management dashboards
-  // and see ALL stations; lower tiers see only their own station tags.
+  // the data-entry capability may submit records.
   const tierCaps = effectiveCapabilities(tier)
   const canEntry = tierCaps.includes('data-entry')
-  const isUpper =
+  /**
+   * Who reads the WHOLE mill rather than their own station tags.
+   *
+   * Ticking the Mill dashboard is the plainest way of saying so, and it
+   * comes first: a tier given the mill's output, workforce, wages and
+   * cost trend is being asked to read the mill, and a "mill" drawn over
+   * the one station that tier happens to be tagged to is not that.
+   *
+   * The rest are older, looser signals kept so nothing that reached every
+   * station before starts reaching fewer.
+   */
+  const readsWholeMill =
+    isEntitled(tier, 'mill-dashboard', grades) ||
     effectiveModules(tier?.modules).includes('report') ||
     tierCaps.includes('verify') ||
     tierCaps.includes('approve')
   const myStationIds = profile?.station_ids ?? []
   const scopedStations =
-    isUpper || myStationIds.length === 0
+    readsWholeMill || myStationIds.length === 0
       ? stations
       : stations.filter((s) => myStationIds.includes(s.id))
 
