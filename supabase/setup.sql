@@ -1085,6 +1085,13 @@ alter table public.piece_rates add column if not exists tier2_rate numeric(12,4)
 -- unit; the hour only resets the count.
 alter table public.piece_rates add column if not exists tier_threshold int;
 
+-- The full PRICE LADDER of a tiered rate: element i pays the (i+1)th work
+-- record of the hour, and the last element pays every record after it —
+-- so [4.2, 4.2, 4.2, 4.2, 6] reads "1st–4th RM4.20 each, 5th+ RM6 each".
+-- Authoritative when present; rate / tier2_rate / tier_threshold are kept
+-- in sync by the app for older readers.
+alter table public.piece_rates add column if not exists hour_rates numeric(12,4)[];
+
 -- One-time consolidation for the Sterilizer & Tippler Station cage-tipping
 -- rates: the Operator tag priced this as two separately-named jobs (a
 -- workaround for not having real tiering); fold them into one tiered job

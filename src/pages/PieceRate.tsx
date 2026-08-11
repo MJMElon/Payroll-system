@@ -23,9 +23,11 @@ import { useOverlayClose } from '../lib/useOverlayClose'
 import { useWideShell } from '../lib/useWideShell'
 import { canViewTier, effectiveCapabilities, isEntitled, tagClass } from '../lib/tags'
 import {
+  hourLadder,
+  ladderSteps,
+  ladderStepsFrom,
   profileName,
   supabase,
-  tier1Cap,
   todayISO,
   type Grade,
   type Job,
@@ -282,7 +284,10 @@ export default function PieceRate() {
         <CreateRatesModal
           stations={stations}
           grades={grades}
-          hasTierThreshold={rates.length === 0 || 'tier_threshold' in (rates[0] as object)}
+          rateColumns={{
+            threshold: rates.length === 0 || 'tier_threshold' in (rates[0] as object),
+            hour: rates.length === 0 || 'hour_rates' in (rates[0] as object),
+          }}
           onClose={() => setModal('closed')}
           onReload={load}
           onSaved={(count) => {
@@ -488,37 +493,132 @@ function ord(n: number) {
   return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`
 }
 
-/** The two line labels of a tiered rate, from its own threshold. */
-function tierLineLabels(cap: number) {
-  return {
-    first: cap === 1 ? '1st' : `1st–${ord(cap)}`,
-    rest: `${ord(cap + 1)}+`,
-  }
+/** Is this rate a price ladder rather than one flat number? */
+function isTiered(rate: Rate | undefined | null): boolean {
+  return rate != null && (rate.tier2_rate != null || (rate.hour_rates?.length ?? 0) > 1)
 }
 
-/** A tiered rate is two lines — the first N records of each hour pay one
- *  rate PER RECORD, the rest another — with the work's own unit right
- *  beside the number (it is never "per hour"; the hour only resets the
- *  count). N is the rate's own threshold. A flat rate shows its single
- *  number. Used everywhere a rate cell is rendered. */
+/** "1st–4th", "5th+", "3rd" — how a ladder step names itself. */
+function stepLabel(s: { from: number; to: number | null }) {
+  if (s.to == null) return s.from === 1 ? 'every' : `${ord(s.from)}+`
+  return s.to === s.from ? ord(s.from) : `${ord(s.from)}–${ord(s.to)}`
+}
+
+/** The ladder written in one line — for change sheets and messages. */
+function ladderText(L: number[]) {
+  return ladderStepsFrom(L)
+    .map((s) => `${stepLabel(s)} @ ${s.rate.toFixed(2)}`)
+    .join(', ')
+}
+
+/** A tiered rate is its price ladder folded into steps, one line each —
+ *  every record of the hour pays the row it lands on, PER RECORD in the
+ *  work's own unit; the hour only resets the count. A flat rate shows its
+ *  single number. Used everywhere a rate cell is rendered. The stored
+ *  '/hour' unit of old tiered rows names the WINDOW, not the pay unit,
+ *  so it is never shown beside an amount. */
 function RateCell({ rate, unit }: { rate: Rate | undefined; unit?: string }) {
   if (!rate) return <span className="muted">—</span>
-  if (rate.tier2_rate == null) return <strong>{Number(rate.rate).toFixed(2)}</strong>
-  const L = tierLineLabels(tier1Cap(rate))
+  if (!isTiered(rate)) return <strong>{Number(rate.rate).toFixed(2)}</strong>
+  const u = unit && unit !== '/hour' ? unit : undefined
   return (
     <span className="rate-tiered">
-      <span className="rate-tier-line">
-        <span className="rate-tier-lbl">{L.first}</span>
-        {Number(rate.rate).toFixed(2)}
-        {unit && <span className="rate-tier-unit">{unit}</span>}
+      {ladderSteps(rate).map((step) => (
+        <span className="rate-tier-line" key={step.from}>
+          <span className="rate-tier-lbl">{stepLabel(step)}</span>
+          {step.rate.toFixed(2)}
+          {u && <span className="rate-tier-unit">{u}</span>}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+/** The edit face of a tiered rate: one row per work record of the hour
+ *  (1, 2, 3, …), the rate keyed beside each; rows are added as needed and
+ *  the LAST row prices its record and every one after it. */
+function LadderEditor({
+  rows,
+  onChange,
+  ariaPrefix,
+}: {
+  rows: string[]
+  onChange: (rows: string[]) => void
+  ariaPrefix: string
+}) {
+  const set = (i: number, v: string) => onChange(rows.map((x, j) => (j === i ? v : x)))
+  return (
+    <span className="pr-ladder">
+      {rows.map((v, i) => (
+        <span className="rate-tier-line" key={i}>
+          <span className="rate-tier-lbl">{i + 1}{i === rows.length - 1 ? '+' : ''}</span>
+          <input
+            className="quiet-input num"
+            inputMode="decimal"
+            value={v}
+            onChange={(e) => set(i, e.target.value)}
+            aria-label={`${ariaPrefix} rate for record ${i + 1}`}
+          />
+        </span>
+      ))}
+      <span className="pr-ladder-tools">
+        <button type="button" className="pr-ladder-btn" onClick={() => onChange([...rows, ''])}>
+          ＋ row
+        </button>
+        {rows.length > 2 && (
+          <button type="button" className="pr-ladder-btn" onClick={() => onChange(rows.slice(0, -1))}>
+            − row
+          </button>
+        )}
       </span>
-      <span className="rate-tier-line">
-        <span className="rate-tier-lbl">{L.rest}</span>
-        {Number(rate.tier2_rate).toFixed(2)}
-        {unit && <span className="rate-tier-unit">{unit}</span>}
+      <span className="pr-ladder-note">
+        Row {rows.length} prices the {ord(rows.length)} record and every one after, each hour.
       </span>
     </span>
   )
+}
+
+/**
+ * Keyed ladder rows -> what is written: the hour_rates array plus the
+ * legacy two-step fields kept in sync for older readers. Throws a human
+ * message when the rows cannot be written.
+ */
+function parseLadder(
+  rows: string[],
+  who: string,
+  columns: { threshold: boolean; hour: boolean },
+): { hour: number[]; rate: number; tier2: number; threshold: number } {
+  const trimmed = [...rows]
+  while (trimmed.length > 0 && trimmed[trimmed.length - 1].trim() === '') trimmed.pop()
+  if (trimmed.length < 2) {
+    throw new Error(
+      `${who}: a tiered rate needs at least 2 rows — one per work record of the hour, ` +
+        'the last row paying every record after it.',
+    )
+  }
+  const nums = trimmed.map((v, i) => {
+    const n = Number(v)
+    if (v.trim() === '' || Number.isNaN(n) || n < 0) {
+      throw new Error(`${who}: tiered rate row ${i + 1} needs a valid non-negative amount.`)
+    }
+    return n
+  })
+  const steps = ladderStepsFrom(nums)
+  if (!columns.hour && steps.length > 2) {
+    throw new Error(
+      'More than two price steps needs the hour_rates column — run the latest ' +
+        'supabase/setup.sql (or just: alter table public.piece_rates add column ' +
+        'hour_rates numeric(12,4)[];).',
+    )
+  }
+  const threshold = steps.length > 1 ? steps[0].to ?? nums.length - 1 : nums.length - 1
+  if (!columns.threshold && threshold !== 4) {
+    throw new Error(
+      'A first-step count other than 4 needs the tier_threshold column — run the latest ' +
+        'supabase/setup.sql (or just: alter table public.piece_rates add column tier_threshold int;).',
+    )
+  }
+  return { hour: nums, rate: nums[0], tier2: nums[nums.length - 1], threshold }
 }
 
 /* ------------------------------------------------------------------ */
@@ -801,26 +901,14 @@ function ProposalLine({
   grades: Grade[]
 }) {
   const grade = grades.find((g) => g.id === job.grade_id)
-  const tiered = rate?.tier2_rate != null
-  const L = tierLineLabels(tier1Cap(rate))
   return (
-    <div className={`pr-grid pr-confirm ${tiered ? 'tiered' : ''}`}>
-      {/* A tiered proposal has no flat rate, so that column is not shown
-          at all — its two per-record columns carry the "Piece Rate (RM)"
-          name, split by the rate's own first-of-the-hour count. */}
+    <div className="pr-grid pr-confirm">
       <div className="pr-grid-head">
         <span>Tier Tag</span>
         <span>Station Tag</span>
         <span>Piece Rate Work Description</span>
         <span>Unit</span>
-        {tiered ? (
-          <>
-            <span>Piece Rate (RM) — {L.first} of the hour</span>
-            <span>Piece Rate (RM) — {L.rest} of the hour</span>
-          </>
-        ) : (
-          <span>Piece Rate (RM)</span>
-        )}
+        <span>Piece Rate (RM)</span>
         <span>Effective date</span>
         <span />
       </div>
@@ -831,20 +919,11 @@ function ProposalLine({
         <ProposalCell label="Station Tag">{stationName}</ProposalCell>
         <ProposalCell label="Piece Rate Work Description" wide>{job.name}</ProposalCell>
         <ProposalCell label="Unit">{job.unit}</ProposalCell>
-        {tiered ? (
-          <>
-            <ProposalCell label={`Piece Rate (RM) — ${L.first} of the hour`}>
-              {Number(rate!.rate).toFixed(2)}
-            </ProposalCell>
-            <ProposalCell label={`Piece Rate (RM) — ${L.rest} of the hour`}>
-              {Number(rate!.tier2_rate).toFixed(2)}
-            </ProposalCell>
-          </>
-        ) : (
-          <ProposalCell label="Piece Rate (RM)">
-            {rate ? Number(rate.rate).toFixed(2) : '—'}
-          </ProposalCell>
-        )}
+        {/* A tiered rate reads as its ladder steps, right in the one
+            rate column — per record of the hour, in the work's unit. */}
+        <ProposalCell label="Piece Rate (RM)">
+          <RateCell rate={rate} />
+        </ProposalCell>
         <ProposalCell label="Effective date">{rate ? rate.effective_from : '—'}</ProposalCell>
       </div>
     </div>
@@ -1127,14 +1206,13 @@ function RatesList({
 /** What one tier's rate looks like while it is being amended. */
 interface RateDraft {
   unit: string
+  /** The flat rate, when not tiered. */
   rate: string
-  tier2: string
   effectiveFrom: string
-  /** Tiered by hour: the first `tierN` records of an hour pay `rate`, the
-   *  rest pay `tier2` — each PER RECORD, in the row's own unit. */
+  /** Tiered by hour: the ladder below prices each record of the hour. */
   tiered: boolean
-  /** How many records of the hour pay the first rate (e.g. 4 or 6). */
-  tierN: string
+  /** One entry per work record of the hour; the last extends to all after. */
+  ladder: string[]
 }
 
 /** One line of the before/after sheet shown before anything is written. */
@@ -1219,10 +1297,9 @@ function GroupManageModal({
           {
             unit: j.unit,
             rate: r ? String(Number(r.rate)) : '',
-            tier2: r?.tier2_rate != null ? String(Number(r.tier2_rate)) : '',
             effectiveFrom: r?.effective_from ?? todayISO(),
-            tiered: r?.tier2_rate != null,
-            tierN: String(tier1Cap(r)),
+            tiered: isTiered(r),
+            ladder: isTiered(r) ? hourLadder(r).map(String) : [],
           } as RateDraft,
         ]
       }),
@@ -1256,10 +1333,9 @@ function GroupManageModal({
       [newKey(gid)]: {
         unit: jobs[0]?.unit ?? '',
         rate: '',
-        tier2: '',
         effectiveFrom: todayISO(),
         tiered: false,
-        tierN: '4',
+        ladder: [],
       },
     }))
     setPickingTier(false)
@@ -1333,35 +1409,34 @@ function GroupManageModal({
       if (d.unit.trim() !== j.unit) {
         out.push({ what: `${tier} · unit`, before: j.unit, after: d.unit.trim() || '—' })
       }
-      if (d.tiered !== (r?.tier2_rate != null)) {
+      if (d.tiered !== isTiered(r)) {
         out.push({
           what: `${tier} · tiered by hour`,
-          before: r?.tier2_rate != null ? 'Yes' : 'No',
+          before: isTiered(r) ? 'Yes' : 'No',
           after: d.tiered ? 'Yes' : 'No',
         })
       }
-      if (d.tiered && r?.tier2_rate != null && Number(d.tierN) !== tier1Cap(r)) {
-        out.push({
-          what: `${tier} · first-tier count per hour`,
-          before: String(tier1Cap(r)),
-          after: d.tierN || '—',
-        })
-      }
-      const afterRate = d.rate.trim() === '' ? null : Number(d.rate)
-      if (fmtRate(afterRate) !== fmtRate(r ? Number(r.rate) : null)) {
-        out.push({
-          what: `${tier} · ${d.tiered ? '1st–4th rate' : 'rate'}`,
-          before: fmtRate(r ? Number(r.rate) : null),
-          after: fmtRate(afterRate),
-        })
-      }
-      const afterTier2 = d.tiered && d.tier2.trim() !== '' ? Number(d.tier2) : null
-      if (fmtRate(afterTier2) !== fmtRate(r?.tier2_rate ?? null)) {
-        out.push({
-          what: `${tier} · 5th+ rate`,
-          before: fmtRate(r?.tier2_rate ?? null),
-          after: fmtRate(afterTier2),
-        })
+      if (d.tiered) {
+        const beforeLadder = isTiered(r) ? ladderText(hourLadder(r)) : r ? `flat ${fmtRate(Number(r.rate))}` : '—'
+        const rows = [...d.ladder]
+        while (rows.length > 0 && rows[rows.length - 1].trim() === '') rows.pop()
+        const afterLadder = rows.every((v) => v.trim() !== '' && !Number.isNaN(Number(v)))
+          ? ladderText(rows.map(Number))
+          : rows.map((v, i) => `${i + 1}${i === rows.length - 1 ? '+' : ''} @ ${v || '—'}`).join(', ')
+        if (beforeLadder !== afterLadder) {
+          out.push({ what: `${tier} · tiered rates (per record of the hour)`, before: beforeLadder, after: afterLadder })
+        }
+      } else {
+        const afterRate = d.rate.trim() === '' ? null : Number(d.rate)
+        if (isTiered(r)) {
+          out.push({ what: `${tier} · rate`, before: ladderText(hourLadder(r)), after: `flat ${fmtRate(afterRate)}` })
+        } else if (fmtRate(afterRate) !== fmtRate(r ? Number(r.rate) : null)) {
+          out.push({
+            what: `${tier} · rate`,
+            before: fmtRate(r ? Number(r.rate) : null),
+            after: fmtRate(afterRate),
+          })
+        }
       }
       if (d.effectiveFrom !== (r?.effective_from ?? '')) {
         out.push({
@@ -1375,7 +1450,7 @@ function GroupManageModal({
       const d = draft[newKey(gid)]
       if (!d) continue
       const rateText = d.tiered
-        ? `${d.rate || '—'} / ${d.tier2 || '—'} ${d.unit || ''} (tiered: first ${d.tierN || '4'} of the hour)`.trim()
+        ? `${d.ladder.filter((v) => v.trim() !== '').join(' / ') || '—'} ${d.unit || ''} (tiered by hour)`.trim()
         : `${d.rate || '—'} ${d.unit || ''}`.trim()
       out.push({
         what: `${gradeName(gid)} · NEW rate on this work`,
@@ -1387,27 +1462,35 @@ function GroupManageModal({
   })()
 
 
-  // Does the database know piece_rates.tier_threshold yet? The rates are
-  // loaded with select('*'), so any loaded row answers. No row loaded =
-  // assume yes (a fresh database is on the latest schema).
+  // Which of the newer piece_rates columns the database knows. The rates
+  // are loaded with select('*'), so any loaded row answers. No row loaded
+  // = assume yes (a fresh database is on the latest schema).
   const sampleRate = currentRate.values().next().value as Rate | undefined
-  const thresholdColumnKnown = !sampleRate || 'tier_threshold' in sampleRate
+  const rateColumns = {
+    threshold: !sampleRate || 'tier_threshold' in sampleRate,
+    hour: !sampleRate || 'hour_rates' in sampleRate,
+  }
 
-  /** The tier_threshold value to write, or a friendly error if the
-   *  database cannot hold it yet. */
-  function thresholdToWrite(tiered: boolean, tierN: string, tier: string): number | null {
-    if (!tiered) return null
-    const n = Number(tierN)
-    if (!Number.isInteger(n) || n < 1) {
-      throw new Error(`${tier}: the first-tier count per hour must be a whole number of 1 or more.`)
+  /** Everything the rate row should hold, from one tier's draft. */
+  function rateRowOf(d: RateDraft, tier: string, jobId: string): Record<string, unknown> {
+    const row: Record<string, unknown> = { job_id: jobId, effective_from: d.effectiveFrom }
+    if (d.tiered) {
+      const L = parseLadder(d.ladder, tier, rateColumns)
+      row.rate = L.rate
+      row.tier2_rate = L.tier2
+      if (rateColumns.threshold) row.tier_threshold = L.threshold
+      if (rateColumns.hour) row.hour_rates = L.hour
+    } else {
+      const rateValue = Number(d.rate)
+      if (d.rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
+        throw new Error(`${tier}: enter a valid non-negative piece rate.`)
+      }
+      row.rate = rateValue
+      row.tier2_rate = null
+      if (rateColumns.threshold) row.tier_threshold = null
+      if (rateColumns.hour) row.hour_rates = null
     }
-    if (!thresholdColumnKnown && n !== 4) {
-      throw new Error(
-        'The database is missing the tier_threshold column — run the latest supabase/setup.sql ' +
-          '(or just: alter table public.piece_rates add column tier_threshold int;).',
-      )
-    }
-    return n
+    return row
   }
 
   /** Write the amendment. Every write is checked for a refusal, since row
@@ -1437,16 +1520,9 @@ function GroupManageModal({
         const d = draft[j.id]
         if (!d) continue
         const tier = gradeName(j.grade_id)
-        const tiered = d.tiered
-        const rateValue = Number(d.rate)
-        if (d.rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
-          throw new Error(`${tier}: enter a valid non-negative ${tiered ? '1st–4th' : 'piece'} rate.`)
-        }
-        const tier2Value = tiered ? Number(d.tier2) : null
-        if (tiered && (d.tier2.trim() === '' || Number.isNaN(tier2Value) || (tier2Value as number) < 0)) {
-          throw new Error(`${tier}: enter a valid non-negative 5th+ rate.`)
-        }
         if (!d.effectiveFrom) throw new Error(`${tier}: pick an effective date.`)
+        // Validates the flat rate or the whole ladder, and builds the row.
+        const rateRow = rateRowOf(d, tier, j.id)
 
         // The unit stays the work's own (/tipped, /tonne, …) even when the
         // rate is tiered — the hour only resets the 1st–4th count.
@@ -1477,23 +1553,14 @@ function GroupManageModal({
           }
         }
 
-        const tierNValue = thresholdToWrite(tiered, d.tierN, tier)
         const r = currentRate.get(j.id)
         const rateUnchanged =
           r &&
-          Number(r.rate) === rateValue &&
-          (r.tier2_rate ?? null) === tier2Value &&
-          (tier2Value == null || tier1Cap(r) === tierNValue) &&
-          r.effective_from === d.effectiveFrom
+          r.effective_from === d.effectiveFrom &&
+          JSON.stringify(hourLadder(r)) ===
+            JSON.stringify(hourLadder(rateRow as { rate: number; tier2_rate: number | null; tier_threshold?: number | null; hour_rates?: number[] | null }))
         if (rateUnchanged) continue
 
-        const rateRow: Record<string, unknown> = {
-          job_id: j.id,
-          rate: rateValue,
-          tier2_rate: tier2Value,
-          effective_from: d.effectiveFrom,
-        }
-        if (thresholdColumnKnown) rateRow.tier_threshold = tierNValue
         const { error } = await supabase
           .from('piece_rates')
           .upsert(rateRow, { onConflict: 'job_id,effective_from' })
@@ -1521,17 +1588,9 @@ function GroupManageModal({
         const d = draft[newKey(gid)]
         if (!d) continue
         const tier = gradeName(gid)
-        const tiered = d.tiered
-        const rateValue = Number(d.rate)
-        if (d.rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
-          throw new Error(`${tier}: enter a valid non-negative ${tiered ? '1st–4th' : 'piece'} rate.`)
-        }
-        const tier2Value = tiered ? Number(d.tier2) : null
-        if (tiered && (d.tier2.trim() === '' || Number.isNaN(tier2Value) || (tier2Value as number) < 0)) {
-          throw new Error(`${tier}: enter a valid non-negative 5th+ rate.`)
-        }
         if (!d.unit.trim()) throw new Error(`${tier}: choose a unit.`)
         if (!d.effectiveFrom) throw new Error(`${tier}: pick an effective date.`)
+        const newRateRow = rateRowOf(d, tier, '')
         const row: Record<string, unknown> = {
           station_id: jobs[0]?.station_id,
           grade_id: gid,
@@ -1543,19 +1602,12 @@ function GroupManageModal({
         // exist, so an un-migrated database does not refuse the insert.
         if (jobs[0] && 'record_job' in jobs[0]) row.record_job = onMobile
         if (jobs[0] && 'show_on_mill' in jobs[0]) row.show_on_mill = onMill
-        const tierNValue = thresholdToWrite(tiered, d.tierN, tier)
         const { data, error } = await supabase.from('piece_rate_jobs').insert(row).select().single()
         if (error || !data) throw new Error(saveMessage(error?.message ?? 'could not be saved.'))
-        const rateRow: Record<string, unknown> = {
-          job_id: data.id,
-          rate: rateValue,
-          tier2_rate: tier2Value,
-          effective_from: d.effectiveFrom,
-        }
-        if (thresholdColumnKnown) rateRow.tier_threshold = tierNValue
+        newRateRow.job_id = data.id
         const { error: rateErr } = await supabase
           .from('piece_rates')
-          .upsert(rateRow, { onConflict: 'job_id,effective_from' })
+          .upsert(newRateRow, { onConflict: 'job_id,effective_from' })
         if (rateErr) {
           await supabase.from('piece_rate_jobs').delete().eq('id', data.id)
           throw new Error(`${tier}: ${rateErr.message}`)
@@ -1638,41 +1690,18 @@ function GroupManageModal({
     const d = draft[key]
     const tiered = d?.tiered ?? false
     return (
-      <div className="pr-manage-edit row">
+      // A tiered cell stacks (ladder, unit, flag); a flat one reads in a
+      // row, the unit right beside the number like the read face.
+      <div className={`pr-manage-edit ${tiered ? '' : 'row'}`}>
         {tiered ? (
-          <span className="rate-tiered">
-            {/* The count is the rate's own setting: first N of each hour
-                pay the first rate, the rest the second — per record. */}
-            <span className="rate-tier-line">
-              <span className="rate-tier-lbl">first</span>
-              <input
-                className="quiet-input num tiny"
-                inputMode="numeric"
-                value={d?.tierN ?? '4'}
-                onChange={(e) => patch(key, { tierN: e.target.value })}
-                aria-label={`${tierLabel} first-tier count per hour`}
-                title="How many records of each hour pay the first rate"
-              />
-              <span className="rate-tier-lbl">of the hr</span>
-              <input
-                className="quiet-input num"
-                inputMode="decimal"
-                value={d?.rate ?? ''}
-                onChange={(e) => patch(key, { rate: e.target.value })}
-                aria-label={`${tierLabel} first-tier rate`}
-              />
-            </span>
-            <span className="rate-tier-line">
-              <span className="rate-tier-lbl">the rest</span>
-              <input
-                className="quiet-input num"
-                inputMode="decimal"
-                value={d?.tier2 ?? ''}
-                onChange={(e) => patch(key, { tier2: e.target.value })}
-                aria-label={`${tierLabel} rest-of-hour rate`}
-              />
-            </span>
-          </span>
+          /* One row per work record of the hour: 1, 2, 3, … each with its
+             rate; ＋ row adds the next count, and the last row prices its
+             record and every one after. */
+          <LadderEditor
+            rows={d?.ladder ?? []}
+            onChange={(ladder) => patch(key, { ladder })}
+            ariaPrefix={tierLabel}
+          />
         ) : (
           <input
             className="quiet-input num"
@@ -1687,16 +1716,24 @@ function GroupManageModal({
           onChange={(v) => patch(key, { unit: v })}
           ariaLabel={`${tierLabel} unit`}
         />
-        {/* Tiering is a PAY SHAPE, not a unit: the 1st–4th record of an
-            hour pays one rate per record, the 5th onward another. */}
+        {/* Tiering is a PAY SHAPE, not a unit: each record of the hour
+            pays the ladder row it lands on, in the unit chosen. */}
         <label
           className="checkbox pr-tiered-flag"
-          title="The 1st–4th record of each hour pays the first rate, the 5th onward the second — each per record, in the unit chosen."
+          title="Each work record of the hour pays the ladder row it lands on — per record, in the unit chosen; the count resets every hour."
         >
           <input
             type="checkbox"
             checked={tiered}
-            onChange={(e) => patch(key, { tiered: e.target.checked })}
+            onChange={(e) =>
+              patch(key, {
+                tiered: e.target.checked,
+                ladder:
+                  e.target.checked && (d?.ladder.length ?? 0) === 0
+                    ? ['', '', '', '', '']
+                    : d?.ladder ?? [],
+              })
+            }
             aria-label={`${tierLabel} tiered by hour`}
           />{' '}
           Tiered by hour
@@ -2499,13 +2536,13 @@ interface DraftRow {
   stationIds: string[]
   description: string
   unit: string
+  /** The flat rate, when not tiered. */
   rate: string
-  tier2: string
   effectiveFrom: string
-  /** Tiered by hour: the first `tierN` records of an hour pay `rate`, the
-   *  rest pay `tier2` — each PER RECORD, in the row's own unit. */
+  /** Tiered by hour: the ladder prices each record of the hour, per record
+   *  in the row's own unit; the last ladder row extends to all after. */
   tiered: boolean
-  tierN: string
+  ladder: string[]
   /** Marked when this is the row that stopped the batch. */
   bad?: boolean
 }
@@ -2528,15 +2565,15 @@ function spread(r: DraftRow) {
 function CreateRatesModal({
   stations,
   grades,
-  hasTierThreshold,
+  rateColumns,
   onClose,
   onSaved,
   onReload,
 }: {
   stations: Station[]
   grades: Grade[]
-  /** Whether piece_rates.tier_threshold exists in the database yet. */
-  hasTierThreshold: boolean
+  /** Which of the newer piece_rates columns the database knows yet. */
+  rateColumns: { threshold: boolean; hour: boolean }
   onClose: () => void
   onSaved: (count: number) => void
   onReload: () => void
@@ -2553,10 +2590,9 @@ function CreateRatesModal({
     description: '',
     unit: from?.unit ?? '',
     rate: '',
-    tier2: '',
     effectiveFrom: from?.effectiveFrom ?? todayISO(),
     tiered: from?.tiered ?? false,
-    tierN: from?.tierN ?? '4',
+    ladder: from?.tiered ? ['', '', '', '', ''] : [],
   })
 
   const [rows, setRows] = useState<DraftRow[]>(() => [blank()])
@@ -2592,29 +2628,19 @@ function CreateRatesModal({
     const seen = new Set<string>()
     for (const r of filled) {
       const n = rows.indexOf(r) + 1
-      const tiered = r.tiered
       if (r.stationIds.length === 0) return reject(r, `Row ${n}: choose a station tag.`)
       if (!r.description.trim()) return reject(r, `Row ${n}: enter the piece rate work description.`)
       if (!r.unit.trim()) return reject(r, `Row ${n}: choose a unit.`)
-      const rateValue = Number(r.rate)
-      if (r.rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
-        return reject(r, `Row ${n}: enter a valid non-negative ${tiered ? 'first-tier' : 'piece'} rate.`)
-      }
-      if (tiered) {
-        const t2 = Number(r.tier2)
-        if (r.tier2.trim() === '' || Number.isNaN(t2) || t2 < 0) {
-          return reject(r, `Row ${n}: enter a valid non-negative rest-of-hour rate.`)
+      if (r.tiered) {
+        try {
+          parseLadder(r.ladder, `Row ${n}`, rateColumns)
+        } catch (err) {
+          return reject(r, err instanceof Error ? err.message : String(err))
         }
-        const tn = Number(r.tierN)
-        if (!Number.isInteger(tn) || tn < 1) {
-          return reject(r, `Row ${n}: the first-tier count per hour must be a whole number of 1 or more.`)
-        }
-        if (!hasTierThreshold && tn !== 4) {
-          return reject(
-            r,
-            `Row ${n}: the database is missing the tier_threshold column — run the latest ` +
-              'supabase/setup.sql (or just: alter table public.piece_rates add column tier_threshold int;).',
-          )
+      } else {
+        const rateValue = Number(r.rate)
+        if (r.rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
+          return reject(r, `Row ${n}: enter a valid non-negative piece rate.`)
         }
       }
       if (!r.effectiveFrom) return reject(r, `Row ${n}: pick an effective date.`)
@@ -2634,7 +2660,6 @@ function CreateRatesModal({
 
     for (const r of filled) {
       const n = rows.indexOf(r) + 1
-      const tiered = r.tiered
       let stopped = false
       for (const at of spread(r)) {
         const where =
@@ -2660,13 +2685,17 @@ function CreateRatesModal({
           stopped = true
           break
         }
-        const rateRow: Record<string, unknown> = {
-          job_id: data.id,
-          rate: Number(r.rate),
-          tier2_rate: tiered ? Number(r.tier2) : null,
-          effective_from: r.effectiveFrom,
+        const rateRow: Record<string, unknown> = { job_id: data.id, effective_from: r.effectiveFrom }
+        if (r.tiered) {
+          const L = parseLadder(r.ladder, `Row ${n}`, rateColumns)
+          rateRow.rate = L.rate
+          rateRow.tier2_rate = L.tier2
+          if (rateColumns.threshold) rateRow.tier_threshold = L.threshold
+          if (rateColumns.hour) rateRow.hour_rates = L.hour
+        } else {
+          rateRow.rate = Number(r.rate)
+          rateRow.tier2_rate = null
         }
-        if (hasTierThreshold) rateRow.tier_threshold = tiered ? Number(r.tierN) : null
         const { error: rateErr } = await supabase
           .from('piece_rates')
           .upsert(rateRow, { onConflict: 'job_id,effective_from' })
@@ -2719,8 +2748,7 @@ function CreateRatesModal({
             <span>Piece Rate Work Description</span>
             <span>Unit</span>
             <span>Piece Rate (RM)</span>
-            {anyTiered && <span>Rate — first N of the hour (RM)</span>}
-            {anyTiered && <span>Rate — the rest (RM)</span>}
+            {anyTiered && <span>Tiered rates (RM per record of the hour)</span>}
             <span>Effective date</span>
             <span />
           </div>
@@ -2781,7 +2809,15 @@ function CreateRatesModal({
                     <input
                       type="checkbox"
                       checked={r.tiered}
-                      onChange={(e) => patch(r.key, { tiered: e.target.checked, tier2: e.target.checked ? r.tier2 : '' })}
+                      onChange={(e) =>
+                        patch(r.key, {
+                          tiered: e.target.checked,
+                          ladder:
+                            e.target.checked && r.ladder.length === 0
+                              ? ['', '', '', '', '']
+                              : r.ladder,
+                        })
+                      }
                       aria-label={`Row ${i + 1} tiered by hour`}
                     />{' '}
                     Tiered by hour
@@ -2803,46 +2839,18 @@ function CreateRatesModal({
                 </div>
 
                 {anyTiered && (
-                  <>
-                    <div className="pr-cell">
-                      <span className="pr-cell-label">Rate — first N of the hour (RM)</span>
-                      {tiered ? (
-                        <div className="pr-tierN-row">
-                          <label className="pr-tierN">
-                            first
-                            <input
-                              inputMode="numeric"
-                              value={r.tierN}
-                              onChange={(e) => patch(r.key, { tierN: e.target.value })}
-                              aria-label={`Row ${i + 1} first-tier count per hour`}
-                              title="How many records of each hour pay this rate"
-                            />
-                          </label>
-                          <input
-                            inputMode="decimal"
-                            value={r.rate}
-                            onChange={(e) => patch(r.key, { rate: e.target.value })}
-                            aria-label={`Row ${i + 1} first-tier rate`}
-                          />
-                        </div>
-                      ) : (
-                        <span className="pr-none">—</span>
-                      )}
-                    </div>
-                    <div className="pr-cell">
-                      <span className="pr-cell-label">Rate — the rest (RM)</span>
-                      {tiered ? (
-                        <input
-                          inputMode="decimal"
-                          value={r.tier2}
-                          onChange={(e) => patch(r.key, { tier2: e.target.value })}
-                          aria-label={`Row ${i + 1} rest-of-hour rate`}
-                        />
-                      ) : (
-                        <span className="pr-none">—</span>
-                      )}
-                    </div>
-                  </>
+                  <div className="pr-cell">
+                    <span className="pr-cell-label">Tiered rates (RM per record of the hour)</span>
+                    {tiered ? (
+                      <LadderEditor
+                        rows={r.ladder}
+                        onChange={(ladder) => patch(r.key, { ladder })}
+                        ariaPrefix={`Row ${i + 1}`}
+                      />
+                    ) : (
+                      <span className="pr-none">—</span>
+                    )}
+                  </div>
                 )}
 
                 <div className="pr-cell">
