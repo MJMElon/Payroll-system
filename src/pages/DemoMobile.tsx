@@ -15,10 +15,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
+  canViewTier,
   effectiveCapabilities,
   effectiveModules,
   isEntitled,
   tagClass,
+  viewableTierIds,
 } from '../lib/tags'
 import {
   profileName,
@@ -3509,6 +3511,15 @@ function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () =>
 
 type WorkFilter = 'pending' | 'approved' | 'rejected'
 
+/** How far back the approved / rejected history reaches. */
+type DateMode = 'today' | 'month' | 'range'
+
+const DATE_MODES: { key: DateMode; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: 'month', label: 'This month' },
+  { key: 'range', label: 'Date range' },
+]
+
 
 /* ------------------------------------------------------------------ */
 /* The review, for the tiers that run the whole mill. Their Performance */
@@ -3644,6 +3655,17 @@ function MyWorkTab({
   const [busy, setBusy] = useState<string | null>(null)
   const [filter, setFilter] = useState<WorkFilter>(initialFilter)
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
+  // Narrow the list by the submitter's tier — only worth offering when
+  // this tier may look at more than its own.
+  const [tierFilter, setTierFilter] = useState('')
+  // Which station blocks are open. Collapsed is the default: a station
+  // head with six stations wants the shape first, the records second.
+  const [openStations, setOpenStations] = useState<Set<string>>(new Set())
+  // Approved and rejected are a history, so they open on today and widen
+  // from there. Pending is a queue and always shows all of it.
+  const [dateMode, setDateMode] = useState<DateMode>('today')
+  const [fromDate, setFromDate] = useState(todayISO())
+  const [toDate, setToDate] = useState(todayISO())
 
   // Which buttons show is decided by the tag, not the rung: tick verify on
   // a tier and that tier verifies; tick approve and it approves. A tier
@@ -3655,6 +3677,11 @@ function MyWorkTab({
   const showMill = isEntitled(tier, 'mill-dashboard', grades)
   const canVerify = caps.includes('verify')
   const canApprove = caps.includes('approve')
+  // Whose work this tier may look at: the ticks under Operation Module →
+  // "View work record of" (Settings → Tier Tag Access Manage). One tier —
+  // its own — means there is nothing to filter between.
+  const viewableIds = viewableTierIds(tier, grades, 'entry')
+  const viewableTiers = grades.filter((g) => viewableIds.includes(g.id))
 
   async function load() {
     if (!profileId) return
@@ -3701,16 +3728,15 @@ function MyWorkTab({
           .in('id', submitterIds)
         byId = new Map(((p ?? []) as Profile[]).map((x) => [x.id, x]))
       }
-      const tierOf = (userId: string | null | undefined) => {
-        const who = userId ? byId.get(userId) : undefined
-        return who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order ?? null : null
-      }
+      // Whose work this tier may look at is one setting, read in one
+      // place: Operation Module → "View work record of". The queue used to
+      // answer it with its own strictly-below comparison, which could
+      // disagree with the module on the very same records.
       const below = (e: ProductionEntry) => {
         if (tier == null) return false
         if (e.user_id === profileId) return true // previewing — see above
-        const order = tierOf(e.user_id)
-        if (order == null) return true
-        return order > tier.sort_order
+        const who = e.user_id ? byId.get(e.user_id) : undefined
+        return canViewTier(tier, grades, 'entry', who?.grade_id ?? null)
       }
       waiting = all.filter(
         (e) =>
@@ -3834,11 +3860,131 @@ function MyWorkTab({
   // AND verified but waiting for the final approval.
   const inBucket = (e: ProductionEntry, k: WorkFilter) =>
     k === 'pending' ? ['pending', 'verified'].includes(stat(e)) : stat(e) === k
-  const count = (k: WorkFilter) => entries.filter((e) => inBucket(e, k)).length
-  const shown = entries.filter((e) => inBucket(e, filter))
+  /** The tier tag of whoever submitted a record. */
+  const tierIdOf = (e: ProductionEntry) =>
+    (e.user_id ? submitters.get(e.user_id)?.grade_id : null) ?? null
+  const matchesTier = (e: ProductionEntry) => !tierFilter || tierIdOf(e) === tierFilter
+
+  // Pending is a queue — all of it, always. Approved and rejected are a
+  // history, so they open on today and widen only when asked.
+  const dateFrom =
+    filter === 'pending' ? null
+      : dateMode === 'today' ? todayISO()
+        : dateMode === 'month' ? todayISO().slice(0, 8) + '01'
+          : fromDate
+  const dateTo = filter === 'pending' || dateMode !== 'range' ? todayISO() : toDate
+  const inDates = (e: ProductionEntry) =>
+    dateFrom === null || (e.work_date >= dateFrom && e.work_date <= dateTo)
+
+  const keep = (e: ProductionEntry) => matchesTier(e) && inDates(e)
+  // The chips count what their tab would show, date window included, so a
+  // number on a chip and the list behind it can never disagree.
+  const count = (k: WorkFilter) =>
+    entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && (k === 'pending' || inDates(x))).length
+  const shown = entries.filter((e) => inBucket(e, filter)).filter(keep)
   // Someone else's work only ever sits in the pending view — once acted on
   // it leaves the queue entirely.
-  const queueShown = filter === 'pending' ? queue : []
+  const queueShown = filter === 'pending' ? queue.filter(matchesTier) : []
+
+  /**
+   * The list, gathered under the station each record belongs to. Somebody
+   * standing at one station has no grouping to do, so their records are
+   * listed flat; more than one and each station folds, showing its name
+   * and how many records are under it until it is opened.
+   */
+  const stationsInList = [...new Set([...shown, ...queueShown].map((e) => e.station_id))]
+  const grouped = stationsInList.length > 1
+  const stationBlocks = stations
+    .filter((st) => stationsInList.includes(st.id))
+    .map((st) => ({
+      station: st,
+      mine: shown.filter((e) => e.station_id === st.id),
+      queue: queueShown.filter((e) => e.station_id === st.id),
+    }))
+
+  /** This person's own records. */
+  const MyRecordCards = ({ list }: { list: ProductionEntry[] }) => (
+    <>
+            {list.map((e) => (
+              <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
+                <button type="button" className="mob-plainbtn" onClick={() => setDetail(e)}>
+                  <span className="perf-top">
+                    <span>{jobName(e.job_id)}</span>
+                    <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                  </span>
+                  <span className="perf-top">
+                    <span className="mob-station-meta">
+                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                      {' · '}{stationName(e.station_id)} · {e.quantity}
+                    </span>
+                    {statusChip(e.approval_status)}
+                  </span>
+                </button>
+                <span className="perf-top">
+                  <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
+                </span>
+                {stat(e) === 'rejected' && e.rejected_reason && (
+                  <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
+                    Rejected: {e.rejected_reason}
+                  </span>
+                )}
+                {stat(e) === 'rejected' && (
+                  <button
+                    type="button"
+                    className="mob-mini"
+                    style={{ alignSelf: 'flex-start' }}
+                    disabled={busy === e.id}
+                    onClick={() => fixResubmit(e)}
+                  >
+                    ✎ Fix &amp; resubmit
+                  </button>
+                )}
+              </div>
+            ))}
+    </>
+  )
+
+  /** Somebody else's work, waiting on this person to verify or approve. */
+  const ReviewQueueCards = ({ list }: { list: ProductionEntry[] }) => (
+    <>
+            {list.map((e) => {
+              const who = e.user_id ? submitters.get(e.user_id) : undefined
+              const grade = who?.grade_id ? grades.find((g) => g.id === who.grade_id) : undefined
+              const tags = who
+                ? who.station_ids && who.station_ids.length > 0
+                  ? who.station_ids
+                  : who.station_id
+                    ? [who.station_id]
+                    : []
+                : []
+              return (
+                <button type="button" className="mob-review" key={e.id} onClick={() => setDetail(e)}>
+                  <span className="mob-review-tags">
+                    {tags.length === 0 ? (
+                      <span className="tagbadge tag-grey">All stations</span>
+                    ) : (
+                      tags.map((id) => (
+                        <span className="tagbadge tag-grey" key={id}>{stationName(id)}</span>
+                      ))
+                    )}
+                    {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
+                  </span>
+                  <span className="mob-review-name">{names.get(e.user_id ?? '') ?? 'Unknown'}</span>
+                  <span className="mob-review-line">
+                    <span className="mob-station-meta">
+                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                      {' · '}{jobName(e.job_id)} · {e.quantity}
+                    </span>
+                    {statusChip(e.approval_status)}
+                  </span>
+                  <span className="mob-review-go">
+                    {(e.approval_status ?? 'pending') === 'pending' ? 'To verify' : 'To approve'} ›
+                  </span>
+                </button>
+              )
+            })}
+    </>
+  )
 
   if (detail) {
     return (
@@ -3876,10 +4022,15 @@ function MyWorkTab({
     )
   }
 
+  // On the history tabs the answer depends on the window being looked at,
+  // so it says so — "no approved work yet" would read as a verdict on all
+  // of it when only today is on screen.
+  const windowLabel =
+    dateMode === 'today' ? 'today' : dateMode === 'month' ? 'this month' : 'in that date range'
   const emptyText: Record<WorkFilter, string> = {
     pending: 'Nothing waiting for approval right now.',
-    approved: 'No approved work yet.',
-    rejected: 'Nothing rejected — good work ✅',
+    approved: `No approved work ${windowLabel}.`,
+    rejected: dateMode === 'today' ? 'Nothing rejected today — good work ✅' : `Nothing rejected ${windowLabel}.`,
   }
 
   return (
@@ -3891,7 +4042,7 @@ function MyWorkTab({
       <div className="mob-body">
         {/* Same head as the KPI dashboard: the title alone, no strapline. */}
         <div className="mob-pagehead">
-          <div className="mob-role">My work</div>
+          <div className="mob-role">My Work Done</div>
         </div>
 
         {showMill && (
@@ -3910,87 +4061,108 @@ function MyWorkTab({
           </button>
         </div>
 
+        {/* Only worth a row of its own when this tier may look past its
+            own rank — one tier means nothing to choose between. */}
+        {viewableTiers.length > 1 && (
+          <div className="mob-queue-chips wrap">
+            <button className={tierFilter === '' ? 'on' : ''} onClick={() => setTierFilter('')}>
+              All tiers
+            </button>
+            {viewableTiers.map((g) => (
+              <button
+                key={g.id}
+                className={tierFilter === g.id ? 'on' : ''}
+                onClick={() => setTierFilter(g.id)}
+              >
+                {g.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Approved and rejected are a history and open on today. Pending
+            is a queue — every item in it is waiting now, so a date window
+            would only hide work somebody is waiting on. */}
+        {filter !== 'pending' && (
+          <>
+            <div className="mob-queue-chips wrap">
+              {DATE_MODES.map((m) => (
+                <button
+                  key={m.key}
+                  className={dateMode === m.key ? 'on' : ''}
+                  onClick={() => setDateMode(m.key)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            {dateMode === 'range' && (
+              <div className="mob-daterange">
+                <label>
+                  <span className="mob-field-label">From</span>
+                  <input
+                    className="mob-input"
+                    type="date"
+                    value={fromDate}
+                    max={toDate}
+                    onChange={(e) => setFromDate(e.target.value)}
+                  />
+                </label>
+                <label>
+                  <span className="mob-field-label">To</span>
+                  <input
+                    className="mob-input"
+                    type="date"
+                    value={toDate}
+                    min={fromDate}
+                    onChange={(e) => setToDate(e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+          </>
+        )}
+
         {loading ? (
           <p className="muted small">Loading…</p>
-        ) : (
-          <>
-            {shown.length === 0 && queueShown.length === 0 && (
-              <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
-            )}
-
-            {shown.map((e) => (
-              <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
-                <button type="button" className="mob-plainbtn" onClick={() => setDetail(e)}>
-                  <span className="perf-top">
-                    <span>{jobName(e.job_id)}</span>
-                    <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-                  </span>
-                  <span className="perf-top">
-                    <span className="mob-station-meta">
-                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                      {' · '}{stationName(e.station_id)} · {e.quantity}
-                    </span>
-                    {statusChip(e.approval_status)}
-                  </span>
+        ) : shown.length === 0 && queueShown.length === 0 ? (
+          <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
+        ) : grouped ? (
+          stationBlocks.map((b) => {
+            const total = b.mine.length + b.queue.length
+            if (total === 0) return null
+            const open = openStations.has(b.station.id)
+            return (
+              <div className="mob-stationgroup" key={b.station.id}>
+                <button
+                  type="button"
+                  className="mob-stationgroup-head"
+                  onClick={() =>
+                    setOpenStations((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(b.station.id)) next.delete(b.station.id)
+                      else next.add(b.station.id)
+                      return next
+                    })
+                  }
+                >
+                  <span className="mob-caret">{open ? '⌄' : '›'}</span>
+                  <span className="mob-entry-name">{b.station.name}</span>
+                  <span className="mob-entry-amt">{total}</span>
                 </button>
-                <span className="perf-top">
-                  <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
-                </span>
-                {stat(e) === 'rejected' && e.rejected_reason && (
-                  <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
-                    Rejected: {e.rejected_reason}
-                  </span>
-                )}
-                {stat(e) === 'rejected' && (
-                  <button
-                    type="button"
-                    className="mob-mini"
-                    style={{ alignSelf: 'flex-start' }}
-                    disabled={busy === e.id}
-                    onClick={() => fixResubmit(e)}
-                  >
-                    ✎ Fix &amp; resubmit
-                  </button>
+                {open && (
+                  <>
+                    <MyRecordCards list={b.mine} />
+                    <ReviewQueueCards list={b.queue} />
+                  </>
                 )}
               </div>
-            ))}
-
-            {queueShown.map((e) => {
-              const who = e.user_id ? submitters.get(e.user_id) : undefined
-              const grade = who?.grade_id ? grades.find((g) => g.id === who.grade_id) : undefined
-              const tags = who
-                ? who.station_ids && who.station_ids.length > 0
-                  ? who.station_ids
-                  : who.station_id
-                    ? [who.station_id]
-                    : []
-                : []
-              return (
-                <button type="button" className="mob-review" key={e.id} onClick={() => setDetail(e)}>
-                  <span className="mob-review-tags">
-                    {tags.length === 0 ? (
-                      <span className="tagbadge tag-grey">All stations</span>
-                    ) : (
-                      tags.map((id) => (
-                        <span className="tagbadge tag-grey" key={id}>{stationName(id)}</span>
-                      ))
-                    )}
-                    {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
-                  </span>
-                  <span className="mob-review-name">{names.get(e.user_id ?? '') ?? 'Unknown'}</span>
-                  <span className="mob-review-line">
-                    <span className="mob-station-meta">
-                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                      {' · '}{jobName(e.job_id)} · {e.quantity}
-                    </span>
-                    {statusChip(e.approval_status)}
-                  </span>
-                  <span className="mob-review-go">
-                    {(e.approval_status ?? 'pending') === 'pending' ? 'To verify' : 'To approve'} ›
-                  </span>
-                </button>
-              )
-            })}
+            )
+          })
+        ) : (
+          <>
+            <MyRecordCards list={shown} />
+            <ReviewQueueCards list={queueShown} />
           </>
         )}
       </div>
