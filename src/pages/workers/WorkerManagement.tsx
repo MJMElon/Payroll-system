@@ -709,6 +709,20 @@ export default function WorkerManagement() {
       inTeam
         .filter((p) => (tierOf(p) ?? 99) < grade.sort_order)
         .sort((a, b) => (tierOf(b) ?? 0) - (tierOf(a) ?? 0))[0] ??
+      // Landing at the TOP of the team — an assistant head moved between
+      // columns, or a drop into an empty team — so the nearest leader is
+      // not in any column: the station's own head, who belongs to the
+      // station rather than to a team. The team's creator is only the
+      // last resort, for a station with nobody standing above the drop.
+      visible
+        .filter(
+          (p) =>
+            p.id !== person.id &&
+            !p.team_id &&
+            (tierOf(p) ?? 99) < grade.sort_order &&
+            (station ? stationsOf(p).includes(station.id) : false),
+        )
+        .sort((a, b) => (tierOf(b) ?? 0) - (tierOf(a) ?? 0))[0] ??
       (team?.created_by ? profiles.find((x) => x.id === team.created_by) ?? null : null)
     if (leader && !canPlaceUnder(leader)) {
       return setError(
@@ -816,6 +830,16 @@ export default function WorkerManagement() {
     // Same row/cell: the two names swap places.
     if (dragged.tags_confirmed && slotKey(dragged) === slotKey(leader)) {
       void swapBlocks(dragged, leader)
+      return
+    }
+    // Same tier, different cell: dropping a name on a PEER means "stand
+    // beside them" — join the peer's team at their station — since no
+    // same-tier block could mean "report to them".
+    const dt = tierOf(dragged)
+    if (dragged.tags_confirmed && dt !== null && dt === tierOf(leader)) {
+      const g = gradeOf(leader)
+      const stId = stationsOf(leader)[0] ?? null
+      if (g) void placeInTeam(dragged, g, team, stId ? stations.find((s) => s.id === stId) ?? null : null)
       return
     }
     placeUnder(dragged, leader, team)
