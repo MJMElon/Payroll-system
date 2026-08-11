@@ -1133,6 +1133,21 @@ function PerformanceTab({
               </div>
             </div>
 
+            {/* Wages are a mill number, so they answer to the mill
+                dashboard setting and nothing else. This card used to need
+                Verify or Approve as well — a hangover from when it sat in
+                a "Management dashboard" block — which quietly hid it from
+                any tier that reads the mill without reviewing work. */}
+            <div className="mob-card">
+              <div className="mob-card-label">Avg wage / worker</div>
+              <div className="mob-breakrow">
+                <span>RM / Worker</span>
+                <span className="mob-entry-amt">
+                  {mgmtWorkers > 0 ? Math.round(cost / mgmtWorkers).toLocaleString() : '—'}
+                </span>
+              </div>
+            </div>
+
             <div className="mob-card">
               <div className="mob-card-label">Payroll cost trend</div>
               <div className="mob-barhead"><span className="val">RM</span></div>
@@ -1238,18 +1253,6 @@ function PerformanceTab({
               tier2RateFor={tier2RateFor}
             />
           </>
-        )}
-
-        {(canVerify || canFinal) && showMill && (
-          <div className="mob-card">
-            <div className="mob-card-label">Avg wage / worker</div>
-            <div className="mob-breakrow">
-              <span>RM / Worker</span>
-              <span className="mob-entry-amt">
-                {mgmtWorkers > 0 ? Math.round(cost / mgmtWorkers).toLocaleString() : '—'}
-              </span>
-            </div>
-          </div>
         )}
 
       </div>
