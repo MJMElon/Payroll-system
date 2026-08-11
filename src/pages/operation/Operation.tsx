@@ -61,10 +61,10 @@ type Tab = 'open' | 'approved' | 'rejected'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-/** DD/MMM/YYYY — read the same way everywhere, in any locale. */
+/** DD MMM YYYY — read the same way everywhere, in any locale. */
 function fmtDate(iso: string) {
   const [y, m, d] = iso.split('-')
-  return `${d}/${MONTHS[Number(m) - 1] ?? '?'}/${y}`
+  return `${d} ${MONTHS[Number(m) - 1] ?? '?'} ${y}`
 }
 
 const hh = (h: number) => `${String(h % 24).padStart(2, '0')}:00`
@@ -509,12 +509,33 @@ export default function Operation() {
     }
     setBusy(e.id)
     setError(null)
-    const { error } = await supabase
+    const fields = stampFor(next, reason)
+    let res = await supabase
       .from('operation_entries')
-      .update(stampFor(next, reason))
+      .update(fields)
       .eq('id', e.id)
+      .select('id')
+    // A database still missing the rejected_by column refuses the whole
+    // update — drop the one field and the rejection still lands.
+    if (res.error && /rejected_by/i.test(res.error.message)) {
+      delete (fields as Record<string, unknown>).rejected_by
+      res = await supabase
+        .from('operation_entries')
+        .update(fields)
+        .eq('id', e.id)
+        .select('id')
+    }
     setBusy(null)
-    if (error) return setError(error.message)
+    if (res.error) return setError(res.error.message)
+    // Row-level security refuses by matching no row, which PostgREST
+    // reports as a success that changed nothing — say so instead of
+    // silently doing nothing.
+    if (!res.data || res.data.length === 0) {
+      return setError(
+        `The database would not let you ${next === 'rejected' ? 'reject' : next === 'approved' ? 'approve' : 'verify'} ` +
+          'this entry — that needs the verify/approve function on your tier, or the latest supabase/setup.sql.',
+      )
+    }
     await loadEntries()
   }
 
@@ -766,7 +787,7 @@ export default function Operation() {
         <div className="sidebar-content stack">
           <div className="card stack">
             <h3>
-              Work Record
+              Work Done Record
               {oneStation && <span className="op-h3-station"> — {stationName(scope)}</span>}
             </h3>
 
@@ -892,6 +913,7 @@ export default function Operation() {
       {detailGroup && (
         <GroupModal
           group={detailGroup}
+          errorText={error}
           onClose={() => setDetailKey(null)}
           stationName={stationName(detailGroup.stationId)}
           job={jobOf(detailGroup.jobId)}
@@ -963,6 +985,7 @@ function GroupModal({
   busy,
   badge,
   onAct,
+  errorText,
   onActMany,
   canEditFor,
   onEdit,
@@ -979,6 +1002,9 @@ function GroupModal({
   groupAmount: number
   evidenceOf: (entryId: string) => { url: string; takenAt: string | null } | null
   actionFor: (e: ProductionEntry) => 'verified' | 'approved' | null
+  /** The page's error, said INSIDE the window — the page banner sits
+   *  behind the overlay where a refusal reads as nothing happening. */
+  errorText?: string | null
   /** The approve tag may throw an APPROVED record back to rejected. */
   canUnapprove: (e: ProductionEntry) => boolean
   busy: string | null
@@ -1045,6 +1071,8 @@ function GroupModal({
           </div>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
+
+        {errorText && <div className="error">{errorText}</div>}
 
         <div className="row-form spread op-rec-sub">
           <span className="op-head-station">{stationName}</span>
