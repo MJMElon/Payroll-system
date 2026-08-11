@@ -106,7 +106,9 @@ export interface Station {
   sort_order: number
   // Mobile-view presets (optional: older queries don't select them).
   hourly_count?: boolean
-  hourly_target?: number
+  // Nullable: blank means no hourly target, and the Record tab's ticks
+  // stop falling back to it (see daily_target below).
+  hourly_target?: number | null
   hourly_min_prev?: number
   // Preset coordinate (Settings → Station tags) that clock in/out stamps
   // are checked against. geofence_m is the allowed distance in metres.
