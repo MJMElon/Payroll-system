@@ -262,7 +262,6 @@ export default function PieceRate() {
               canManage={canEditRate}
               canDelete={canDeleteRate}
               onChanged={load}
-              onError={setError}
             />
           ) : (
             <HistoryList
@@ -274,7 +273,6 @@ export default function PieceRate() {
               canManage={canEditRate}
               canDelete={canDeleteRate}
               onChanged={load}
-              onError={setError}
             />
           )}
         </div>
@@ -587,7 +585,7 @@ function parseLadder(
   rows: string[],
   who: string,
   columns: { threshold: boolean; hour: boolean },
-): { hour: number[]; rate: number; tier2: number; threshold: number } {
+): { hour: number[] | null; rate: number; tier2: number | null; threshold: number | null } {
   const trimmed = [...rows]
   while (trimmed.length > 0 && trimmed[trimmed.length - 1].trim() === '') trimmed.pop()
   if (trimmed.length < 2) {
@@ -604,6 +602,9 @@ function parseLadder(
     return n
   })
   const steps = ladderStepsFrom(nums)
+  // Every row at the same price is not tiered at all — save the flat rate
+  // it really is, so nothing depends on the newer columns.
+  if (steps.length === 1) return { hour: null, rate: nums[0], tier2: null, threshold: null }
   if (!columns.hour && steps.length > 2) {
     throw new Error(
       'More than two price steps needs the hour_rates column — run the latest ' +
@@ -1014,7 +1015,6 @@ function RatesList({
   canManage,
   canDelete,
   onChanged,
-  onError,
 }: {
   stations: Station[]
   grades: Grade[]
@@ -1023,7 +1023,6 @@ function RatesList({
   canManage: boolean
   canDelete: boolean
   onChanged: () => void
-  onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
   const [search, setSearch] = useState('')
@@ -1186,7 +1185,6 @@ function RatesList({
           canEdit={canManage}
           canDelete={canDelete}
           onChanged={onChanged}
-          onError={onError}
           onClose={() => setManageKey(null)}
         />
       )}
@@ -1268,7 +1266,6 @@ function GroupManageModal({
   canEdit,
   canDelete,
   onChanged,
-  onError,
   onClose,
 }: {
   jobs: Job[]
@@ -1278,7 +1275,6 @@ function GroupManageModal({
   canEdit: boolean
   canDelete: boolean
   onChanged: () => void
-  onError: (m: string | null) => void
   onClose: () => void
 }) {
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? 'No tag'
@@ -1351,6 +1347,9 @@ function GroupManageModal({
   const [confirm, setConfirm] = useState<'save' | 'archive' | null>(null)
   const [remark, setRemark] = useState('')
   const [busy, setBusy] = useState(false)
+  // Shown INSIDE this window — an error rendered on the page behind the
+  // overlay is an error nobody sees.
+  const [err, setErr] = useState<string | null>(null)
 
   const patch = (jobId: string, fields: Partial<RateDraft>) =>
     setDraft((d) => ({ ...d, [jobId]: { ...d[jobId], ...fields } }))
@@ -1362,7 +1361,7 @@ function GroupManageModal({
     setOnMill(groupOnMill)
     setAddedTiers([])
     setPickingTier(false)
-    onError(null)
+    setErr(null)
     setMode('edit')
   }
 
@@ -1373,7 +1372,7 @@ function GroupManageModal({
     setOnMill(groupOnMill)
     setAddedTiers([])
     setPickingTier(false)
-    onError(null)
+    setErr(null)
     setMode('view')
   }
 
@@ -1497,7 +1496,7 @@ function GroupManageModal({
    *  security answers "no" with zero rows rather than with an error. */
   async function save() {
     setBusy(true)
-    onError(null)
+    setErr(null)
     try {
       const newName = name.trim()
       if (!newName) throw new Error('Enter the work description.')
@@ -1619,7 +1618,7 @@ function GroupManageModal({
       onClose()
     } catch (err) {
       setConfirm(null)
-      onError(err instanceof Error ? err.message : String(err))
+      setErr(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
@@ -1634,9 +1633,9 @@ function GroupManageModal({
    * is. The reason goes onto each row first, so the audit log keeps it.
    */
   async function archive() {
-    if (!remark.trim()) return onError('Say why this piece rate is being archived.')
+    if (!remark.trim()) return setErr('Say why this piece rate is being archived.')
     setBusy(true)
-    onError(null)
+    setErr(null)
     try {
       for (const j of jobs) {
         const { data, error } = await supabase
@@ -1654,7 +1653,7 @@ function GroupManageModal({
       onClose()
     } catch (err) {
       setConfirm(null)
-      onError(err instanceof Error ? err.message : String(err))
+      setErr(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
@@ -1663,7 +1662,7 @@ function GroupManageModal({
   /** Put an archived piece rate back into the listing. */
   async function restore() {
     setBusy(true)
-    onError(null)
+    setErr(null)
     const ids = jobs.map((j) => j.id)
     const { data, error } = await supabase
       .from('piece_rate_jobs')
@@ -1671,9 +1670,9 @@ function GroupManageModal({
       .in('id', ids)
       .select('id')
     setBusy(false)
-    if (error) return onError(error.message)
+    if (error) return setErr(error.message)
     if (!data || data.length === 0) {
-      return onError('You are not allowed to restore this piece rate.')
+      return setErr('You are not allowed to restore this piece rate.')
     }
     onChanged()
     onClose()
@@ -1815,8 +1814,10 @@ function GroupManageModal({
           </div>
         </div>
 
+        {err && <div className="error">{err}</div>}
+
         {mode === 'history' ? (
-          <GroupHistory jobs={jobs} grades={grades} onError={onError} />
+          <GroupHistory jobs={jobs} grades={grades} onError={setErr} />
         ) : (
           <>
             {/* WHAT this window is about: the station and the work. */}
@@ -2089,11 +2090,6 @@ function ConfirmChangesModal({
           </table>
         </div>
 
-        <p className="small muted" style={{ margin: 0 }}>
-          Changing a rate on an approved contract sends it back for verification
-          and approval. Every change here is kept in the amendment history.
-        </p>
-
         <div className="row-form" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn ghost" onClick={onCancel}>Back</button>
           <button type="button" className="btn" disabled={busy} onClick={onConfirm}>
@@ -2307,7 +2303,6 @@ function HistoryList({
   canManage,
   canDelete,
   onChanged,
-  onError,
 }: {
   stations: Station[]
   grades: Grade[]
@@ -2317,7 +2312,6 @@ function HistoryList({
   canManage: boolean
   canDelete: boolean
   onChanged: () => void
-  onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
   const [search, setSearch] = useState('')
@@ -2448,7 +2442,6 @@ function HistoryList({
           canEdit={canManage}
           canDelete={canDelete}
           onChanged={onChanged}
-          onError={onError}
           onClose={() => setManageKey(null)}
         />
       )}
