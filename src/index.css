@@ -1968,7 +1968,10 @@ button.mob-breakrow {
    itself: with both at work the browser's own compensation fights the
    restore and the list twitches. */
 .mob-body {
-  flex: 1; overflow-y: auto; overflow-anchor: none;
+  /* min-height: 0 lets the flex item actually shrink to the screen, so
+     overflow-y gets something to scroll — without it, Safari sizes the
+     body to its content and the page below the fold is unreachable. */
+  flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none;
   padding: 0 0.9rem 0.9rem; display: flex; flex-direction: column; gap: 0.7rem;
 }
 .mob-card {
