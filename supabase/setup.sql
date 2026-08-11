@@ -2136,3 +2136,20 @@ alter table public.shared_stations add column if not exists daily_target int;
 alter table public.shared_stations drop constraint if exists stations_daily_target_positive;
 alter table public.shared_stations add constraint stations_daily_target_positive
   check (daily_target is null or daily_target > 0);
+
+-- ---------------------------------------------------------------------------
+-- The per-hour twin of daily_target, shown as its own column in Settings →
+-- Station tags. The Record tab's ticks track the DAILY target when it is
+-- filled; with the daily blank they fall back to this hourly number and
+-- start afresh each hour. Whichever target is filled is the one shown.
+--
+-- The column itself is old (the hourly photo stamp card reads it too) but
+-- was born NOT NULL DEFAULT 6 — blank is now a real answer, so the
+-- constraint goes. A zero left over from the old days meant "no target"
+-- and becomes null before the positive check pins that meaning down.
+-- ---------------------------------------------------------------------------
+alter table public.shared_stations alter column hourly_target drop not null;
+update public.shared_stations set hourly_target = null where hourly_target <= 0;
+alter table public.shared_stations drop constraint if exists stations_hourly_target_positive;
+alter table public.shared_stations add constraint stations_hourly_target_positive
+  check (hourly_target is null or hourly_target > 0);

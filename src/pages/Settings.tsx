@@ -196,6 +196,9 @@ function TagsTab() {
   // the mobile Record tab ticks off, so it lives with the station rather
   // than being guessed at per tier.
   const [targetDraft, setTargetDraft] = useState('')
+  // The per-hour equivalent — the Record tab's stamps fall back to it
+  // whenever no daily target is set (whichever target is filled shows).
+  const [hourlyDraft, setHourlyDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -334,12 +337,14 @@ function TagsTab() {
     setEditStationId(st.id)
     setStationDraft(st.name)
     setTargetDraft(st.daily_target == null ? '' : String(st.daily_target))
+    setHourlyDraft(st.hourly_target == null ? '' : String(st.hourly_target))
   }
 
   function cancelStationEdit() {
     setEditStationId(null)
     setStationDraft('')
     setTargetDraft('')
+    setHourlyDraft('')
     setError(null)
   }
 
@@ -362,12 +367,33 @@ function TagsTab() {
       }
       target = n
     }
-    if (next === st.name && target === (st.daily_target ?? null)) return cancelStationEdit()
+    const rawHourly = hourlyDraft.trim()
+    let hourly: number | null = null
+    if (rawHourly !== '') {
+      const n = Number(rawHourly)
+      if (!Number.isInteger(n) || n <= 0) {
+        return setError('Hourly target must be a whole number above zero, or blank for none.')
+      }
+      hourly = n
+    }
+    if (
+      next === st.name &&
+      target === (st.daily_target ?? null) &&
+      hourly === (st.hourly_target ?? null)
+    ) {
+      return cancelStationEdit()
+    }
     const { error } = await supabase
       .from('shared_stations')
-      .update({ name: next, daily_target: target })
+      .update({ name: next, daily_target: target, hourly_target: hourly })
       .eq('id', st.id)
-    if (error) return setError(saveError(error, 'station tag', next))
+    if (error) {
+      return setError(
+        /null value in column "hourly_target"/.test(error.message)
+          ? 'The database still requires an hourly target — run the latest supabase/setup.sql, then blanking it will work.'
+          : saveError(error, 'station tag', next),
+      )
+    }
     cancelStationEdit()
     load()
   }
@@ -510,12 +536,13 @@ function TagsTab() {
               <th>Station</th>
 <th>Coordinate</th>
               <th className="right">Daily target</th>
+              <th className="right">Hourly target</th>
               <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {stations.length === 0 && !addingStation && (
-              <tr><td colSpan={6} className="muted">No station tags yet.</td></tr>
+              <tr><td colSpan={7} className="muted">No station tags yet.</td></tr>
             )}
             {stations.map((st, i) => {
               const editing = editStationId === st.id
@@ -576,6 +603,25 @@ function TagsTab() {
                     ) : (
                       <span className={st.daily_target == null ? 'muted' : ''}>
                         {st.daily_target ?? '—'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="right">
+                    {editing ? (
+                      <input
+                        className="row-input right"
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="none"
+                        value={hourlyDraft}
+                        onChange={(e) => setHourlyDraft(e.target.value)}
+                        onKeyDown={(e) => rowKeys(e, saveStation, cancelStationEdit)}
+                        aria-label={`Hourly work target for ${st.name}`}
+                      />
+                    ) : (
+                      <span className={st.hourly_target == null ? 'muted' : ''}>
+                        {st.hourly_target ?? '—'}
                       </span>
                     )}
                   </td>
@@ -643,8 +689,9 @@ function TagsTab() {
                   />
                 </td>
                 <td className="muted">—</td>
-                {/* The target is set once the station exists — a name is
+                {/* The targets are set once the station exists — a name is
                     the only thing needed to create one. */}
+                <td className="right muted">—</td>
                 <td className="right muted">—</td>
                 <td className="right">
                   <span className="row-actions">

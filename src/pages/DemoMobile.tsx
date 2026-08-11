@@ -1850,7 +1850,9 @@ function StationWorkPanel({
         {/* 1 — the day and the hour in one block: what has been recorded
                today, then the hour being worked right now. */}
         <div className="mob-card mob-highlight">
-          <div className="mob-card-label">Work done today</div>
+          <div className="mob-card-label">
+            {ticksHourly(station) ? 'Work done this hour' : 'Work done today'}
+          </div>
           <WorkDoneCard bare profileId={profileId} station={station} reloadKey={records.length} />
           {station.hourly_count ? (
             <>
@@ -2582,20 +2584,27 @@ function ClockCard({
 }
 
 /* ------------------------------------------------------------------ */
-/* WORK DONE TODAY — the run of ticks under the clock card.            */
+/* WORK DONE — the run of ticks under the clock card.                  */
 /*                                                                      */
-/* One tick per work record submitted today at this station, filling    */
-/* left to right against the station's daily target (Settings → Station */
-/* tags → Daily target). A record counts the moment it is submitted,    */
+/* One tick per work record submitted at this station, filling left to  */
+/* right against whichever target the station carries (Settings →       */
+/* Station tags): a DAILY target counts today's records; with no daily  */
+/* target but an HOURLY one, the ticks track this hour instead and      */
+/* start afresh each hour. A record counts the moment it is submitted,  */
 /* approved or not: this says how much work has been DONE, and waiting  */
 /* on somebody else's verification is not a reason to have done less.   */
 /*                                                                      */
-/* No target set is a fair answer too — then it simply counts, with     */
-/* nothing to fill up.                                                  */
+/* Neither target set is a fair answer too — then it simply counts      */
+/* today, with nothing to fill up.                                      */
 /* ------------------------------------------------------------------ */
 
 /** Past this many, a row of ticks stops reading as a count. */
 const TICK_LIMIT = 12
+
+/** True when the ticks track the hour: no daily target, hourly one filled. */
+function ticksHourly(station: Station | null): boolean {
+  return (station?.daily_target ?? null) == null && (station?.hourly_target ?? 0) > 0
+}
 
 function WorkDoneCard({
   bare = false,
@@ -2610,20 +2619,31 @@ function WorkDoneCard({
   reloadKey: number
 }) {
   const [done, setDone] = useState(0)
+  // Daily target wins when both are filled; the hourly one steps in when
+  // the daily is blank — whichever target is filled is the one shown.
+  const hourly = ticksHourly(station)
 
   useEffect(() => {
     if (!profileId || !station) return
     let cancelled = false
-    const load = () =>
-      supabase
+    const load = () => {
+      let q = supabase
         .from('operation_entries')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', profileId)
         .eq('station_id', station.id)
         .eq('work_date', todayISO())
-        .then(({ count }) => {
-          if (!cancelled) setDone(count ?? 0)
-        })
+      if (hourly) {
+        // Recomputed on every poll, so the ticks reset themselves when
+        // the clock crosses into the next hour.
+        const hourStart = new Date()
+        hourStart.setMinutes(0, 0, 0)
+        q = q.gte('created_at', hourStart.toISOString())
+      }
+      q.then(({ count }) => {
+        if (!cancelled) setDone(count ?? 0)
+      })
+    }
     load()
     // An hourly station's records are not written when the photo is taken
     // — they are made when the hour closes, by the sweep running at the
@@ -2634,10 +2654,10 @@ function WorkDoneCard({
       cancelled = true
       clearInterval(t)
     }
-  }, [profileId, station?.id, reloadKey])
+  }, [profileId, station?.id, reloadKey, hourly])
 
   if (!station) return null
-  const target = station.daily_target ?? null
+  const target = hourly ? station.hourly_target ?? null : station.daily_target ?? null
   const pct = target ? Math.min(100, (done / target) * 100) : 0
   const met = target != null && done >= target
 
@@ -2664,7 +2684,9 @@ function WorkDoneCard({
           does not already say. */}
       {target != null && (
         <div className="mob-sub">
-          {met ? `${done} of ${target} — target met ✨` : `${done} of ${target} recorded today`}
+          {met
+            ? `${done} of ${target} — target met ✨`
+            : `${done} of ${target} recorded ${hourly ? 'this hour' : 'today'}`}
         </div>
       )}
     </>
@@ -2673,7 +2695,7 @@ function WorkDoneCard({
   if (bare) return body
   return (
     <div className="mob-card">
-      <div className="mob-card-label">Work done today</div>
+      <div className="mob-card-label">{hourly ? 'Work done this hour' : 'Work done today'}</div>
       {body}
     </div>
   )
