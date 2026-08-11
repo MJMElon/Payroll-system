@@ -163,6 +163,17 @@ export default function PieceRate() {
     return m
   }, [rates])
 
+  // What the masterlist prints: the rate in force today — or, for a
+  // contract whose first rate only starts on a coming date, that
+  // scheduled rate with its start date. Reading only currentRate made a
+  // freshly approved contract look like it had no rate at all until its
+  // effective date arrived.
+  const displayRate = useMemo(() => {
+    const m = new Map(currentRate)
+    for (const [jobId, r] of latestRate) if (!m.has(jobId)) m.set(jobId, r)
+    return m
+  }, [currentRate, latestRate])
+
   if (loading) return <p className="muted">Loading…</p>
 
   const openApprovals = jobs.filter(
@@ -275,7 +286,7 @@ export default function PieceRate() {
               stations={stations}
               grades={grades}
               jobs={jobs.filter((j) => j.approval_status === 'approved' && visibleTo(j))}
-              currentRate={currentRate}
+              currentRate={displayRate}
               canManage={canEditRate}
               canDelete={canDeleteRate}
               onChanged={load}
@@ -286,7 +297,7 @@ export default function PieceRate() {
               grades={grades}
               jobs={jobs.filter(visibleTo)}
               rates={rates}
-              currentRate={currentRate}
+              currentRate={displayRate}
               canManage={canEditRate}
               canDelete={canDeleteRate}
               onChanged={load}
