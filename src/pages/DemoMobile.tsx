@@ -4195,6 +4195,8 @@ function MyWorkTab({
   // become a pending record only when the hour closes, so until then they
   // are listed as work in progress rather than left invisible.
   const [livePhotos, setLivePhotos] = useState<PhotoRecord[]>([])
+  // A still-recording photo opened full size.
+  const [livePeek, setLivePeek] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [filter, setFilter] = useState<WorkFilter>(initialFilter)
@@ -4695,18 +4697,42 @@ function MyWorkTab({
         {!loading && filter === 'pending' && livePhotos.length > 0 && (
           <div className="mob-card">
             <div className="mob-card-label">This hour — still recording</div>
-            {[...new Set(livePhotos.map((r) => r.station_id))].map((sid) => (
-              <div className="perf-top" key={sid}>
-                <span className="mob-person-name">{stationName(sid)}</span>
-                <span className="mob-station-meta">
-                  {livePhotos.filter((r) => r.station_id === sid).length} photo
-                  {livePhotos.filter((r) => r.station_id === sid).length === 1 ? '' : 's'}
-                </span>
-              </div>
-            ))}
-            <div className="mob-sub">
-              These photos become a pending work record when the hour ends.
-            </div>
+            {[...new Set(livePhotos.map((r) => r.station_id))].map((sid) => {
+              const here = livePhotos.filter((r) => r.station_id === sid)
+              return (
+                <div key={sid}>
+                  <div className="perf-top">
+                    <span className="mob-person-name">{stationName(sid)}</span>
+                    <span className="mob-station-meta">
+                      {here.length} photo{here.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  {/* Each photo IS the work until the hour closes into a
+                      record, so it opens full size right here. */}
+                  <div className="mob-livephotos">
+                    {here.map((r) => {
+                      const url = r.photo_path
+                        ? supabase.storage.from('records').getPublicUrl(r.photo_path).data.publicUrl
+                        : null
+                      return (
+                        <button
+                          key={r.id}
+                          type="button"
+                          className="mob-livephoto"
+                          onClick={() => url && setLivePeek(url)}
+                          disabled={!url}
+                        >
+                          {url ? <img src={url} alt="Work photo" /> : <span className="mob-chip">no photo</span>}
+                          <span className="mob-station-meta">
+                            {new Date(r.taken_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -4757,6 +4783,20 @@ function MyWorkTab({
       </div>
 
       {viewPhotos && <PhotoSheet entry={viewPhotos} onClose={() => setViewPhotos(null)} />}
+
+      {livePeek && (
+        <div className="mob-photoview" onClick={() => setLivePeek(null)}>
+          <button
+            type="button"
+            className="mob-photoview-x"
+            onClick={() => setLivePeek(null)}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+          <img src={livePeek} alt="Work record photo" onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
     </>
   )
 }
