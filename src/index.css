@@ -2509,18 +2509,42 @@ button.mob-title.spread { cursor: pointer; }
    was, unit under it, date where the date was. Inputs are drawn as quietly
    as the text they replace; the dashed underline is the only hint a cell
    has gone live. */
-.pr-manage .quiet-input,
-.pr-manage input.quiet-input {
+.modal-manage .quiet-input,
+.modal-manage input.quiet-input {
   border: none; border-bottom: 1px dashed var(--accent);
   border-radius: 0; background: transparent;
   padding: 0 0.1rem; min-height: 0; font: inherit;
 }
-.pr-manage .quiet-input.num { width: 6ch; font-weight: 700; }
-/* The work title reads at its own length; its box should too, not run a
-   dashed line across the whole (often very wide) column. */
-.pr-manage th input.quiet-input { width: min(100%, 30ch); }
-.pr-manage .quiet-input.date { width: auto; font-size: inherit; }
-.pr-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
+.modal-manage .quiet-input.num { width: 6ch; font-weight: 700; }
+.modal-manage .quiet-input.date { width: auto; font-size: inherit; }
+.modal-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
+
+/* The work reads as a title above everything it prices; its box reads at
+   the title's own length, not a dashed line across the window. */
+.pr-work-title {
+  display: flex; align-items: center; gap: 0.6rem;
+  font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.1rem;
+}
+.pr-work-title .quiet-input { width: min(100%, 32ch); font: inherit; }
+
+/* Function sheet: the function's name on the left, then a tick under
+   Show or under No show. */
+.table.pr-func { width: auto; }
+.pr-func th:first-child { min-width: 15rem; }
+.pr-func th.pr-func-tick, .pr-func td.pr-func-tick { width: 6.5rem; text-align: center; }
+.pr-func input[type='checkbox'] { width: auto; }
+
+/* The read face's rate line — amount with its unit right beside it — and
+   the edit face mirroring it: number box, unit picker beside. */
+.pr-rate-inline { display: inline-flex; align-items: baseline; gap: 0.4rem; }
+.pr-manage-edit.row { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
+
+/* Take a just-added tier column back out. */
+.pr-newtier-x {
+  appearance: none; border: none; background: none; cursor: pointer;
+  margin-left: 0.25rem; color: var(--muted); font-size: 0.95rem; line-height: 1;
+}
+.pr-newtier-x:hover { color: var(--danger); }
 /* Everything hugs the left of the cell exactly where the read face put
    it — nothing stretches to the cell's far edge just because the cell
    is wide (a one-tier window makes a VERY wide cell). */
@@ -2538,22 +2562,6 @@ button.mob-title.spread { cursor: pointer; }
 }
 .pr-manage .checkbox.tickword {
   font-size: 1rem; font-weight: 800; color: var(--muted); white-space: nowrap;
-}
-/* The tick takes the SAME room in both faces and both states: the label
-   is a fixed-width box and the words live in a shrinkable span, so the
-   column's width never follows the text — ticking a box cannot move the
-   table by even a pixel. */
-.pr-manage .tickmark,
-.pr-manage .checkbox.tickword {
-  display: inline-flex; width: 15rem; max-width: 100%;
-  font-size: 0.9rem; white-space: nowrap;
-}
-/* `.pr-manage input` is width:100% for the quiet boxes — that must not
-   apply to the tick box itself, or it swallows the label's whole width
-   and squeezes the words out. */
-.pr-manage .checkbox.tickword input { width: auto; flex: 0 0 auto; }
-.pr-manage .tickword-text {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* Masterlist: the work description takes the room; unit, every tier rate
