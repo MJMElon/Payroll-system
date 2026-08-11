@@ -5871,13 +5871,33 @@ function TeamTab({
     }
   }
 
-  // Exactly one confirmed person holds this tier → they ARE the upper, even
-  // when nobody has wired up a supervisor link yet.
-  function holderOf(g: Grade): Profile | null {
-    const fromChain = chainByGrade.get(g.id)
-    if (fromChain) return fromChain
-    const holders = people.filter((p) => p.grade_id === g.id && p.tags_confirmed)
-    return holders.length === 1 ? holders[0] : null
+  // EVERYONE confirmed onto an upper tier shows on its rung — one holder
+  // used to be the limit, so a second supervisor turned the whole rung
+  // into "Not assigned yet". People tagged to stations count only when
+  // they share one with the reader; no station tags means they cover the
+  // whole floor. The person on the reader's own reporting chain leads.
+  function holdersOf(g: Grade): Profile[] {
+    const mine =
+      profile?.station_ids && profile.station_ids.length > 0
+        ? profile.station_ids
+        : profile?.station_id ? [profile.station_id] : []
+    const sameFloor = (p: Profile) => {
+      const ids = p.station_ids && p.station_ids.length > 0
+        ? p.station_ids
+        : p.station_id ? [p.station_id] : []
+      if (ids.length === 0 || mine.length === 0) return true
+      return ids.some((id) => mine.includes(id))
+    }
+    const holders = people
+      .filter((p) => p.grade_id === g.id && p.tags_confirmed && sameFloor(p))
+      .sort((a, b) => profileName(a).localeCompare(profileName(b)))
+    const chain = chainByGrade.get(g.id)
+    if (chain) {
+      const i = holders.findIndex((p) => p.id === chain.id)
+      if (i >= 0) holders.splice(i, 1)
+      holders.unshift(chain)
+    }
+    return holders
   }
 
   // A tier that ADMINISTERS the system is not a rung of an operating team,
@@ -6296,12 +6316,14 @@ function TeamTab({
   // the same word all the way down.
   const Node = ({
     grade,
-    label,
+    names,
     me,
     onDropHere,
   }: {
     grade: Grade | null
-    label: string
+    // Every holder of the rung, in order — the row slides sideways when
+    // they run past the edge. Empty means nobody holds it yet.
+    names: string[]
     me?: boolean
     // A rung at or above your own can still be dropped on — it just
     // answers with the ceiling instead of moving anyone.
@@ -6325,7 +6347,15 @@ function TeamTab({
     >
       <span className={`tag-dot dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
       <span className="mob-org-text">
-        <span className="mob-person-name">{label}</span>
+        {names.length === 0 ? (
+          <span className="mob-person-name">Not assigned yet</span>
+        ) : (
+          <span className="mob-org-names">
+            {names.map((n, i) => (
+              <span className="mob-person-name" key={`${i}-${n}`}>{n}</span>
+            ))}
+          </span>
+        )}
         <span className="mob-station-meta">{grade?.name ?? '—'}</span>
       </span>
       {me && <span className="mob-chip ok">You</span>}
@@ -6598,19 +6628,16 @@ function TeamTab({
                 <span className="mob-station-meta">{myTeamName}</span>
               </div>
               <div className="mob-org">
-                {[...upperTiers].reverse().map((g) => {
-                  const person = holderOf(g)
-                  return (
-                    <Node
-                      key={g.id}
-                      grade={g}
-                      label={person ? profileName(person) : 'Not assigned yet'}
-                      onDropHere={() => dropOn(g)}
-                    />
-                  )
-                })}
+                {[...upperTiers].reverse().map((g) => (
+                  <Node
+                    key={g.id}
+                    grade={g}
+                    names={holdersOf(g).map((p) => profileName(p))}
+                    onDropHere={() => dropOn(g)}
+                  />
+                ))}
                 {tier && (
-                  <Node grade={tier} label={profileName(profile)} me onDropHere={() => dropOn(tier)} />
+                  <Node grade={tier} names={[profileName(profile)]} me onDropHere={() => dropOn(tier)} />
                 )}
               </div>
               {board}
