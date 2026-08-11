@@ -12,6 +12,7 @@ import {
   type Profile,
   type Worker,
 } from '../lib/supabase'
+import { makePayExpander } from '../lib/payFlow'
 import SummaryReport, { type SummaryReportHandle } from './payroll/SummaryReport'
 import HourlyProduction from './payroll/HourlyProduction'
 import MonthReport from './payroll/MonthReport'
@@ -189,8 +190,33 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
         throw new Error('No APPROVED production entries in that period — nothing to pay.')
       }
 
+      // 1.5 Reference data for the multi-tier pay rule: one approved entry
+      // pays its submitter AND every higher tier priced on the same work,
+      // resolved through the submitter's reporting line (Team Manage).
+      const [jobsQ, profQ, gradeQ] = await Promise.all([
+        supabase.from('piece_rate_jobs').select('id, station_id, grade_id, name'),
+        supabase.from('shared_profiles').select('id, grade_id, supervisor_id'),
+        supabase.from('shared_grades').select('id, sort_order'),
+      ])
+      const refErr = jobsQ.error || profQ.error || gradeQ.error
+      if (refErr) throw new Error(refErr.message)
+      const allJobs = jobsQ.data ?? []
+
       // 2. Rate per job: newest rate effective on or before the period end.
-      const jobIds = [...new Set(entries.map((e) => e.job_id))]
+      // Rates are loaded for the WHOLE work group of every entry's job, so
+      // the upper tiers' pricing of the same work rides along.
+      const entryJobIds = new Set(entries.map((e) => e.job_id))
+      const groupKey = (j: { station_id: string; name: string }) =>
+        `${j.station_id}|${j.name.trim().toLowerCase()}`
+      const wantedGroups = new Set(
+        allJobs.filter((j) => entryJobIds.has(j.id)).map(groupKey),
+      )
+      const jobIds = [
+        ...new Set([
+          ...allJobs.filter((j) => wantedGroups.has(groupKey(j))).map((j) => j.id),
+          ...entryJobIds,
+        ]),
+      ]
       const { data: rates, error: rateErr } = await supabase
         .from('piece_rates')
         // select('*') so tier_threshold rides along once its migration ran.
@@ -212,24 +238,33 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
         return ladderAmount(r, qty)
       }
 
-      // 3. Sum quantities AND per-entry amounts per person + job (amounts are
-      // computed entry by entry so tiered rates come out right).
+      // 3. Expand each entry into its pay lines (submitter + priced upper
+      // tiers), then sum quantities AND per-entry amounts per person + job
+      // (amounts computed entry by entry so tiered rates come out right).
+      const payLinesOf = makePayExpander({
+        jobs: allJobs,
+        profiles: profQ.data ?? [],
+        grades: gradeQ.data ?? [],
+        hasRate: (jobId) => rateByJob.has(jobId),
+      })
       const sums = new Map<
         string,
         { user_id: string | null; worker_id: string | null; job_id: string; quantity: number; amount: number }
       >()
       for (const en of entries) {
-        const key = `${en.user_id ?? 'w:' + en.worker_id}|${en.job_id}`
-        const cur = sums.get(key) ?? {
-          user_id: en.user_id ?? null,
-          worker_id: en.user_id ? null : en.worker_id ?? null,
-          job_id: en.job_id,
-          quantity: 0,
-          amount: 0,
+        for (const line of payLinesOf(en)) {
+          const key = `${line.userId ?? 'w:' + line.workerId}|${line.jobId}`
+          const cur = sums.get(key) ?? {
+            user_id: line.userId,
+            worker_id: line.workerId,
+            job_id: line.jobId,
+            quantity: 0,
+            amount: 0,
+          }
+          cur.quantity += Number(en.quantity)
+          cur.amount += amountOf(line.jobId, Number(en.quantity))
+          sums.set(key, cur)
         }
-        cur.quantity += Number(en.quantity)
-        cur.amount += amountOf(en.job_id, Number(en.quantity))
-        sums.set(key, cur)
       }
 
       // 4. Create the run, then its lines (rate snapshotted; 0 if job has no rate).

@@ -17,6 +17,7 @@ import {
   type Profile,
   type Station,
 } from '../../lib/supabase'
+import { makePayExpander } from '../../lib/payFlow'
 
 const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -85,6 +86,24 @@ export default function MonthReport() {
     return ladderAmount(r, qty)
   }
 
+  // One approved entry pays its submitter AND every higher tier priced on
+  // the same work (resolved through the submitter's reporting line) — the
+  // same rule the payroll run builder applies.
+  const payLinesOf = useMemo(
+    () =>
+      makePayExpander({
+        jobs,
+        profiles: people,
+        grades,
+        hasRate: (id) => bestRate.has(id),
+      }),
+    [jobs, people, grades, bestRate],
+  )
+
+  /** The account an entry's work belongs to (null for legacy worker rows). */
+  const accountOf = (e: ProductionEntry) =>
+    e.user_id ?? (e.worker_id ? null : e.created_by)
+
   const gradeName = (id: string | null) =>
     id ? grades.find((g) => g.id === id)?.name ?? '—' : '—'
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
@@ -105,13 +124,18 @@ export default function MonthReport() {
       // Credit the account the work belongs to. Legacy rows carry only a
       // worker_id — those are paid via payroll runs, not this per-account
       // table, so don't mis-credit the clerk who keyed them in.
-      const pid = e.user_id ?? (e.worker_id ? null : e.created_by)
+      const pid = accountOf(e)
       if (!pid) continue
-      const cur = byPerson.get(pid) ?? { dates: new Set<string>(), qty: 0, piece: 0 }
-      cur.dates.add(e.work_date)
-      cur.qty += Number(e.quantity)
-      cur.piece += amountOf(e.job_id, Number(e.quantity))
-      byPerson.set(pid, cur)
+      for (const line of payLinesOf({ user_id: pid, job_id: e.job_id })) {
+        if (!line.userId) continue
+        const cur = byPerson.get(line.userId) ?? { dates: new Set<string>(), qty: 0, piece: 0 }
+        // Days worked stay the days someone SUBMITTED work; a derived
+        // upper-tier line still counts its quantity and pay.
+        if (line.own) cur.dates.add(e.work_date)
+        cur.qty += Number(e.quantity)
+        cur.piece += amountOf(line.jobId, Number(e.quantity))
+        byPerson.set(line.userId, cur)
+      }
     }
     const rows: WorkerRow[] = []
     for (const p of people) {
@@ -130,7 +154,7 @@ export default function MonthReport() {
     }
     return rows.sort((a, b) => profileName(a.person).localeCompare(profileName(b.person)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, people, bestRate])
+  }, [entries, people, bestRate, payLinesOf])
 
   // ----- Per-station roll-up ----------------------------------------------
   interface StationRow {
@@ -148,7 +172,10 @@ export default function MonthReport() {
       const pid = e.user_id ?? (e.worker_id ? `w:${e.worker_id}` : e.created_by)
       if (pid) cur.people.add(pid)
       cur.qty += Number(e.quantity)
-      cur.piece += amountOf(e.job_id, Number(e.quantity))
+      // The station's cost includes the upper-tier pay the entry generates.
+      for (const line of payLinesOf({ user_id: accountOf(e), job_id: e.job_id })) {
+        cur.piece += amountOf(line.jobId, Number(e.quantity))
+      }
       byStation.set(e.station_id, cur)
     }
     return stations
@@ -158,23 +185,27 @@ export default function MonthReport() {
         return { station: s, entryCount: a.count, workers: a.people.size, qty: a.qty, piece: a.piece }
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, stations, bestRate])
+  }, [entries, stations, bestRate, payLinesOf])
 
   // ----- Per-job roll-up (what work drove the month) ----------------------
   const jobRows = useMemo(() => {
     const byJob = new Map<string, { qty: number; piece: number; count: number }>()
     for (const e of entries) {
-      const cur = byJob.get(e.job_id) ?? { qty: 0, piece: 0, count: 0 }
-      cur.qty += Number(e.quantity)
-      cur.piece += amountOf(e.job_id, Number(e.quantity))
-      cur.count += 1
-      byJob.set(e.job_id, cur)
+      // Each pay line lands on its own tier's job row, so an operator's
+      // entry also grows the station head's priced row for the same work.
+      for (const line of payLinesOf({ user_id: accountOf(e), job_id: e.job_id })) {
+        const cur = byJob.get(line.jobId) ?? { qty: 0, piece: 0, count: 0 }
+        cur.qty += Number(e.quantity)
+        cur.piece += amountOf(line.jobId, Number(e.quantity))
+        cur.count += 1
+        byJob.set(line.jobId, cur)
+      }
     }
     return [...byJob.entries()]
       .map(([jobId, a]) => ({ jobId, ...a }))
       .sort((a, b) => b.piece - a.piece)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, bestRate])
+  }, [entries, bestRate, payLinesOf])
 
   const totPiece = workerRows.reduce((s, r) => s + r.piece, 0)
   const totBasic = workerRows.reduce((s, r) => s + r.basic, 0)
