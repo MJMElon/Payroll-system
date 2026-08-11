@@ -26,10 +26,13 @@ import Select from '../../components/Select'
 import { useAuth } from '../../context/AuthContext'
 import { useOverlayClose } from '../../lib/useOverlayClose'
 import { useWideShell } from '../../lib/useWideShell'
-import { effectiveCapabilities, tagClass } from '../../lib/tags'
+import { canViewTier, effectiveCapabilities, tagClass } from '../../lib/tags'
 import {
   profileName,
   supabase,
+  hourLadder,
+  ladderAmount,
+  ladderBreakdownFrom,
   todayISO,
   type Grade,
   type Job,
@@ -40,7 +43,6 @@ import {
   type Station,
 } from '../../lib/supabase'
 
-const TIER1_UNIT_CAP = 4 // tiered hourly rates: tier-1 price covers the first 4 units
 
 const DAY_START_HOUR = 7 // the mill day runs 07:00 → 07:00, same as the dashboard board
 
@@ -127,6 +129,13 @@ const EyeIcon = () => (
     <circle cx="12" cy="12" r="3" />
   </svg>
 )
+const PencilIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+  </svg>
+)
+
 const TrashIcon = () => (
   <svg {...iconProps}>
     <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
@@ -183,6 +192,7 @@ export default function Operation() {
   // inside the pop-out shows its new status without closing anything.
   const [detailKey, setDetailKey] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [editEntry, setEditEntry] = useState<ProductionEntry | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -207,12 +217,12 @@ export default function Operation() {
   useEffect(() => {
     async function load() {
       const [s, g, j, r, p] = await Promise.all([
-        supabase.from('stations').select('*').order('sort_order'),
-        supabase.from('grades').select('*').order('sort_order'),
-        supabase.from('jobs').select('*'),
+        supabase.from('shared_stations').select('*').order('sort_order'),
+        supabase.from('shared_grades').select('*').order('sort_order'),
+        supabase.from('piece_rate_jobs').select('*'),
         supabase.from('piece_rates').select('*'),
         // grade_id rides along: it is the worker's tier tag in the table.
-        supabase.from('access_profiles').select('id, full_name, email, employee_code, grade_id'),
+        supabase.from('shared_profiles').select('id, full_name, email, employee_code, grade_id'),
       ])
       const err = s.error || g.error || j.error || r.error
       if (err) setError(err.message)
@@ -234,7 +244,7 @@ export default function Operation() {
 
   async function loadEntries() {
     let q = supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .gte('work_date', from)
       .lte('work_date', to)
@@ -255,7 +265,7 @@ export default function Operation() {
     const batches = await Promise.all(
       chunk(ids, 200).map((part) =>
         supabase
-          .from('photo_records')
+          .from('operation_photos')
           .select('id, station_id, photo_path, taken_at, entry_id')
           .in('entry_id', part),
       ),
@@ -283,6 +293,11 @@ export default function Operation() {
         : profile?.mobile_approval ?? null
   const canManage =
     profile?.role === 'admin' || profile?.role === 'manager' || myGrade?.sort_order === 1
+  // Adding and deleting follow their own ticks from the tag editor (Work
+  // entry setting: Add New / Delete); managers and tier 1 hold every tick.
+  const canAddEntry = canManage || myCaps.includes('data-entry')
+  const canEditEntry = canManage || myCaps.includes('edit-entry')
+  const canDeleteEntry = canManage || myCaps.includes('delete-entry')
 
   const bestRate = useMemo(() => {
     const today = todayISO()
@@ -297,8 +312,7 @@ export default function Operation() {
   const amountFor = (jobId: string, qty: number) => {
     const r = bestRate.get(jobId)
     if (!r) return 0
-    if (r.tier2_rate == null) return r.rate * qty
-    return Math.min(qty, TIER1_UNIT_CAP) * r.rate + Math.max(0, qty - TIER1_UNIT_CAP) * r.tier2_rate
+    return ladderAmount(r, qty)
   }
 
   const jobOf = (id: string) => jobs.find((j) => j.id === id) ?? null
@@ -369,7 +383,17 @@ export default function Operation() {
     const hay = `${personName(e)} ${jobName(e.job_id)} ${stationName(e.station_id)}`.toLowerCase()
     return hay.includes(needle)
   }
-  const inScope = entries.filter(matchesSearch)
+  /**
+   * Whose work records this account may read at all, set per tier tag under
+   * Settings → Tier Tag Access Manage → Operation Module ("View work record
+   * of"). A tag nobody has set falls back to its own rank and every rank
+   * below. A record by somebody with no tier tag belongs to no rung and is
+   * open to everyone, the same as untagged work everywhere else.
+   */
+  const inReach = (e: ProductionEntry) =>
+    canViewTier(myGrade, grades, 'entry', personOf(e)?.grade_id ?? null)
+
+  const inScope = entries.filter(matchesSearch).filter(inReach)
   const visible = inScope.filter(inTab)
 
   /** Fold entries into one row per worker + job + day, submissions kept in
@@ -428,14 +452,21 @@ export default function Operation() {
   const RateBreak = ({ g }: { g: WorkGroup }) => {
     const r = bestRate.get(g.jobId)
     if (!r) return <span className="muted">—</span>
-    if (r.tier2_rate == null) return <>{Number(r.rate).toFixed(2)}</>
-    const t1 = g.entries.reduce((n, e) => n + Math.min(e.quantity, TIER1_UNIT_CAP), 0)
-    const t2 = g.entries.reduce((n, e) => n + Math.max(0, e.quantity - TIER1_UNIT_CAP), 0)
-    if (t2 === 0) return <>{Number(r.rate).toFixed(2)}</>
+    if (r.tier2_rate == null && (r.hour_rates?.length ?? 0) < 2) return <>{Number(r.rate).toFixed(2)}</>
+    // Each entry climbs the ladder on its own; merge equal-rate lines.
+    const merged = new Map<number, number>()
+    for (const e of g.entries) {
+      for (const step of ladderBreakdownFrom(hourLadder(r), e.quantity)) {
+        merged.set(step.rate, (merged.get(step.rate) ?? 0) + step.units)
+      }
+    }
+    const lines = [...merged.entries()]
+    if (lines.length === 1) return <>{lines[0][0].toFixed(2)}</>
     return (
       <span className="op-rate-break">
-        <span>{t1} × {Number(r.rate).toFixed(2)}</span>
-        <span>{t2} × {Number(r.tier2_rate).toFixed(2)}</span>
+        {lines.map(([lineRate, units]) => (
+          <span key={lineRate}>{Number.isInteger(units) ? units : units.toFixed(1)} × {lineRate.toFixed(2)}</span>
+        ))}
       </span>
     )
   }
@@ -459,7 +490,7 @@ export default function Operation() {
     setBusy(e.id)
     setError(null)
     const { error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .update(stampFor(next, reason))
       .eq('id', e.id)
     setBusy(null)
@@ -473,7 +504,7 @@ export default function Operation() {
     setBusy('bulk')
     setError(null)
     const { error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .update(stampFor(next))
       .in('id', list.map((e) => e.id))
     setBusy(null)
@@ -495,7 +526,7 @@ export default function Operation() {
     setBusy(g.key)
     setError(null)
     const { error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .delete()
       .in('id', g.entries.map((e) => e.id))
     setBusy(null)
@@ -571,7 +602,7 @@ export default function Operation() {
             const first = g.entries[0]
             const tier = tierOf(first)
             const s = groupStatus(g)
-            const canDrop = g.entries.every(canModify)
+            const canDrop = canDeleteEntry && g.entries.every(canModify)
             return (
               <tr key={g.key}>
                 <td className="nowrap muted small">
@@ -606,6 +637,19 @@ export default function Operation() {
                     >
                       <EyeIcon />
                     </button>
+                    {canEditEntry && g.entries.every(canModify) && (
+                      <button
+                        className="icon-btn sm"
+                        title={g.entries.length > 1 ? 'Open to edit one of these entries' : 'Edit this work record'}
+                        aria-label={`Edit ${personName(first)} ${jobName(g.jobId)}`}
+                        disabled={busy === g.key}
+                        onClick={() =>
+                          g.entries.length === 1 ? setEditEntry(g.entries[0]) : setDetailKey(g.key)
+                        }
+                      >
+                        <PencilIcon />
+                      </button>
+                    )}
                     {canDrop && (
                       <button
                         className="icon-btn sm danger"
@@ -754,7 +798,7 @@ export default function Operation() {
 
             {/* Adding work lives under the first tab — a new entry lands
                 there, waiting to be verified. */}
-            {tab === 'open' && (
+            {tab === 'open' && canAddEntry && (
               <div className="row-form op-tabbar" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn" onClick={() => setShowAdd(true)}>
                   + Add Job Record
@@ -843,6 +887,31 @@ export default function Operation() {
           badge={badge}
           onAct={act}
           onActMany={actMany}
+          canEditFor={(e) => canEditEntry && canModify(e)}
+          onEdit={(e) => {
+            setDetailKey(null)
+            setEditEntry(e)
+          }}
+        />
+      )}
+
+      {editEntry && (
+        <AddRecordModal
+          stations={stations}
+          jobs={jobs}
+          people={people}
+          bestRate={bestRate}
+          amountFor={amountFor}
+          lockedPeriods={lockedPeriods}
+          presetStationId={editEntry.station_id}
+          myId={profile?.id ?? null}
+          entry={editEntry}
+          onClose={() => setEditEntry(null)}
+          onSaved={() => {
+            setEditEntry(null)
+            setNotice('Entry updated — it goes through verify and approve again.')
+            loadEntries()
+          }}
         />
       )}
     </div>
@@ -873,6 +942,8 @@ function GroupModal({
   badge,
   onAct,
   onActMany,
+  canEditFor,
+  onEdit,
 }: {
   group: WorkGroup
   onClose: () => void
@@ -890,6 +961,8 @@ function GroupModal({
   badge: (s: string) => JSX.Element
   onAct: (e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') => void
   onActMany: (list: ProductionEntry[], next: 'verified' | 'approved') => void
+  canEditFor: (e: ProductionEntry) => boolean
+  onEdit: (e: ProductionEntry) => void
 }) {
   const overlay = useOverlayClose(onClose)
   // A clicked photo floats over the record instead of leaving for a tab,
@@ -925,9 +998,15 @@ function GroupModal({
   const timeOf = (e: ProductionEntry) =>
     new Date(e.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
 
-  // What the day's count is worth, price line by price line.
-  const t1Units = group.entries.reduce((n, e) => n + Math.min(e.quantity, TIER1_UNIT_CAP), 0)
-  const t2Units = group.entries.reduce((n, e) => n + Math.max(0, e.quantity - TIER1_UNIT_CAP), 0)
+  // What the day's count is worth, price line by price line — each entry
+  // climbs the rate's ladder on its own; equal-rate lines are merged.
+  const dayMerged = new Map<number, number>()
+  for (const e of group.entries) {
+    for (const step of ladderBreakdownFrom(hourLadder(rate), e.quantity)) {
+      dayMerged.set(step.rate, (dayMerged.get(step.rate) ?? 0) + step.units)
+    }
+  }
+  const dayLines = [...dayMerged.entries()]
 
   return (
     <div className="modal-overlay" {...overlay}>
@@ -1025,6 +1104,16 @@ function GroupModal({
                             )}
                           </td>
                           <td className="right nowrap op-tl-actions">
+                            {canEditFor(e) && (
+                              <button
+                                className="linkbtn"
+                                disabled={busy === e.id}
+                                title="Edit this entry"
+                                onClick={() => onEdit(e)}
+                              >
+                                ✎ Edit
+                              </button>
+                            )}
                             {step === 'verified' && (
                               <button className="linkbtn" disabled={busy === e.id} onClick={() => onAct(e, 'verified')}>
                                 ✓ Verify
@@ -1094,18 +1183,14 @@ function GroupModal({
                     </tr>
                   ) : (
                     <>
-                      <tr>
-                        <td>1st–4th unit of the hour</td>
-                        <td className="right">{t1Units}</td>
-                        <td className="right">{Number(rate.rate).toFixed(2)}</td>
-                        <td className="right">{(t1Units * Number(rate.rate)).toFixed(2)}</td>
-                      </tr>
-                      <tr>
-                        <td>5th unit onward</td>
-                        <td className="right">{t2Units}</td>
-                        <td className="right">{Number(rate.tier2_rate).toFixed(2)}</td>
-                        <td className="right">{(t2Units * Number(rate.tier2_rate)).toFixed(2)}</td>
-                      </tr>
+                      {dayLines.map(([lineRate, units], i) => (
+                        <tr key={i}>
+                          <td>{i === 0 ? 'First units of each hour' : 'Units further up the ladder'}</td>
+                          <td className="right">{units}</td>
+                          <td className="right">{lineRate.toFixed(2)}</td>
+                          <td className="right">{(units * lineRate).toFixed(2)}</td>
+                        </tr>
+                      ))}
                     </>
                   )}
                   <tr className="total-row">
@@ -1167,6 +1252,7 @@ function AddRecordModal({
   lockedPeriods,
   presetStationId,
   myId,
+  entry = null,
   onClose,
   onSaved,
 }: {
@@ -1178,15 +1264,18 @@ function AddRecordModal({
   lockedPeriods: { period_start: string; period_end: string }[]
   presetStationId: string | null
   myId: string | null
+  /** An existing entry turns the window into its editor: same fields,
+   *  prefilled, and saving resubmits it through verify and approve. */
+  entry?: ProductionEntry | null
   onClose: () => void
   onSaved: () => void
 }) {
   const overlay = useOverlayClose(onClose)
-  const [workDate, setWorkDate] = useState(todayISO())
-  const [stationId, setStationId] = useState(presetStationId ?? '')
-  const [jobId, setJobId] = useState('')
-  const [employeeId, setEmployeeId] = useState('')
-  const [quantity, setQuantity] = useState('')
+  const [workDate, setWorkDate] = useState(entry?.work_date ?? todayISO())
+  const [stationId, setStationId] = useState(entry?.station_id ?? presetStationId ?? '')
+  const [jobId, setJobId] = useState(entry?.job_id ?? '')
+  const [employeeId, setEmployeeId] = useState(entry?.user_id ?? '')
+  const [quantity, setQuantity] = useState(entry ? String(Number(entry.quantity)) : '')
   const [photo, setPhoto] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -1207,8 +1296,7 @@ function AddRecordModal({
 
   const qty = Number(quantity) || 0
   const amount = jobId ? amountFor(jobId, qty) : 0
-  const t1 = Math.min(qty, TIER1_UNIT_CAP)
-  const t2 = Math.max(0, qty - TIER1_UNIT_CAP)
+  const qtyLines = rate ? ladderBreakdownFrom(hourLadder(rate), qty) : []
 
   function pickPhoto(ev: ChangeEvent<HTMLInputElement>) {
     const file = ev.target.files?.[0]
@@ -1235,22 +1323,51 @@ function AddRecordModal({
     if (qty > 200 && !window.confirm(`Work done ${qty} looks unusually large. Save anyway?`)) return
     setSaving(true)
     try {
-      const { data, error: insErr } = await supabase
-        .from('production_entries')
-        .insert({
-          work_date: workDate,
-          station_id: stationId,
-          job_id: jobId,
-          user_id: employeeId,
-          quantity: qty,
-          created_by: myId,
-          // Desktop entries join the same verify -> approve queue as
-          // mobile ones.
-          approval_status: 'pending',
-        })
-        .select()
-        .single()
-      if (insErr) throw new Error(insErr.message)
+      let data: { id: string } | null = null
+      if (entry) {
+        // A fixed entry goes back through the queue — otherwise editing
+        // an approved number would smuggle it past verify and approve.
+        const { data: rows, error: updErr } = await supabase
+          .from('operation_entries')
+          .update({
+            work_date: workDate,
+            station_id: stationId,
+            job_id: jobId,
+            user_id: employeeId,
+            quantity: qty,
+            approval_status: 'pending',
+            verified_by: null,
+            verified_at: null,
+            approved_by: null,
+            approved_at: null,
+          } as never)
+          .eq('id', entry.id)
+          .select('id')
+        if (updErr) throw new Error(updErr.message)
+        // Row security refuses silently: success with zero rows.
+        if (!rows || rows.length === 0) {
+          throw new Error('The database would not let you edit this entry.')
+        }
+        data = rows[0]
+      } else {
+        const { data: made, error: insErr } = await supabase
+          .from('operation_entries')
+          .insert({
+            work_date: workDate,
+            station_id: stationId,
+            job_id: jobId,
+            user_id: employeeId,
+            quantity: qty,
+            created_by: myId,
+            // Desktop entries join the same verify -> approve queue as
+            // mobile ones.
+            approval_status: 'pending',
+          })
+          .select()
+          .single()
+        if (insErr) throw new Error(insErr.message)
+        data = made
+      }
 
       if (photo && data) {
         const isImage = photo.type.startsWith('image/')
@@ -1263,7 +1380,7 @@ function AddRecordModal({
           .upload(path, body, { contentType: photo.type || 'image/jpeg' })
         if (upErr) throw new Error(`Record saved, but the attachment failed to upload: ${upErr.message}`)
         const { error: prErr } = await supabase
-          .from('photo_records')
+          .from('operation_photos')
           .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
         if (prErr) throw new Error(`Record saved, but the attachment couldn't be linked: ${prErr.message}`)
       }
@@ -1279,7 +1396,7 @@ function AddRecordModal({
     <div className="modal-overlay" {...overlay}>
       <form className="modal modal-view" onSubmit={save}>
         <div className="row-form spread">
-          <h2>Add Job Record</h2>
+          <h2>{entry ? 'Edit Job Record' : 'Add Job Record'}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
@@ -1371,18 +1488,14 @@ function AddRecordModal({
                     </tr>
                   ) : (
                     <>
-                      <tr>
-                        <td>1st–4th unit of the hour</td>
-                        <td className="right">{t1}</td>
-                        <td className="right">{Number(rate.rate).toFixed(2)}</td>
-                        <td className="right">{(t1 * Number(rate.rate)).toFixed(2)}</td>
-                      </tr>
-                      <tr>
-                        <td>5th unit onward</td>
-                        <td className="right">{t2}</td>
-                        <td className="right">{Number(rate.tier2_rate).toFixed(2)}</td>
-                        <td className="right">{(t2 * Number(rate.tier2_rate)).toFixed(2)}</td>
-                      </tr>
+                      {qtyLines.map((step, i) => (
+                        <tr key={i}>
+                          <td>{i === 0 ? 'First units of the hour' : 'Units further up the ladder'}</td>
+                          <td className="right">{step.units}</td>
+                          <td className="right">{step.rate.toFixed(2)}</td>
+                          <td className="right">{(step.units * step.rate).toFixed(2)}</td>
+                        </tr>
+                      ))}
                     </>
                   )}
                   <tr className="total-row">

@@ -108,6 +108,21 @@ export interface Station {
   hourly_count?: boolean
   hourly_target?: number
   hourly_min_prev?: number
+  // Preset coordinate (Settings → Station tags) that clock in/out stamps
+  // are checked against. geofence_m is the allowed distance in metres.
+  latitude?: number | null
+  longitude?: number | null
+  geofence_m?: number | null
+  // Targets, and the "Show on Add new work record" ticks that decide
+  // which target dashboards the mobile record screen draws. The hourly
+  // number reuses hourly_target above.
+  monthly_target?: number | null
+  show_hourly_target?: boolean
+  show_monthly_target?: boolean
+  // How many work records a day this station aims for — the run of ticks
+  // on the mobile Record tab. Null means no target is set, and the card
+  // simply counts what has been recorded.
+  daily_target?: number | null
 }
 
 export interface PhotoRecord {
@@ -140,6 +155,11 @@ export interface Grade {
   // Null on a tag saved before the setting existed — read it through
   // effectiveEntitlements(), which fills in the old name-based answer.
   entitlements?: string[] | null
+  // Whose piece rate contracts / work records this tier may view, as grade
+  // ids. Null on a tag saved before the setting existed — read them through
+  // viewableTierIds(), which fills in the old own-rank-and-below answer.
+  view_rate_tiers?: string[] | null
+  view_entry_tiers?: string[] | null
 }
 
 export interface Job {
@@ -157,6 +177,9 @@ export interface Job {
   // payroll, never submitted as a job record. Optional: absent until the
   // column migration has run, and older queries don't select it.
   record_job?: boolean | null
+  // Ticked (default): this work is counted on the mobile Mill output
+  // dashboard. Optional: absent until the column migration has run.
+  show_on_mill?: boolean | null
 }
 
 export interface PieceRate {
@@ -164,10 +187,91 @@ export interface PieceRate {
   job_id: string
   rate: number
   effective_from: string
-  // Tiered hourly rate (e.g. cage-tipping): tier1 = `rate`, applied to the
-  // first 4 units that hour; tier2_rate applies to the 5th unit onward,
-  // resetting every hour. Null/undefined means a flat rate — no tiering.
+  // Tiered hourly rate (e.g. cage-tipping): `rate` pays each of the first
+  // N records of an hour, tier2_rate each record after that — both PER
+  // RECORD in the job's own unit; the hour only resets the count.
+  // Null/undefined means a flat rate — no tiering.
   tier2_rate?: number | null
+  // N above — how many records of each hour pay the first rate. Stored per
+  // rate so one station can tier at 4 and another at 6. Null (or a legacy
+  // database without the column) means the original 4 — read it through
+  // tier1Cap(), never directly.
+  tier_threshold?: number | null
+  // The full price ladder: element i pays the (i+1)th record of the hour,
+  // the last element every record after. Authoritative when present; the
+  // legacy fields above are kept in sync for older readers. Read it
+  // through hourLadder(), never directly.
+  hour_rates?: number[] | null
+}
+
+/** How many records of each hour pay a tiered rate's first tier. */
+export function tier1Cap(r: { tier_threshold?: number | null } | null | undefined): number {
+  const n = r?.tier_threshold
+  return n && n > 0 ? n : 4
+}
+
+type LadderSource = {
+  rate?: number | string
+  tier2_rate?: number | string | null
+  tier_threshold?: number | null
+  hour_rates?: (number | string)[] | null
+} | null | undefined
+
+/**
+ * A tiered rate as its PRICE LADDER: element i is what the (i+1)th record
+ * of the hour pays, and the LAST element extends to every record after it.
+ * Reads hour_rates when the row carries it, else rebuilds the ladder from
+ * the legacy two-step fields (rate × threshold, then tier2). A flat rate
+ * is a one-rung ladder.
+ */
+export function hourLadder(r: LadderSource): number[] {
+  const arr = r?.hour_rates
+  if (Array.isArray(arr) && arr.length > 0) return arr.map(Number)
+  const first = Number(r?.rate ?? 0)
+  if (r?.tier2_rate == null) return [first]
+  const cap = tier1Cap(r)
+  return [...Array<number>(cap).fill(first), Number(r.tier2_rate)]
+}
+
+/** The ladder folded into steps: 1st–4th @ a, 5th+ @ b (to=null = open). */
+export function ladderStepsFrom(L: number[]): { from: number; to: number | null; rate: number }[] {
+  const steps: { from: number; to: number | null; rate: number }[] = []
+  for (let i = 0; i < L.length; i++) {
+    const last = steps[steps.length - 1]
+    if (last && last.rate === L[i]) last.to = i + 1
+    else steps.push({ from: i + 1, to: i + 1, rate: L[i] })
+  }
+  if (steps.length > 0) steps[steps.length - 1].to = null
+  return steps
+}
+
+export function ladderSteps(r: LadderSource) {
+  return ladderStepsFrom(hourLadder(r))
+}
+
+/** How a quantity splits across the ladder: units paid at each rate, in
+ *  order. Fractional quantities land in the rung they reach. */
+export function ladderBreakdownFrom(L: number[], qty: number): { rate: number; units: number }[] {
+  const out: { rate: number; units: number }[] = []
+  const push = (rate: number, units: number) => {
+    const last = out[out.length - 1]
+    if (last && last.rate === rate) last.units += units
+    else out.push({ rate, units })
+  }
+  let used = 0
+  for (let i = 0; i < L.length - 1 && used < qty; i++) {
+    const take = Math.min(1, qty - used)
+    push(L[i], take)
+    used += take
+  }
+  if (used < qty) push(L[L.length - 1], qty - used)
+  return out
+}
+
+/** What a quantity earns on a rate's ladder — THE pay formula for every
+ *  screen and every payroll calculation. */
+export function ladderAmount(r: LadderSource, qty: number): number {
+  return ladderBreakdownFrom(hourLadder(r), qty).reduce((n, s) => n + s.rate * s.units, 0)
 }
 
 export interface ProductionEntry {
@@ -189,6 +293,9 @@ export interface ProductionEntry {
   approved_by?: string | null
   approved_at?: string | null
   rejected_reason?: string | null
+  // Who sent it back, by email — the same shape as verified_by /
+  // approved_by, so "work I sent back" is answerable.
+  rejected_by?: string | null
 }
 
 export interface PayrollRun {

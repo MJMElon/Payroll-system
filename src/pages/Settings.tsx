@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase, type Grade, type Station } from '../lib/supabase'
+import { DEFAULT_GEOFENCE_M } from '../lib/geo'
 import {
   ALL_CAPABILITIES,
   ALL_ENTITLEMENTS,
@@ -13,6 +14,8 @@ import {
   MANAGEMENT_ONLY_GROUPS,
   MODULE_GROUP,
   MODULE_OPTIONS,
+  MODULE_VIEW,
+  VIEW_SCOPES,
   canGiveTier,
   defaultEntitlements,
   effectiveEntitlements,
@@ -22,6 +25,8 @@ import {
   stationTierOf,
   sortCapabilities,
   tagClass,
+  viewableTierIds,
+  type ViewScope,
 } from '../lib/tags'
 import { useOverlayClose } from '../lib/useOverlayClose'
 import { useWideShell } from '../lib/useWideShell'
@@ -121,6 +126,12 @@ const TrashIcon = () => (
     <path d="M10 11v6M14 11v6" />
   </svg>
 )
+const PinIcon = () => (
+  <svg {...iconProps}>
+    <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0Z" />
+    <circle cx="12" cy="10" r="3" />
+  </svg>
+)
 
 export default function Settings() {
   const { profile } = useAuth()
@@ -178,14 +189,20 @@ function TagsTab() {
   // pop-out: this is the row being edited, and the name being typed.
   const [editStationId, setEditStationId] = useState<string | null>(null)
   const [stationDraft, setStationDraft] = useState('')
+// The station whose preset coordinate is being set (the pin action).
+  const [coordStation, setCoordStation] = useState<Station | null>(null)
+  // How many work records a day this station is aiming for. It is what
+  // the mobile Record tab ticks off, so it lives with the station rather
+  // than being guessed at per tier.
+  const [targetDraft, setTargetDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   async function load() {
     const [g, st, j] = await Promise.all([
-      supabase.from('grades').select('*').order('sort_order'),
-      supabase.from('stations').select('*').order('sort_order'),
-      supabase.from('jobs').select('id, name, station_id, active').order('name'),
+      supabase.from('shared_grades').select('*').order('sort_order'),
+      supabase.from('shared_stations').select('*').order('sort_order'),
+      supabase.from('piece_rate_jobs').select('id, name, station_id, active').order('name'),
     ])
     const err = g.error || st.error
     if (err) setError(err.message)
@@ -246,7 +263,7 @@ function TagsTab() {
       list.map((g, i) =>
         g.sort_order === i + 1
           ? null
-          : supabase.from('grades').update({ sort_order: i + 1 }).eq('id', g.id),
+          : supabase.from('shared_grades').update({ sort_order: i + 1 }).eq('id', g.id),
       ),
     )
     return results.find((r) => r?.error)?.error ?? null
@@ -254,7 +271,7 @@ function TagsTab() {
 
   async function removeTag(g: Grade) {
     if (!window.confirm(`Delete tier tag "${g.name}"?`)) return
-    const { error } = await supabase.from('grades').delete().eq('id', g.id)
+    const { error } = await supabase.from('shared_grades').delete().eq('id', g.id)
     if (error) return setError(deleteError(error, `Tier tag "${g.name}"`))
     // Closing the gap the delete left: tier 4 of 7 going means 5, 6, 7
     // move up, not that the list runs 1, 2, 3, 5, 6, 7.
@@ -271,7 +288,7 @@ function TagsTab() {
     }
     const sort = Math.max(0, ...stations.map((x) => x.sort_order)) + 1
     const { error } = await supabase
-      .from('stations')
+      .from('shared_stations')
       .insert({ name: stationName.trim(), sort_order: sort })
     if (error) return setError(saveError(error, 'station tag', stationName))
     setStationName('')
@@ -290,7 +307,7 @@ function TagsTab() {
     setDragStation(null)
     setStations(next.map((x, i) => ({ ...x, sort_order: i + 1 })))
     const results = await Promise.all(
-      next.map((x, i) => supabase.from('stations').update({ sort_order: i + 1 }).eq('id', x.id)),
+      next.map((x, i) => supabase.from('shared_stations').update({ sort_order: i + 1 }).eq('id', x.id)),
     )
     const err = results.find((r) => r.error)
     if (err?.error) setError(err.error.message)
@@ -315,24 +332,40 @@ function TagsTab() {
     setAddingStation(false)
     setEditStationId(st.id)
     setStationDraft(st.name)
+    setTargetDraft(st.daily_target == null ? '' : String(st.daily_target))
   }
 
   function cancelStationEdit() {
     setEditStationId(null)
     setStationDraft('')
+    setTargetDraft('')
     setError(null)
   }
 
-  async function saveStationName() {
+  async function saveStation() {
     const st = stations.find((x) => x.id === editStationId)
     if (!st) return
     const next = stationDraft.trim()
     if (next === '') return setError('A station tag needs a name.')
-    if (next === st.name) return cancelStationEdit()
     if (stations.some((x) => x.id !== st.id && sameName(x.name, next))) {
       return setError(`A station tag called "${next}" already exists.`)
     }
-    const { error } = await supabase.from('stations').update({ name: next }).eq('id', st.id)
+    // Blank is a real answer — it means no target, and the mobile Record
+    // tab simply counts instead of ticking towards anything.
+    const raw = targetDraft.trim()
+    let target: number | null = null
+    if (raw !== '') {
+      const n = Number(raw)
+      if (!Number.isInteger(n) || n <= 0) {
+        return setError('Daily target must be a whole number above zero, or blank for none.')
+      }
+      target = n
+    }
+    if (next === st.name && target === (st.daily_target ?? null)) return cancelStationEdit()
+    const { error } = await supabase
+      .from('shared_stations')
+      .update({ name: next, daily_target: target })
+      .eq('id', st.id)
     if (error) return setError(saveError(error, 'station tag', next))
     cancelStationEdit()
     load()
@@ -354,7 +387,7 @@ function TagsTab() {
       )
     }
     if (!window.confirm(`Delete station tag "${st.name}"?`)) return
-    const { error } = await supabase.from('stations').delete().eq('id', st.id)
+    const { error } = await supabase.from('shared_stations').delete().eq('id', st.id)
     if (error) return setError(deleteError(error, `Station "${st.name}"`))
     setError(null)
     load()
@@ -474,12 +507,14 @@ function TagsTab() {
               {canManageStations && <th></th>}
               <th>#</th>
               <th>Station</th>
+<th>Coordinate</th>
+              <th className="right">Daily target</th>
               <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {stations.length === 0 && !addingStation && (
-              <tr><td colSpan={4} className="muted">No station tags yet.</td></tr>
+              <tr><td colSpan={6} className="muted">No station tags yet.</td></tr>
             )}
             {stations.map((st, i) => {
               const editing = editStationId === st.id
@@ -511,12 +546,36 @@ function TagsTab() {
                         className="row-input"
                         value={stationDraft}
                         onChange={(e) => setStationDraft(e.target.value)}
-                        onKeyDown={(e) => rowKeys(e, saveStationName, cancelStationEdit)}
+                        onKeyDown={(e) => rowKeys(e, saveStation, cancelStationEdit)}
                         aria-label="Station name"
                         autoFocus
                       />
                     ) : (
                       st.name
+                    )}
+                  </td>
+                  <td className="muted">
+                    {st.latitude != null && st.longitude != null
+                      ? `${st.latitude.toFixed(5)}, ${st.longitude.toFixed(5)} · ±${st.geofence_m ?? DEFAULT_GEOFENCE_M} m`
+                      : '—'}
+                  </td>
+                  <td className="right">
+                    {editing ? (
+                      <input
+                        className="row-input right"
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="none"
+                        value={targetDraft}
+                        onChange={(e) => setTargetDraft(e.target.value)}
+                        onKeyDown={(e) => rowKeys(e, saveStation, cancelStationEdit)}
+                        aria-label={`Daily work target for ${st.name}`}
+                      />
+                    ) : (
+                      <span className={st.daily_target == null ? 'muted' : ''}>
+                        {st.daily_target ?? '—'}
+                      </span>
                     )}
                   </td>
                   <td className="right">
@@ -526,13 +585,21 @@ function TagsTab() {
                           <button className="btn ghost row-btn" onClick={cancelStationEdit}>
                             Cancel
                           </button>
-                          <button className="btn row-btn" onClick={saveStationName}>
+                          <button className="btn row-btn" onClick={saveStation}>
                             Save
                           </button>
                         </>
                       ) : (
                         canManageStations && (
                           <>
+                            <button
+                              className="icon-btn sm"
+                              title="Station setting — coordinate & targets"
+                              aria-label={`Station setting for ${st.name}`}
+                              onClick={() => setCoordStation(st)}
+                            >
+                              <PinIcon />
+                            </button>
                             <button
                               className="icon-btn sm"
                               title="Edit station"
@@ -574,6 +641,10 @@ function TagsTab() {
                     autoFocus
                   />
                 </td>
+                <td className="muted">—</td>
+                {/* The target is set once the station exists — a name is
+                    the only thing needed to create one. */}
+                <td className="right muted">—</td>
                 <td className="right">
                   <span className="row-actions">
                     <button className="btn ghost row-btn" onClick={cancelAddStation}>
@@ -614,6 +685,226 @@ function TagsTab() {
           }}
         />
       )}
+
+      {coordStation && (
+        <StationCoordModal
+          station={coordStation}
+          onClose={() => setCoordStation(null)}
+          onSaved={() => {
+            setCoordStation(null)
+            load()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * One station's own settings: the preset coordinate every clock in / out
+ * stamp is checked against ("Use my current location" fills it from the
+ * device standing at the station), and the two targets with their "Show
+ * on Add new work record" ticks.
+ */
+function StationCoordModal({
+  station,
+  onClose,
+  onSaved,
+}: {
+  station: Station
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [lat, setLat] = useState(station.latitude != null ? String(station.latitude) : '')
+  const [lng, setLng] = useState(station.longitude != null ? String(station.longitude) : '')
+  const [fence, setFence] = useState(station.geofence_m != null ? String(station.geofence_m) : '')
+  // The "Show on Add new work record" block: two targets, each with its
+  // own tick deciding whether its dashboard is drawn on the record screen.
+  const [showHourly, setShowHourly] = useState(station.show_hourly_target === true)
+  const [hourTarget, setHourTarget] = useState(
+    station.hourly_target != null ? String(station.hourly_target) : '',
+  )
+  const [showMonthly, setShowMonthly] = useState(station.show_monthly_target === true)
+  const [monthTarget, setMonthTarget] = useState(
+    station.monthly_target != null ? String(station.monthly_target) : '',
+  )
+  const [locating, setLocating] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const overlayProps = useOverlayClose(onClose)
+
+  function useMyLocation() {
+    if (!navigator.geolocation) return setError('This browser has no location service.')
+    setLocating(true)
+    setError(null)
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        setLat(p.coords.latitude.toFixed(6))
+        setLng(p.coords.longitude.toFixed(6))
+        setLocating(false)
+      },
+      () => {
+        setLocating(false)
+        setError('Location unavailable — allow location access and try again.')
+      },
+      { enableHighAccuracy: true, timeout: 10_000 },
+    )
+  }
+
+  async function save() {
+    setError(null)
+    const clearing = lat.trim() === '' && lng.trim() === ''
+    const la = Number(lat)
+    const ln = Number(lng)
+    if (!clearing) {
+      if (lat.trim() === '' || lng.trim() === '' || !Number.isFinite(la) || !Number.isFinite(ln)) {
+        return setError('A coordinate needs both numbers — or clear both to remove the preset.')
+      }
+      if (la < -90 || la > 90 || ln < -180 || ln > 180) {
+        return setError('Latitude runs -90 to 90 and longitude -180 to 180.')
+      }
+    }
+    const f = fence.trim() === '' ? null : Math.round(Number(fence))
+    if (f != null && (!Number.isFinite(f) || f <= 0)) {
+      return setError('The allowed distance must be a positive number of metres.')
+    }
+    const hr = hourTarget.trim() === '' ? null : Math.round(Number(hourTarget))
+    if (hr != null && (!Number.isFinite(hr) || hr <= 0)) {
+      return setError('The target per hour must be a positive number.')
+    }
+    if (showHourly && hr == null) {
+      return setError('Ticking "Target per hour" needs the hourly number filled in.')
+    }
+    const mo = monthTarget.trim() === '' ? null : Math.round(Number(monthTarget))
+    if (mo != null && (!Number.isFinite(mo) || mo <= 0)) {
+      return setError('The target per month must be a positive number.')
+    }
+    if (showMonthly && mo == null) {
+      return setError('Ticking "Target per month" needs the monthly number filled in.')
+    }
+    setSaving(true)
+    const { data, error: err } = await supabase
+      .from('shared_stations')
+      .update({
+        latitude: clearing ? null : la,
+        longitude: clearing ? null : ln,
+        geofence_m: clearing ? null : f,
+        hourly_target: hr,
+        monthly_target: mo,
+        show_hourly_target: showHourly,
+        show_monthly_target: showMonthly,
+      })
+      .eq('id', station.id)
+      .select('id')
+    setSaving(false)
+    if (err) {
+      return setError(
+        /latitude|longitude|geofence_m|monthly_target|show_hourly_target|show_monthly_target/.test(err.message)
+          ? 'The database is missing the new station columns — run the latest supabase/setup.sql.'
+          : err.message,
+      )
+    }
+    if (!data || data.length === 0) return setError('The database would not let you set this.')
+    onSaved()
+  }
+
+  return (
+    <div className="modal-backdrop" {...overlayProps}>
+      <div className="modal">
+        <div className="modal-head">
+          <h2>Station setting — {station.name}</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        {error && <div className="error">{error}</div>}
+
+        <h3 style={{ marginTop: '0.4rem' }}>Coordinate</h3>
+        <p className="muted small">
+          Clock in and clock out locations are checked against this point. Leave both
+          fields empty to remove the preset — with no preset, stamps are not checked.
+        </p>
+        <div className="form-grid">
+          <label>
+            Latitude
+            <input value={lat} onChange={(e) => setLat(e.target.value)} placeholder="e.g. 3.139003" inputMode="decimal" />
+          </label>
+          <label>
+            Longitude
+            <input value={lng} onChange={(e) => setLng(e.target.value)} placeholder="e.g. 101.686855" inputMode="decimal" />
+          </label>
+          <label>
+            Allowed distance (m)
+            <input
+              value={fence}
+              onChange={(e) => setFence(e.target.value)}
+              placeholder={`${DEFAULT_GEOFENCE_M} if empty`}
+              inputMode="numeric"
+            />
+          </label>
+        </div>
+        <button
+          className="btn ghost"
+          style={{ marginTop: '0.6rem' }}
+          onClick={useMyLocation}
+          disabled={locating}
+        >
+          {locating ? 'Finding…' : '📍 Use my current location'}
+        </button>
+
+        <h3 style={{ marginTop: '1.1rem' }}>Show on Add new work record</h3>
+        <p className="muted small">
+          Each tick draws that target's dashboard on the mobile Add-work-record screen
+          for this station.
+        </p>
+        <div className="stack" style={{ gap: '0.5rem' }}>
+          <div className="row-form" style={{ alignItems: 'center', gap: '0.6rem' }}>
+            <label className="checkbox" style={{ margin: 0, flex: '1' }}>
+              <input
+                type="checkbox"
+                checked={showHourly}
+                onChange={(e) => setShowHourly(e.target.checked)}
+              />
+              <span>Target per hour</span>
+            </label>
+            <input
+              className="row-input"
+              style={{ maxWidth: '7rem' }}
+              value={hourTarget}
+              onChange={(e) => setHourTarget(e.target.value)}
+              placeholder="e.g. 6"
+              inputMode="numeric"
+              aria-label="Target per hour"
+            />
+          </div>
+          <div className="row-form" style={{ alignItems: 'center', gap: '0.6rem' }}>
+            <label className="checkbox" style={{ margin: 0, flex: '1' }}>
+              <input
+                type="checkbox"
+                checked={showMonthly}
+                onChange={(e) => setShowMonthly(e.target.checked)}
+              />
+              <span>Target per month</span>
+            </label>
+            <input
+              className="row-input"
+              style={{ maxWidth: '7rem' }}
+              value={monthTarget}
+              onChange={(e) => setMonthTarget(e.target.value)}
+              placeholder="e.g. 900"
+              inputMode="numeric"
+              aria-label="Target per month"
+            />
+          </div>
+        </div>
+
+        <div className="row-form" style={{ marginTop: '1rem', justifyContent: 'flex-end', gap: '0.5rem' }}>
+          <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -627,16 +918,25 @@ function TagsTab() {
 function ModuleTable({
   modules,
   capabilities,
+  allGrades,
+  viewTiers,
   locked,
   onToggleModule,
   onToggleCapability,
+  onToggleViewTier,
 }: {
   modules: string[]
   capabilities: string[]
+  /** Every tier, so the view lists are drawn from the live tier list —
+   *  add or remove a tier and the ticks follow without a code change. */
+  allGrades: Grade[]
+  /** Tier ids this tag may view, per scope. */
+  viewTiers: Record<ViewScope, string[]>
   /** Read-only: the view face, and the Management tag which is fixed. */
   locked: boolean
   onToggleModule: (key: string) => void
   onToggleCapability: (key: string) => void
+  onToggleViewTier: (scope: ViewScope, gradeId: string) => void
 }) {
   return (
     <div className="module-table">
@@ -644,6 +944,10 @@ function ModuleTable({
         const on = modules.includes(m.key)
         const group = MODULE_GROUP[m.key]
         const inner = group ? CAPABILITY_OPTIONS.filter((c) => c.group === group) : []
+        // Piece Rate and Operation each carry a "whose work may this tier
+        // see" list, drawn under the module it governs.
+        const view = MODULE_VIEW[m.key]
+        const chosen = view ? viewTiers[view.scope] : []
         return (
           <div className={`module-row ${on ? 'on' : ''}`} key={m.key}>
             <label className="checkbox module-head">
@@ -671,6 +975,25 @@ function ModuleTable({
                       onChange={() => onToggleCapability(c.key)}
                     />{' '}
                     {c.label}
+                  </label>
+                ))}
+              </div>
+            )}
+            {on && view && (
+              <div className="module-caps">
+                <div className="module-subhead">
+                  {view.label}
+                  <span className="module-count">{chosen.length}/{allGrades.length}</span>
+                </div>
+                {allGrades.map((g) => (
+                  <label key={g.id} className="checkbox small" style={{ margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={chosen.includes(g.id)}
+                      disabled={locked}
+                      onChange={() => onToggleViewTier(view.scope, g.id)}
+                    />{' '}
+                    <span className={tagClass(g.color)}>{g.name}</span>
                   </label>
                 ))}
               </div>
@@ -767,9 +1090,9 @@ function TierPeople({
     // for anyone never hand-ordered. select('*') because chart_pos may
     // not exist yet on an older database.
     const [pd, st, tm] = await Promise.all([
-      supabase.from('access_profiles').select('*').eq('grade_id', grade.id),
-      supabase.from('stations').select('id, sort_order'),
-      supabase.from('teams').select('id, sort_order'),
+      supabase.from('shared_profiles').select('*').eq('grade_id', grade.id),
+      supabase.from('shared_stations').select('id, sort_order'),
+      supabase.from('shared_teams').select('id, sort_order'),
     ])
     const stationRank = (p: Person) => {
       const ids =
@@ -827,7 +1150,7 @@ function TierPeople({
         return
       }
       const { data } = await supabase
-        .from('access_profiles')
+        .from('shared_profiles')
         .select('id, full_name, email, grade_id')
         .or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%`)
         .order('email')
@@ -865,7 +1188,7 @@ function TierPeople({
     setBusy(true)
     setError(null)
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update({
         grade_id: grade.id,
         tags_confirmed: true,
@@ -1007,6 +1330,20 @@ function TagModal({
   const [capabilities, setCapabilities] = useState<string[]>(
     isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade?.capabilities ?? ['data-entry']),
   )
+  // Whose contracts / work records this tag may view. Drawn under the
+  // module each one governs, so the setting sits with what it governs.
+  const [viewTiers, setViewTiers] = useState<Record<ViewScope, string[]>>(() =>
+    Object.fromEntries(
+      VIEW_SCOPES.map((v) => [
+        v.scope,
+        grade
+          ? viewableTierIds(grade, allGrades, v.scope)
+          : // A tag being created sits at the bottom, so it starts with
+            // itself alone — and it has no id yet, hence nothing ticked.
+            [],
+      ]),
+    ) as Record<ViewScope, string[]>,
+  )
   // Entitlements are set on every tag, tier 1 included — see EntitlementTable.
   const [entitlements, setEntitlements] = useState<string[]>(
     grade
@@ -1020,6 +1357,15 @@ function TagModal({
   function toggleCapability(key: string) {
     if (isSuper) return
     setCapabilities((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]))
+  }
+
+  function toggleViewTier(scope: ViewScope, gradeId: string) {
+    setViewTiers((v) => ({
+      ...v,
+      [scope]: v[scope].includes(gradeId)
+        ? v[scope].filter((id) => id !== gradeId)
+        : [...v[scope], gradeId],
+    }))
   }
 
   function toggleEntitlement(key: string) {
@@ -1054,23 +1400,32 @@ function TagModal({
       : MODULE_OPTIONS.map((m) => m.key).filter((k) => modules.includes(k))
     const fields = { name: name.trim(), color, modules: mods, capabilities: caps, ability: ability || null }
     const ents = ALL_ENTITLEMENTS.filter((k) => entitlements.includes(k))
+    // Stored in tier order, and only ids that still exist — a tag deleted
+    // while this window was open must not leave a grant behind.
+    const inTierOrder = (ids: string[]) =>
+      allGrades.filter((g) => ids.includes(g.id)).map((g) => g.id)
     const write = (f: Record<string, unknown>) =>
       grade
-        ? supabase.from('grades').update(f).eq('id', grade.id)
-        : supabase.from('grades').insert({ ...f, sort_order: nextTier })
+        ? supabase.from('shared_grades').update(f).eq('id', grade.id)
+        : supabase.from('shared_grades').insert({ ...f, sort_order: nextTier })
 
-    const first = await write({ ...fields, entitlements: ents })
+    const first = await write({
+      ...fields,
+      entitlements: ents,
+      view_rate_tiers: inTierOrder(viewTiers.rate),
+      view_entry_tiers: inTierOrder(viewTiers.entry),
+    })
     // "Entitled Function" needs a column that arrived after the first
     // release. On a database that has not had supabase/setup.sql re-run,
     // save everything else rather than losing the whole edit, and say
     // plainly what is missing instead of showing a Postgres error.
-    if (first.error && /entitlements/i.test(first.error.message)) {
+    if (first.error && /entitlements|view_rate_tiers|view_entry_tiers/i.test(first.error.message)) {
       const { error } = await write(fields)
       setSaving(false)
       if (error) return setError(saveError(error, 'tier tag', name))
       return setError(
         'Saved — except "Entitled Function", which needs one line of SQL. In Supabase → ' +
-          'SQL editor run:  alter table public.grades add column if not exists entitlements text[];  ' +
+          'SQL editor run:  alter table public.shared_grades add column if not exists entitlements text[];  ' +
           'then set it again.',
       )
     }
@@ -1110,6 +1465,11 @@ function TagModal({
       isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade.capabilities ?? ['data-entry']),
     )
     setEntitlements(effectiveEntitlements(grade, allGrades))
+    setViewTiers(
+      Object.fromEntries(
+        VIEW_SCOPES.map((v) => [v.scope, viewableTierIds(grade, allGrades, v.scope)]),
+      ) as Record<ViewScope, string[]>,
+    )
     setError(null)
     onMode('view')
   }
@@ -1138,9 +1498,12 @@ function TagModal({
             <ModuleTable
               modules={modules}
               capabilities={capabilities}
+              allGrades={allGrades}
+              viewTiers={viewTiers}
               locked
               onToggleModule={() => {}}
               onToggleCapability={() => {}}
+              onToggleViewTier={() => {}}
             />
           </div>
 
@@ -1206,9 +1569,12 @@ function TagModal({
           <ModuleTable
             modules={modules}
             capabilities={capabilities}
+            allGrades={allGrades}
+            viewTiers={viewTiers}
             locked={isSuper}
             onToggleModule={toggleModule}
             onToggleCapability={toggleCapability}
+            onToggleViewTier={toggleViewTier}
           />
         </div>
 

@@ -67,16 +67,16 @@ begin
       null;
     end;
 
-    -- The on_auth_user_created trigger writes access_profiles. If it was
+    -- The on_auth_user_created trigger writes shared_profiles. If it was
     -- not installed, write the row here so the demo still works.
-    insert into public.access_profiles (id, full_name, email, role)
+    insert into public.shared_profiles (id, full_name, email, role)
     values (new_id, person.full_name, person.email, 'operator')
     on conflict (id) do update set full_name = excluded.full_name;
 
     -- Queue the account THIS RUN created — no tier, no leader, no team, no
     -- station. Scoped to new_id on purpose: re-running this file must never
     -- undo an allocation someone has already made on the chart.
-    update public.access_profiles set
+    update public.shared_profiles set
       grade_id = null, supervisor_id = null, team_id = null,
       station_ids = '{}', station_id = null, tags_confirmed = false, role = 'operator'
      where id = new_id;
@@ -84,7 +84,7 @@ begin
 end $$;
 
 select full_name, email, tags_confirmed as still_pending
-  from public.access_profiles
+  from public.shared_profiles
  where email like '%.new@demo.mjm'
  order by full_name;
 
@@ -94,7 +94,7 @@ select full_name, email, tags_confirmed as still_pending
 -- seeding above: a seed that also resets would undo the allocations you had
 -- just made every time you added more users.
 -- ---------------------------------------------------------------------------
--- update public.access_profiles set
+-- update public.shared_profiles set
 --   grade_id = null, supervisor_id = null, team_id = null,
 --   station_ids = '{}', station_id = null, tags_confirmed = false, role = 'operator'
 --  where email like '%@demo.mjm';

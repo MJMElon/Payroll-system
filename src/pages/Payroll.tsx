@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  ladderAmount,
   supabase,
   todayISO,
   profileName,
@@ -178,7 +179,7 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
       // 1. Production in the period — APPROVED entries only. Pending,
       // waiting-approval and rejected work is left out of the pay run.
       const { data: entries, error: entErr } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('worker_id, user_id, job_id, quantity, approval_status')
         .gte('work_date', start)
         .lte('work_date', end)
@@ -192,28 +193,23 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
       const jobIds = [...new Set(entries.map((e) => e.job_id))]
       const { data: rates, error: rateErr } = await supabase
         .from('piece_rates')
-        .select('job_id, rate, effective_from, tier2_rate')
+        // select('*') so tier_threshold rides along once its migration ran.
+        .select('*')
         .in('job_id', jobIds)
         .lte('effective_from', end)
         .order('effective_from', { ascending: false })
       if (rateErr) throw new Error(rateErr.message)
-      const rateByJob = new Map<string, { rate: number; tier2: number | null }>()
+      const rateByJob = new Map<string, (typeof rates extends (infer T)[] | null ? T : never)>()
       for (const r of rates ?? []) {
-        if (!rateByJob.has(r.job_id)) {
-          rateByJob.set(r.job_id, {
-            rate: Number(r.rate),
-            tier2: r.tier2_rate == null ? null : Number(r.tier2_rate),
-          })
-        }
+        if (!rateByJob.has(r.job_id)) rateByJob.set(r.job_id, r)
       }
-      // Tiered rates pay tier 1 for the first 4 units of an entry and tier 2
-      // beyond — same rule as the Operation screen and the mobile entry flow.
-      const TIER1_CAP = 4
+      // A tiered rate pays each unit its price-ladder row (the count
+      // resetting hourly is already baked into per-entry quantities) —
+      // the same ladderAmount rule as the Operation screen and mobile.
       const amountOf = (jobId: string, qty: number) => {
         const r = rateByJob.get(jobId)
         if (!r) return 0
-        if (r.tier2 == null) return qty * r.rate
-        return Math.min(qty, TIER1_CAP) * r.rate + Math.max(0, qty - TIER1_CAP) * r.tier2
+        return ladderAmount(r, qty)
       }
 
       // 3. Sum quantities AND per-entry amounts per person + job (amounts are
@@ -308,9 +304,9 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
       supabase.from('payroll_adjustments')
         .select('id, run_id, worker_id, user_id, amount, reason')
         .eq('run_id', run.id),
-      supabase.from('access_profiles').select('*').order('email'),
-      supabase.from('workers').select('id, full_name, station_id, grade_id, can_approve_rates, active'),
-      supabase.from('jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
+      supabase.from('shared_profiles').select('*').order('email'),
+      supabase.from('shared_workers').select('id, full_name, station_id, grade_id, can_approve_rates, active'),
+      supabase.from('piece_rate_jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
     ])
     const err = l.error || a.error || u.error || w.error || j.error
     if (err) setError(err.message)

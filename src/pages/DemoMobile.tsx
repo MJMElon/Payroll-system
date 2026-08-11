@@ -11,14 +11,17 @@
 // My work, Team and Profile are identical for everyone — they just read that
 // person's own data.
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { distanceLabel, stationLocationCheck } from '../lib/geo'
 import {
+  canViewTier,
   effectiveCapabilities,
   effectiveModules,
   isEntitled,
   tagClass,
+  viewableTierIds,
 } from '../lib/tags'
 import {
   profileName,
@@ -26,9 +29,11 @@ import {
   todayISO,
   type Grade,
   type Job,
-  type PayrollAdjustment,
-  type PayrollLine,
-  type PayrollRun,
+  hourLadder,
+  ladderAmount,
+  ladderBreakdownFrom,
+  ladderStepsFrom,
+  tier1Cap,
   type PhotoRecord,
   type PieceRate,
   type ProductionEntry,
@@ -59,33 +64,28 @@ const ADMIN_TIER_NAMES = /^(admin|administrator|management)$/i
 
 const RM = (n: number) => `RM ${n.toFixed(2)}`
 
-// A tiered piece rate (e.g. cage tipping) pays Tier 1 for the first N units
-// done in an hour and Tier 2 for the rest — this is that threshold.
-const TIER1_UNIT_CAP = 4
-
-// "RM 3.20/cage" for a flat job, "RM 3.20 → 5.00/cage" for a tiered one.
-function rateLabelFor(
-  rateFor: (jobId: string) => number,
-  tier2RateFor: (jobId: string) => number | null,
-  jobId: string,
-) {
-  const tier2 = tier2RateFor(jobId)
-  return tier2 == null ? RM(rateFor(jobId)) : `${RM(rateFor(jobId))} → ${tier2.toFixed(2)}`
+/** 1st, 2nd, 3rd, 4th — for rate terms that count off units in an hour. */
+function ordinal(n: number) {
+  const tens = n % 100
+  const suffix =
+    tens >= 11 && tens <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'
+  return `${n}${suffix}`
 }
 
-// "3 × RM3.20" for a flat job or a tiered one still within its first tier;
-// "4 × RM3.20 + 2 × RM5.00" once the count crosses into the second tier.
+// "3 × RM3.20" for a flat job or a tiered one still on its first rung;
+// "4 × RM3.20 + 2 × RM5.00" once the count climbs the price ladder.
 function breakdownFor(
   rateFor: (jobId: string) => number,
   tier2RateFor: (jobId: string) => number | null,
+  ladderFor: (jobId: string) => number[],
   jobId: string,
   count: number,
 ) {
-  const tier2 = tier2RateFor(jobId)
-  const rate = rateFor(jobId)
-  if (tier2 == null || count <= TIER1_UNIT_CAP) return `${count} × ${RM(rate)}`
-  const tier2Count = count - TIER1_UNIT_CAP
-  return `${TIER1_UNIT_CAP} × ${RM(rate)} + ${tier2Count} × ${RM(tier2)}`
+  void rateFor
+  void tier2RateFor
+  return ladderBreakdownFrom(ladderFor(jobId), count)
+    .map((s) => `${Number.isInteger(s.units) ? s.units : s.units.toFixed(1)} × ${RM(s.rate)}`)
+    .join(' + ')
 }
 
 // Once an hour has fully elapsed, that hour's photos (taken by this user at
@@ -96,7 +96,7 @@ function breakdownFor(
 // specific screen to be reopened after the hour ends).
 async function autoSubmitElapsedHoursForStation(stationId: string, profileId: string) {
   const { data, error } = await supabase
-    .from('photo_records')
+    .from('operation_photos')
     .select('id, taken_at, job_id')
     .eq('station_id', stationId)
     .eq('created_by', profileId)
@@ -122,7 +122,7 @@ async function autoSubmitElapsedHoursForStation(stationId: string, profileId: st
 
   for (const { jobId: jid, workDate, ids } of groups.values()) {
     const { data: entry, error: insErr } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .insert({
         work_date: workDate,
         station_id: stationId,
@@ -135,7 +135,7 @@ async function autoSubmitElapsedHoursForStation(stationId: string, profileId: st
       .select()
       .single()
     if (insErr || !entry) continue
-    await supabase.from('photo_records').update({ entry_id: entry.id }).in('id', ids)
+    await supabase.from('operation_photos').update({ entry_id: entry.id }).in('id', ids)
   }
 }
 
@@ -207,6 +207,26 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<PieceRate[]>([])
   const [tab, setTab] = useState<Tab>('performance')
+  // Pressing a tab means "take me to that tab's main page" — including the
+  // tab you are already on, which is how you get back out of a screen you
+  // drilled into. Bumping this remounts the tab, so every screen it was
+  // holding open falls away with it.
+  const [tabPress, setTabPress] = useState(0)
+  // Which bucket My work opens on when something else sends you there.
+  // Pressing the tab itself always means "Pending", the tab's own front
+  // door; only a card that named a bucket changes it.
+  const [workFilter, setWorkFilter] = useState<WorkFilter>('pending')
+  const goTab = (t: Tab) => {
+    setTab(t)
+    if (t === 'mywork') setWorkFilter('pending')
+    setTabPress((n) => n + 1)
+  }
+  /** Open My work on a named bucket — from the Performance tab's cards. */
+  const goMyWork = (f: WorkFilter = 'pending') => {
+    setWorkFilter(f)
+    setTab('mywork')
+    setTabPress((n) => n + 1)
+  }
   const [signupPreview, setSignupPreview] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -218,7 +238,7 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
   useEffect(() => {
     let cancelled = false
     supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select('job_id')
       .limit(1)
       .then(({ error: probeErr }) => {
@@ -232,9 +252,9 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
   useEffect(() => {
     async function load() {
       const [g, s, j, r] = await Promise.all([
-        supabase.from('grades').select('*').order('sort_order'),
-        supabase.from('stations').select('*').order('sort_order'),
-        supabase.from('jobs').select('*').eq('active', true),
+        supabase.from('shared_grades').select('*').order('sort_order'),
+        supabase.from('shared_stations').select('*').order('sort_order'),
+        supabase.from('piece_rate_jobs').select('*').eq('active', true),
         supabase.from('piece_rates').select('*'),
       ])
       const err = g.error || s.error || j.error || r.error
@@ -278,31 +298,40 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
     () => (jobId: string) => bestRate.get(jobId)?.tier2_rate ?? null,
     [bestRate],
   )
+  // The rate's full price ladder — element i pays the (i+1)th record of
+  // the hour, the last element every record after.
+  const ladderFor = useMemo(
+    () => (jobId: string) => hourLadder(bestRate.get(jobId)),
+    [bestRate],
+  )
   const amountFor = useMemo(
-    () => (jobId: string, quantity: number) => {
-      const tier2 = tier2RateFor(jobId)
-      const rate = rateFor(jobId)
-      if (tier2 == null) return rate * quantity
-      const tier1Qty = Math.min(quantity, TIER1_UNIT_CAP)
-      const tier2Qty = Math.max(0, quantity - TIER1_UNIT_CAP)
-      return tier1Qty * rate + tier2Qty * tier2
-    },
-    [rateFor, tier2RateFor],
+    () => (jobId: string, quantity: number) => ladderAmount(bestRate.get(jobId), quantity),
+    [bestRate],
   )
 
   // The preview obeys the SELECTED tier's capabilities — only tiers with
-  // the data-entry capability may submit records. Tiers holding verify or
-  // approve (Engineer / Manager / Management) get the management dashboards
-  // and see ALL stations; lower tiers see only their own station tags.
+  // the data-entry capability may submit records.
   const tierCaps = effectiveCapabilities(tier)
   const canEntry = tierCaps.includes('data-entry')
-  const isUpper =
+  /**
+   * Who reads the WHOLE mill rather than their own station tags.
+   *
+   * Ticking the Mill dashboard is the plainest way of saying so, and it
+   * comes first: a tier given the mill's output, workforce, wages and
+   * cost trend is being asked to read the mill, and a "mill" drawn over
+   * the one station that tier happens to be tagged to is not that.
+   *
+   * The rest are older, looser signals kept so nothing that reached every
+   * station before starts reaching fewer.
+   */
+  const readsWholeMill =
+    isEntitled(tier, 'mill-dashboard', grades) ||
     effectiveModules(tier?.modules).includes('report') ||
     tierCaps.includes('verify') ||
     tierCaps.includes('approve')
   const myStationIds = profile?.station_ids ?? []
   const scopedStations =
-    isUpper || myStationIds.length === 0
+    readsWholeMill || myStationIds.length === 0
       ? stations
       : stations.filter((s) => myStationIds.includes(s.id))
 
@@ -325,7 +354,7 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
 
   const screenBody = (
     <>
-              <div className="mob-content">
+              <div className="mob-content" key={`${tab}-${tabPress}`}>
                 {loading ? (
                   <div className="mob-body"><p className="muted small">Loading…</p></div>
                 ) : signupPreview ? (
@@ -339,12 +368,12 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
                     profile={profile}
                     profileId={profile?.id ?? null}
                     myStationIds={myStationIds}
-                    myEmail={profile?.email ?? 'unknown'}
                     jobColumnReady={jobColumnReady}
-                    onMyWork={() => setTab('mywork')}
+                    onMyWork={goMyWork}
                     onError={setError}
                   />
                 ) : tab === 'mywork' ? (
@@ -358,7 +387,9 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
                     myEmail={profile?.email ?? 'unknown'}
+                    initialFilter={workFilter}
                     onError={setError}
                   />
                 ) : tab === 'team' ? (
@@ -380,6 +411,7 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
                     canEntry={canEntry}
                     jobColumnReady={jobColumnReady}
                     onError={setError}
@@ -398,7 +430,7 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
               {!signupPreview && (
                 <TabBar
                   tab={tab}
-                  onTab={setTab}
+                  onTab={goTab}
                 />
               )}
     </>
@@ -552,7 +584,246 @@ function TabBar({
   )
 }
 
-/** Top-bar badge: the previewed tier's name spelled out in full. */
+/**
+ * Every screen reached FROM a tab wears the same row, directly under the
+ * MJM brand: a back arrow hard left, the page's name in the middle.
+ *
+ * It used to be a worded link — "‹ Approvals", "‹ Stations", "‹ Record" —
+ * sharing the brand's row, so the arrow moved about, said something
+ * different on each screen, and the page's own name sat somewhere else
+ * again. One arrow, one title, one place.
+ */
+/* ------------------------------------------------------------------ */
+/* A filter behind one button, rather than a row of chips across the    */
+/* screen. Picking is ADDITIVE — tap a tier to tick it, tap another to  */
+/* read both side by side, tap again to untick. An empty set is ALL,    */
+/* not none: that is what the list does before anybody touches it, so   */
+/* "All" needs no state of its own.                                     */
+/* ------------------------------------------------------------------ */
+
+function FilterMenu({
+  title,
+  allLabel,
+  options,
+  picked,
+  onToggle,
+  onAll,
+}: {
+  title: string
+  allLabel: string
+  options: { key: string; name: string; color?: string | null }[]
+  picked: Set<string>
+  onToggle: (key: string) => void
+  onAll: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement | null>(null)
+  // The box the list scrolls in, and what it looked like when the menu
+  // was opened: how far it was scrolled, its natural bottom padding, and
+  // how tall it was.
+  const box = useRef<HTMLElement | null>(null)
+  const keep = useRef<number | null>(null)
+  const basePad = useRef(0)
+  const reserve = useRef<number | null>(null)
+  const extraPad = useRef(0)
+  const narrowed = picked.size > 0
+
+  function scrollBox(): HTMLElement | null {
+    let node: HTMLElement | null = root.current?.parentElement ?? null
+    while (node) {
+      const oy = getComputedStyle(node).overflowY
+      if (oy === 'auto' || oy === 'scroll') return node
+      node = node.parentElement
+    }
+    return null
+  }
+
+  /**
+   * Hold the list still while it is being filtered.
+   *
+   * Two things move it. Ticking a tier re-renders the list, and the scroll
+   * box settles somewhere else. Unticking makes the list SHORTER, and if
+   * you were near the bottom there is no longer anywhere to be scrolled
+   * to — the browser clamps, and the block you are working slides.
+   *
+   * So while the menu is open the box keeps the height it had when the
+   * menu opened, held there by padding underneath the list. Nothing can
+   * clamp, so nothing moves; the block grows and shrinks above padding
+   * that gives way in step with it. Closing the menu hands the space
+   * back.
+   */
+  function hold(change: () => void) {
+    box.current = scrollBox()
+    keep.current = box.current ? box.current.scrollTop : null
+    change()
+  }
+
+  function openMenu() {
+    const node = scrollBox()
+    box.current = node
+    if (node) {
+      basePad.current = parseFloat(getComputedStyle(node).paddingBottom) || 0
+      extraPad.current = 0
+      reserve.current = node.scrollHeight
+      keep.current = node.scrollTop
+    }
+    setOpen(true)
+  }
+
+  function closeMenu() {
+    const node = box.current
+    if (node) {
+      node.style.paddingBottom = ''
+      const top = Math.min(node.scrollTop, Math.max(0, node.scrollHeight - node.clientHeight))
+      node.scrollTop = top
+    }
+    reserve.current = null
+    extraPad.current = 0
+    keep.current = null
+    setOpen(false)
+  }
+
+  useLayoutEffect(() => {
+    const node = box.current
+    if (!node) return
+    if (open && reserve.current != null) {
+      // What the list would measure with the reserved space taken out.
+      const natural = node.scrollHeight - extraPad.current
+      const extra = Math.max(0, reserve.current - natural)
+      extraPad.current = extra
+      node.style.paddingBottom = `${basePad.current + extra}px`
+    }
+    const top = keep.current
+    keep.current = null
+    if (top != null) {
+      node.scrollTop = Math.min(top, Math.max(0, node.scrollHeight - node.clientHeight))
+    }
+  })
+
+  // Leaving the tab with the menu still open must not leave the reserved
+  // space behind on a box the next screen will use.
+  useEffect(() => () => {
+    if (box.current) box.current.style.paddingBottom = ''
+  }, [])
+
+  return (
+    <div className="mob-filter" ref={root}>
+      <button
+        type="button"
+        className={`mob-filter-btn ${narrowed ? 'on' : ''}`}
+        onClick={() => (open ? closeMenu() : openMenu())}
+        aria-label={title}
+        aria-expanded={open}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 5h18l-7 8v6l-4 2v-8Z" />
+        </svg>
+        {narrowed && <span className="mob-filter-count">{picked.size}</span>}
+      </button>
+
+      {open && (
+        <>
+          {/* Anywhere else closes it — a filter should not need its own
+              close button to get out of the way. */}
+          <button type="button" className="mob-filter-scrim" aria-label="Close filter" onClick={closeMenu} />
+          <div className="mob-filter-menu" role="menu">
+            <div className="mob-filter-title">{title}</div>
+            <button
+              type="button"
+              className={`mob-filter-row ${picked.size === 0 ? 'on' : ''}`}
+              onClick={() => hold(onAll)}
+            >
+              <span className="mob-filter-tick">{picked.size === 0 ? '✓' : ''}</span>
+              <span>{allLabel}</span>
+            </button>
+            {options.map((o) => (
+              <button
+                type="button"
+                key={o.key}
+                className={`mob-filter-row ${picked.has(o.key) ? 'on' : ''}`}
+                onClick={() => hold(() => onToggle(o.key))}
+              >
+                <span className="mob-filter-tick">{picked.has(o.key) ? '✓' : ''}</span>
+                {o.color && <span className={`tag-dot dot-${o.color}`} aria-hidden="true" />}
+                <span>{o.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Today / 7 days / 30 days — the windows every record screen offers. */
+const DAY_RANGES = [
+  { key: 'today', label: 'Today', days: 0 },
+  { key: '7d', label: '7 days', days: 6 },
+  { key: '30d', label: '30 days', days: 29 },
+] as const
+
+type DayRange = (typeof DAY_RANGES)[number]['key']
+
+/**
+ * The Work Record History's windows. Calendar periods, not rolling days:
+ * "this week" is the week you are in, so the number stops moving under
+ * you as the days pass, and it is the same week your leader means.
+ *
+ * A key that is none of these is a month — "2026-07" — one of the three
+ * before this one, reached from the history icon.
+ */
+const HISTORY_RANGES = [
+  { key: 'today', label: 'Today' },
+  { key: 'week', label: 'This week' },
+  { key: 'month', label: 'This month' },
+] as const
+
+type HistoryRange = (typeof HISTORY_RANGES)[number]['key'] | string
+
+/** The first and last day a window covers, both inclusive. */
+function historyWindow(key: HistoryRange): { from: string; to: string } {
+  const today = todayISO()
+  if (key === 'today') return { from: today, to: today }
+  if (key === 'week') {
+    const monday = new Date()
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
+    return { from: dayISO(monday), to: today }
+  }
+  if (key === 'month') return { from: today.slice(0, 8) + '01', to: today }
+  // A whole month that has already finished.
+  const [y, m] = key.split('-').map(Number)
+  return { from: dayISO(new Date(y, m - 1, 1)), to: dayISO(new Date(y, m, 0)) }
+}
+
+/** The three months before this one, newest first. */
+function recentMonths(): { key: string; label: string }[] {
+  const now = new Date()
+  return [1, 2, 3].map((back) => {
+    const m = new Date(now.getFullYear(), now.getMonth() - back, 1)
+    return {
+      key: `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`,
+      label: m.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
+    }
+  })
+}
+
+/** The Output record's windows, said in this screen's words. */
+const RANGE_FROM_OUTPUT: Record<DayRange, HistoryRange> = {
+  today: 'today',
+  '7d': 'week',
+  '30d': 'month',
+}
+
+function MobSubHeader({ title, onBack }: { title: string; onBack: () => void }) {
+  return (
+    <div className="mob-subhead">
+      <button className="mob-back" onClick={onBack} aria-label="Back">‹</button>
+      <span className="mob-pagetitle">{title}</span>
+    </div>
+  )
+}
+
 function dayISO(d: Date) {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
@@ -561,41 +832,6 @@ function hourLabel(h: number) {
   const h24 = ((h % 24) + 24) % 24
   const h12 = h24 % 12 === 0 ? 12 : h24 % 12
   return `${h12}${h24 >= 12 ? 'PM' : 'AM'}`
-}
-
-// Records arrive newest-first; keep that order and bucket them per hour zone
-// (and per job, so switching jobs mid-hour never merges two jobs' counts).
-function groupByHour(records: PhotoRecord[]): Array<[number, string | null, PhotoRecord[]]> {
-  const groups: Array<[number, string | null, PhotoRecord[]]> = []
-  for (const r of records) {
-    const h = new Date(r.taken_at).getHours()
-    const jid = r.job_id ?? null
-    const last = groups[groups.length - 1]
-    if (last && last[0] === h && last[1] === jid) last[2].push(r)
-    else groups.push([h, jid, [r]])
-  }
-  return groups
-}
-
-function RecordRow({ record, url }: { record: PhotoRecord; url: string | null }) {
-  const t = new Date(record.taken_at)
-  return (
-    <div className="mob-row">
-      <span>
-        {t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        <span className="mob-station-meta">
-          {' '}· {t.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-        </span>
-      </span>
-      {url ? (
-        <a href={url} target="_blank" rel="noreferrer">
-          <img className="mob-thumb" src={url} alt="record" loading="lazy" />
-        </a>
-      ) : (
-        <span className="mob-chip">no photo</span>
-      )}
-    </div>
-  )
 }
 
 /**
@@ -759,10 +995,10 @@ function PerformanceTab({
   rateFor,
   amountFor,
   tier2RateFor,
+  ladderFor,
   profile,
   profileId,
   myStationIds,
-  myEmail,
   jobColumnReady,
   onMyWork,
   onError,
@@ -774,21 +1010,29 @@ function PerformanceTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   profile: Profile | null
   profileId: string | null
   myStationIds: string[]
-  myEmail: string
   jobColumnReady: boolean
-  onMyWork: () => void
+  /** Send the viewer to My work, optionally straight to one bucket. */
+  onMyWork: (filter?: WorkFilter) => void
   onError: (m: string | null) => void
 }) {
   const [station, setStation] = useState<Station | null>(null)
-  const [showApprovals, setShowApprovals] = useState(false)
+  // The screens this tab drills into: the work record behind "My work
+  // done", and the two queues behind the cards under it.
+  const [sub, setSub] = useState<null | 'history' | 'output'>(null)
+  // Set by the › beside a station on the Output record: the history that
+  // opens is that station's, and Back returns to the Output record.
+  const [historyStation, setHistoryStation] = useState<Station | null>(null)
+  // Which window that history opens on — carried over from the Output
+  // record, so clicking through from "30 days" stays on 30 days.
+  const [historyRange, setHistoryRange] = useState<DayRange>('today')
+  const [detail, setDetail] = useState<ProductionEntry | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const tierCaps = effectiveCapabilities(tier)
   const canEntry = tierCaps.includes('data-entry')
-  const canVerify = tierCaps.includes('verify')
-  const canFinal = tierCaps.includes('approve')
   const monthStart = todayISO().slice(0, 8) + '01'
 
   // Six months back covers the management dashboard's trend chart; the
@@ -797,7 +1041,7 @@ function PerformanceTab({
     const now = new Date()
     const from = new Date(now.getFullYear(), now.getMonth() - 5, 1)
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .gte('work_date', dayISO(from))
       .then(({ data, error }) => {
@@ -823,7 +1067,7 @@ function PerformanceTab({
     from.setDate(from.getDate() - 40) // covers this month + this week
     function load() {
       supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .eq('user_id', profileId)
         .gte('work_date', dayISO(from))
@@ -869,61 +1113,9 @@ function PerformanceTab({
   const myQty = (w: (typeof myWeek)[number]) => w.appr + w.rej + w.wait
   const myMaxQty = Math.max(1, ...myWeek.map(myQty))
 
-  // The same week, but the whole mill's approved output rather than one
-  // person's — an Admin reading the mill dashboard has few records of
-  // their own, so their personal chart would sit empty.
-  const millWeek = myWeek.map((w) => ({ label: w.label, iso: w.iso, qty: 0 }))
-  for (const e of entries) {
-    if ((e.approval_status ?? 'approved') !== 'approved') continue
-    if (!stations.some((st) => st.id === e.station_id)) continue
-    const slot = millWeek.find((w) => w.iso === e.work_date)
-    if (slot) slot.qty += e.quantity
-  }
-  const millMaxQty = Math.max(1, ...millWeek.map((w) => w.qty))
   const todayIso = todayISO()
 
-  const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
-  const status = (e: ProductionEntry) => e.approval_status ?? 'approved'
-  const weekMonday = new Date()
-  weekMonday.setDate(weekMonday.getDate() - ((weekMonday.getDay() + 6) % 7))
-  const weekStart = dayISO(weekMonday)
 
-  // Management dashboard — verify/approve-capable tiers only.
-  const payable = mtd.filter((e) => status(e) !== 'rejected')
-  const cost = payable.reduce((s, e) => s + amountOf(e), 0)
-  const mgmtWorkers = new Set(payable.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
-  const activeStations = new Set(payable.map((e) => e.station_id)).size
-  // Never your own work — the same self-exclusion as the Approvals tab.
-  const needsMe = (e: ProductionEntry) =>
-    e.user_id !== profileId &&
-    ((canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'))
-  const awaiting = mtd.filter(needsMe)
-  const rejectedWk = entries.filter((e) => status(e) === 'rejected' && e.work_date >= weekStart)
-  const fmtMoney = (v: number) => (v >= 1000 ? `RM ${Math.round(v).toLocaleString()}` : RM(v))
-
-  const stationPct = approvalByStation(mtd, stations)
-
-  // Payroll cost trend — last 6 months.
-  const trend: { label: string; total: number }[] = []
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date()
-    const m = new Date(d.getFullYear(), d.getMonth() - i, 1)
-    const prefix = dayISO(m).slice(0, 7)
-    const trendTotal = entries
-      .filter((e) => e.work_date.startsWith(prefix) && status(e) !== 'rejected')
-      .reduce((s, e) => s + amountOf(e), 0)
-    trend.push({ label: m.toLocaleDateString(undefined, { month: 'short' }), total: trendTotal })
-  }
-  const maxTrend = Math.max(1, ...trend.map((t) => t.total))
-  const fmtK = (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v).toString())
-
-  const flags = exceptionFlags(entries, mtd, stations, weekStart)
-
-  // Workforce (today).
-  const today = todayISO()
-  const todayRows = entries.filter((e) => e.work_date === today)
-  const activeToday = new Set(todayRows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
-  const coveredToday = new Set(todayRows.map((e) => e.station_id)).size
 
   if (station) {
     return (
@@ -934,7 +1126,7 @@ function PerformanceTab({
         jobs={jobs}
         rateFor={rateFor}
         amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
+        ladderFor={ladderFor}
         profileId={profileId}
         jobColumnReady={jobColumnReady}
         canEntry={canEntry}
@@ -944,61 +1136,67 @@ function PerformanceTab({
     )
   }
 
-  if (showApprovals) {
+  if (detail) {
     return (
-      <ApprovalsScreen
-        profileId={profileId}
-        myEmail={myEmail}
-        level={canFinal ? 'approve' : 'verify'}
+      <EntryDetail
+        entry={detail}
+        myName={profileName(profile)}
+        tier={tier}
         stations={stations}
         jobs={jobs}
+        rateFor={rateFor}
         amountFor={amountFor}
-        onBack={() => {
-          setShowApprovals(false)
-          loadEntries()
-        }}
-        onError={onError}
+        tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
+        onBack={() => setDetail(null)}
       />
     )
   }
 
-  const statFor = (sid: string) => {
-    const rows = mtd.filter((e) => e.station_id === sid)
-    const workers = new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
-    const output = rows.reduce((s, e) => s + e.quantity, 0)
-    // What the mill actually produced: only records that cleared approval.
-    // Pending work may still be rejected and rejected work never counted,
-    // so neither belongs in a figure read as output.
-    const approved = rows
-      .filter((e) => (e.approval_status ?? 'approved') === 'approved')
-      .reduce((s, e) => s + e.quantity, 0)
-    const done = rows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
-    const pct = rows.length > 0 ? Math.round((done / rows.length) * 100) : null
-    return { workers, output, approved, pct }
+  if (sub === 'history') {
+    return (
+      <RecordHistory
+        profileId={profileId}
+        stations={stations}
+        jobs={jobs}
+        amountFor={amountFor}
+        canEdit={tierCaps.includes('edit-entry')}
+        station={historyStation}
+        myStations={stations.filter((s) => myStationIds.includes(s.id))}
+        initialRange={historyRange}
+        onOpen={setDetail}
+        onBack={() => {
+          // A station's history was entered from the Output record, so
+          // Back returns there; your own history goes back to the tab.
+          setSub(historyStation ? 'output' : null)
+          setHistoryStation(null)
+        }}
+      />
+    )
   }
-  const totalOutput = stations.reduce((s, st) => s + statFor(st.id).output, 0)
-  const totalApproved = stations.reduce((s, st) => s + statFor(st.id).approved, 0)
+
+  if (sub === 'output') {
+    return (
+      <OutputRecordScreen
+        stations={stations}
+        jobs={jobs}
+        entries={entries}
+        onStation={(st, range) => {
+          setHistoryStation(st)
+          setHistoryRange(range)
+          setSub('history')
+        }}
+        onBack={() => setSub(null)}
+      />
+    )
+  }
+
+  const outputRecord = buildOutputRecord(stations, jobs, mtd)
 
   // My own scorecard, against a target of everything I submit ending up
-  // approved. Read as a meter over two windows: today first, then the week
-  // it sits in. Today is mostly "waiting" by nature — work recorded this
-  // morning has not been through approval yet — which is exactly what the
-  // waiting slice is there to show.
-  // My own work still in the queue, and what came back this week.
-  const myWaiting = myEntries.filter((e) =>
-    ['pending', 'verified'].includes(e.approval_status ?? ''),
-  ).length
-  const myRejectedWk = myEntries.filter(
-    (e) => (e.approval_status ?? '') === 'rejected' && e.work_date >= weekStart,
-  ).length
-  // Whether this tier reviews anyone else's work at all.
-  const reviews = canVerify || canFinal ? 1 : 0
-
+  // approved.
   const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
-  const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
-  const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
-  const compliance = scopedRows.length > 0 ? Math.round((doneAll / scopedRows.length) * 100) : null
-  const monthLabel = new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+  const shortMonth = new Date().toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
   const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
 
   // WHICH dashboard this tab shows is set per tier, in Settings → Tags
@@ -1017,12 +1215,12 @@ function PerformanceTab({
         <span className="mob-brand">MJM</span>
       </div>
       <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
+        <div className="mob-pagehead">
           {/* The title names the dashboard this tier was given (Settings →
               Tags management → Entitled Function). The mill reads first
               when both are on. */}
           <div className="mob-role">
-            {showMill ? 'Mill Performance Dashboard' : showKpi ? 'KPI Dashboard' : 'Performance dashboard'}
+            {showMill ? 'Mill Dashboard' : showKpi ? 'KPI Dashboard' : 'Performance dashboard'}
           </div>
         </div>
 
@@ -1030,7 +1228,7 @@ function PerformanceTab({
             broken rather than configured. Say which setting emptied it. */}
         {!showMill && !showKpi && (
           <div className="mob-card">
-            <div className="mob-title">No dashboard switched on</div>
+            <div className="mob-card-label">No dashboard switched on</div>
             <div className="mob-sub">
               This tier has neither the mill output nor the KPI dashboard ticked under
               Settings → Tags management → Entitled Function.
@@ -1038,81 +1236,41 @@ function PerformanceTab({
           </div>
         )}
 
-        {/* Admin tier and above read the mill first: what each station has
-            put out this month, then the week, then who is on, then what it
-            costs. The same cards appear once only — they are skipped in
-            their old places below. */}
+        {/* Admin tier and above read the mill first: the output record —
+            every work set to show here, under its station — then who is on,
+            then what it costs. */}
         {showMill && (
           <>
-            <div className="mob-card">
-              <div className="mob-card-label">Mill performance · {monthLabel}</div>
-              <div className="mob-sub">Approved work records only</div>
-              {stations.length === 0 ? (
-                <div className="mob-sub">No stations for your tags yet.</div>
+            {/* The whole card opens the record over today, 7 days and 30
+                days — for the stations this tier may see, which is the
+                list it was handed. */}
+            <button className="mob-card mob-card-tap" onClick={() => setSub('output')}>
+              {/* The same head as the KPI dashboard's cards: the label
+                  small and grey, the caret on the right. */}
+              <div className="mob-cardhead">
+                <span className="mob-card-label">{shortMonth} Work recorded</span>
+                <span className="mob-caret" aria-hidden="true">›</span>
+              </div>
+              {outputRecord.length === 0 ? (
+                <div className="mob-sub">
+                  No work is set to show here yet — tick “Show on mill performance”
+                  on a piece rate.
+                </div>
               ) : (
-                <>
-                  {stations.map((s) => (
-                    <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
-                      <span className="mob-entry-name">{s.name}</span>
-                      <span className="mob-entry-side">
-                        <span className="mob-entry-amt">{fmtQty(statFor(s.id).approved)}</span>
-                        <span className="mob-caret">›</span>
-                      </span>
-                    </button>
-                  ))}
-                  <div className="mob-breakrow total">
-                    <span>Total approved output</span>
-                    <span className="mob-entry-amt">{fmtQty(totalApproved)}</span>
+                outputRecord.map((r) => (
+                  <div key={r.station.id}>
+                    <div className="mob-breakrow station">{r.station.name}</div>
+                    {r.works.map((w) => (
+                      <div className="mob-breakrow indent" key={w.name}>
+                        <span>{w.name}</span>
+                        <span className="mob-entry-amt">{fmtQty(w.qty)}</span>
+                      </div>
+                    ))}
                   </div>
-                </>
+                ))
               )}
-            </div>
+            </button>
 
-            <div className="mob-card">
-              <div className="mob-title">Daily quantity — this week</div>
-              <div className="mob-bars">
-                {millWeek.map((w) => (
-                  <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
-                    <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
-                    <span className="mob-bartrack">
-                      <div style={{ width: `${(w.qty / millMaxQty) * 100}%` }} />
-                    </span>
-                    <span className="val">{w.qty > 0 ? fmtQty(w.qty) : '·'}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="mob-card">
-              <div className="mob-title">Workforce</div>
-              <div className="mob-breakrow">
-                <span>Active workers today</span>
-                <span className="mob-entry-amt">{activeToday}</span>
-              </div>
-              <div className="mob-breakrow">
-                <span>Records submitted today</span>
-                <span className="mob-entry-amt">{todayRows.length}</span>
-              </div>
-              <div className="mob-breakrow">
-                <span>Stations at full coverage</span>
-                <span className="mob-entry-amt">{coveredToday} / {stations.length}</span>
-              </div>
-            </div>
-
-            <div className="mob-card">
-              <div className="mob-title">Payroll cost trend (6 months)</div>
-              <div className="mob-bars">
-                {trend.map((t) => (
-                  <div className="mob-barrow" key={t.label}>
-                    <span className="lbl">{t.label}</span>
-                    <span className="mob-bartrack">
-                      <div style={{ width: `${(t.total / maxTrend) * 100}%` }} />
-                    </span>
-                    <span className="val">{fmtK(t.total)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </>
         )}
 
@@ -1126,8 +1284,26 @@ function PerformanceTab({
             Sunday bar the week's percentage — the same colours adding
             themselves up. */}
         {canEntry && showKpi && (
-          <div className="mob-card">
-            <div className="mob-card-label">My work done</div>
+          <div
+            className="mob-card tapcard block"
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              setHistoryStation(null)
+              setHistoryRange('today')
+              setSub('history')
+            }}
+            onKeyDown={(ev) => {
+              if (ev.key !== 'Enter' && ev.key !== ' ') return
+              setHistoryStation(null)
+              setHistoryRange('today')
+              setSub('history')
+            }}
+          >
+            <div className="mob-cardhead">
+              <span className="mob-card-label">My work done</span>
+              <span className="mob-caret" aria-hidden="true">›</span>
+            </div>
             <div className="mob-bars">
               {myWeek.map((w) => {
                 const total = myQty(w)
@@ -1154,31 +1330,11 @@ function PerformanceTab({
         )}
 
         {canEntry && needsFix > 0 && (
-          <button className="mob-alert" onClick={onMyWork}>
+          <button className="mob-alert" onClick={() => onMyWork('rejected')}>
             ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
           </button>
         )}
 
-        {/* 3 — what is still out, and what came back. At station level the
-            tab ends here: this is the day's own work, not the mill's. */}
-        {showKpi && (
-          <div className="mob-grid2">
-            <button className="mob-card tapcard" onClick={() => (reviews > 0 ? setShowApprovals(true) : onMyWork())}>
-              <span className="mob-field-label">Pending verify</span>
-              <span className="mob-stat">{reviews > 0 ? awaiting.length : myWaiting}</span>
-              <span className="mob-station-meta">
-                {reviews > 0 ? 'waiting on you' : 'waiting on your upper'}
-              </span>
-            </button>
-            <button className="mob-card tapcard" onClick={onMyWork}>
-              <span className="mob-field-label">Rejected this wk</span>
-              <span className="mob-stat">{reviews > 0 ? rejectedWk.length : myRejectedWk}</span>
-              <span className="mob-station-meta">
-                {reviews > 0 ? 'at your station' : 'to fix & resubmit'}
-              </span>
-            </button>
-          </div>
-        )}
 
         {/* 4 — what the work paid. This month's own numbers, the payslips
             they add up to, and the rates behind both. They used to live on
@@ -1188,8 +1344,15 @@ function PerformanceTab({
             it rather than a rung test of their own. */}
         {showKpi && (
           <>
-            <MyNumbersSection profileId={profileId} amountFor={amountFor} />
-            <PayslipSection profile={profile} />
+            <MyNumbersSection
+              profileId={profileId}
+              amountFor={amountFor}
+              onOpen={() => {
+                setHistoryStation(null)
+                setHistoryRange('30d')
+                setSub('history')
+              }}
+            />
             <ContractSection
               tier={tier}
               grades={grades}
@@ -1198,151 +1361,157 @@ function PerformanceTab({
               myStationIds={myStationIds}
               rateFor={rateFor}
               tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
             />
           </>
         )}
 
-        {(canVerify || canFinal) && showMill && (
-          <>
-            <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Management dashboard</div>
+      </div>
+    </>
+  )
+}
 
-            <div className="mob-card mob-highlight">
-              <div className="mob-field-label" style={{ color: '#aeb8c4' }}>Payroll cost MTD</div>
-              <div className="mob-big">{fmtMoney(cost)}</div>
-              <div className="mob-sub">
-                {mgmtWorkers} active worker{mgmtWorkers === 1 ? '' : 's'} across {activeStations} station{activeStations === 1 ? '' : 's'}
-              </div>
-            </div>
+/**
+ * One entry per work name.
+ *
+ * A work type is priced once per tier tag, so a Station Head — who may
+ * record their own tier's work and everything below it — would otherwise be
+ * offered "FFB Cages Tipped" three times over with nothing to tell the
+ * lines apart. Keep the contract closest to the person's own rank: their
+ * own tier when it is priced, then the tier below it, and a contract with
+ * no tag at all only when nothing else fits.
+ */
+function onePerWork(list: Job[], tier: Grade | null, grades: Grade[]): Job[] {
+  const rank = (j: Job) => {
+    if (!j.grade_id) return 1000
+    const g = grades.find((x) => x.id === j.grade_id)
+    if (!g) return 999
+    // Distance DOWN from the viewer's own rank — their own tier scores 0.
+    return tier ? g.sort_order - tier.sort_order : g.sort_order
+  }
+  const best = new Map<string, Job>()
+  for (const j of list) {
+    const seen = best.get(j.name)
+    if (!seen || rank(j) < rank(seen)) best.set(j.name, j)
+  }
+  return [...best.values()]
+}
 
-            <div className="mob-grid2">
-              <div className="mob-card">
-                <div className="mob-field-label">{canFinal ? 'Pending final' : 'Pending verify'}</div>
-                <div className="mob-stat">{awaiting.length}</div>
-              </div>
-              <div className="mob-card">
-                <div className="mob-field-label">Rejected this wk</div>
-                <div className="mob-stat">{rejectedWk.length}</div>
-              </div>
-            </div>
-            <div className="mob-grid2">
-              <div className="mob-card">
-                <div className="mob-field-label">Avg wage / worker</div>
-                <div className="mob-stat">{mgmtWorkers > 0 ? fmtMoney(cost / mgmtWorkers) : '—'}</div>
-              </div>
-              <div className="mob-card">
-                <div className="mob-field-label">Compliance %</div>
-                <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
-              </div>
-            </div>
+/* ------------------------------------------------------------------ */
+/* Output record — the same sheet as the dashboard card, over a window  */
+/* you choose. The station list handed in is already what this tier may */
+/* see, so a station-scoped tier reads its own station here and a       */
+/* mill-wide one reads every station, with no extra filtering.          */
+/* ------------------------------------------------------------------ */
 
-            {stationPct.length > 0 && !showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Approval completion by station</div>
-                <div className="mob-bars">
-                  {stationPct.map((s) => (
-                    <div className="mob-barrow" key={s.id}>
-                      <span className="lbl station">{s.name}</span>
-                      <span className="mob-bartrack">
-                        <div className={s.pct! < 80 ? 'best' : ''} style={{ width: `${s.pct}%` }} />
-                      </span>
-                      <span className="val">{s.pct}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+function OutputRecordScreen({
+  stations,
+  jobs,
+  entries,
+  onStation,
+  onBack,
+}: {
+  stations: Station[]
+  jobs: Job[]
+  entries: ProductionEntry[]
+  /** The station, and the window it was being read over. */
+  onStation: (s: Station, range: DayRange) => void
+  onBack: () => void
+}) {
+  const [range, setRange] = useState<(typeof DAY_RANGES)[number]['key']>('today')
+  const chosen = DAY_RANGES.find((r) => r.key === range) ?? DAY_RANGES[0]
 
-            {!showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Payroll cost trend (6 months)</div>
-                <div className="mob-bars">
-                  {trend.map((t) => (
-                    <div className="mob-barrow" key={t.label}>
-                      <span className="lbl">{t.label}</span>
-                      <span className="mob-bartrack">
-                        <div style={{ width: `${(t.total / maxTrend) * 100}%` }} />
-                      </span>
-                      <span className="val">{fmtK(t.total)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+  const from = new Date()
+  from.setDate(from.getDate() - chosen.days)
+  const fromISO = dayISO(from)
+  const rows = entries.filter((e) => e.work_date >= fromISO)
+  const record = buildOutputRecord(stations, jobs, rows)
+  const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
 
-            {!showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Exception flags</div>
-                {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
-                {flags.map((f, i) => (
-                  <div className={`mob-flag ${f.kind}`} key={i}>
-                    <div className="mob-flag-title">{f.title}</div>
-                    <div>{f.text}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+      </div>
 
-            {!showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Workforce</div>
-                <div className="mob-breakrow">
-                  <span>Active workers today</span>
-                  <span className="mob-entry-amt">{activeToday}</span>
-                </div>
-                <div className="mob-breakrow">
-                  <span>Records submitted today</span>
-                  <span className="mob-entry-amt">{todayRows.length}</span>
-                </div>
-                <div className="mob-breakrow">
-                  <span>Stations at full coverage</span>
-                  <span className="mob-entry-amt">{coveredToday} / {stations.length}</span>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        {showMill && (
-          <div className="mob-grid2">
-            <div className="mob-card">
-              <div className="mob-field-label">Output this month</div>
-              <div className="mob-stat">{fmtQty(totalOutput)}</div>
-            </div>
-            <div className="mob-card">
-              <div className="mob-field-label">Approval %</div>
-              <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
-            </div>
-          </div>
-        )}
-
-        {/* The way into a station's own records. Above the station tiers
-            the Mill performance card at the top already lists them. */}
-        {showKpi && stations.length > 0 && (
-        <div className="mob-card">
-          <div className="mob-card-label">Station records</div>
-          {stations.map((s) => {
-            const st = statFor(s.id)
-            return (
-              <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
-                <span>
-                  <span className="mob-entry-name">{s.name}</span>
-                  <span className="mob-station-meta" style={{ display: 'block' }}>
-                    {st.workers > 0 ? `${st.workers} worker${st.workers === 1 ? '' : 's'} · ` : ''}
-                    {st.pct == null ? 'no records' : `${st.pct}% approved`}
-                  </span>
-                </span>
-                <span className="mob-entry-side">
-                  <span className="mob-entry-amt">{fmtQty(st.output)}</span>
-                  <span className="mob-caret">›</span>
-                </span>
-              </button>
-            )
-          })}
+      <div className="mob-body">
+        <MobSubHeader title="Work recorded history" onBack={onBack} />
+        <div className="mob-queue-chips">
+          {DAY_RANGES.map((r) => (
+            <button key={r.key} className={range === r.key ? 'on' : ''} onClick={() => setRange(r.key)}>
+              {r.label}
+            </button>
+          ))}
         </div>
+
+        {record.length === 0 ? (
+          <div className="mob-card">
+            <div className="mob-sub">Nothing set to show on the mill dashboard yet.</div>
+          </div>
+        ) : (
+          record.map((r) => (
+            <div className="mob-card" key={r.station.id}>
+              <button className="mob-cardhead" onClick={() => onStation(r.station, range)}>
+                <span className="mob-card-label">{r.station.name}</span>
+                <span className="mob-caret" aria-hidden="true">›</span>
+              </button>
+              {r.works.map((w) => (
+                <div className="mob-breakrow" key={w.name}>
+                  <span>{w.name}</span>
+                  <span className="mob-entry-amt">{fmtQty(w.qty)}</span>
+                </div>
+              ))}
+            </div>
+          ))
         )}
       </div>
     </>
   )
+}
+
+/** One station's line on the Output record, and the works under it. */
+interface OutputRow {
+  station: Station
+  works: { name: string; qty: number }[]
+}
+
+/**
+ * The Output record: every work set to "Show on mill performance", under
+ * the station it belongs to, with what was APPROVED against it over the
+ * rows given.
+ *
+ * Summed by work NAME rather than by contract, since the same work is
+ * priced once per tier tag and the mill does not care which tier tipped
+ * the cage. A work with nothing recorded still shows, at zero — a station
+ * that produced nothing is the thing a dashboard is for.
+ *
+ * `stations` is already the list this tier may see, so a station-scoped
+ * tier gets its own station and a mill-wide one gets them all, with no
+ * further filtering here.
+ */
+function buildOutputRecord(stations: Station[], jobs: Job[], rows: ProductionEntry[]): OutputRow[] {
+  const millJobs = jobs.filter((j) => j.show_on_mill !== false)
+  const jobById = new Map(millJobs.map((j) => [j.id, j]))
+  const byStation = new Map(stations.map((s) => [s.id, new Map<string, number>()]))
+  for (const j of millJobs) {
+    const m = byStation.get(j.station_id)
+    if (m && !m.has(j.name)) m.set(j.name, 0)
+  }
+  for (const e of rows) {
+    if ((e.approval_status ?? 'approved') !== 'approved') continue
+    const j = jobById.get(e.job_id)
+    const m = byStation.get(e.station_id)
+    if (!j || !m) continue
+    m.set(j.name, (m.get(j.name) ?? 0) + e.quantity)
+  }
+  return stations
+    .map((s) => ({
+      station: s,
+      works: [...(byStation.get(s.id) ?? new Map<string, number>())]
+        .map(([name, qty]) => ({ name, qty }))
+        .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name)),
+    }))
+    .filter((r) => r.works.length > 0)
 }
 
 // Hard cap on hourly piece-work photos — a station's hourly_target is a
@@ -1356,7 +1525,7 @@ function StationScreen({
   jobs,
   rateFor,
   amountFor,
-  tier2RateFor,
+  ladderFor,
   profileId,
   jobColumnReady,
   canEntry,
@@ -1369,7 +1538,7 @@ function StationScreen({
   jobs: Job[]
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   profileId: string | null
   jobColumnReady: boolean
   canEntry: boolean
@@ -1379,11 +1548,11 @@ function StationScreen({
   return (
     <>
       <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Stations</button>
         <span className="mob-brand">MJM</span>
       </div>
 
       <div className="mob-body">
+        <MobSubHeader title={station.name} onBack={onBack} />
         {/* The admin tier is an access level, not a job on the floor. */}
         {tier?.sort_order === ADMIN_TIER_ORDER ? (
           <div className="mob-card">
@@ -1397,7 +1566,7 @@ function StationScreen({
             jobs={jobs}
             rateFor={rateFor}
             amountFor={amountFor}
-            tier2RateFor={tier2RateFor}
+            ladderFor={ladderFor}
             profileId={profileId}
             jobColumnReady={jobColumnReady}
             canEntry={canEntry}
@@ -1412,6 +1581,114 @@ function StationScreen({
 /* Job picker + stamp card + photo capture + hour-grouped records — shared
    between the Performance tab's station drill-in and the Operator's merged
    Record tab. */
+/**
+ * The target dashboards the station's "Show on Add new work record" ticks
+ * switch on (Settings → Station tags → pin action). Draft faces — to be
+ * refined once real use shapes them.
+ *
+ * Per hour: one badge per unit of the hour's target, ticked as YOUR
+ * records land this hour. From the badge past the base-rate cap the
+ * colour changes — that work is already earning the second-tier rate.
+ * Per month: the station's work done this month against its target.
+ */
+function StationTargetCards({
+  station,
+  profileId,
+}: {
+  station: Station
+  profileId: string | null
+}) {
+  // The rate's own tier threshold decides where the badges turn blue; a
+  // station without a tiered rate keeps the default cap.
+  const capBadge = tier1Cap(null)
+  const showHour = station.show_hourly_target === true && (station.hourly_target ?? 0) > 0
+  const showMonth = station.show_monthly_target === true && (station.monthly_target ?? 0) > 0
+  const [hourCount, setHourCount] = useState(0)
+  const [monthQty, setMonthQty] = useState(0)
+
+  useEffect(() => {
+    if (!showHour && !showMonth) return
+    let alive = true
+    async function load() {
+      if (showHour && profileId) {
+        const hourStart = new Date()
+        hourStart.setMinutes(0, 0, 0)
+        const { data } = await supabase
+          .from('operation_entries')
+          .select('id')
+          .eq('station_id', station.id)
+          .eq('user_id', profileId)
+          .gte('created_at', hourStart.toISOString())
+        if (alive) setHourCount((data ?? []).length)
+      }
+      if (showMonth) {
+        const monthStart = todayISO().slice(0, 8) + '01'
+        const { data } = await supabase
+          .from('operation_entries')
+          .select('quantity')
+          .eq('station_id', station.id)
+          .gte('work_date', monthStart)
+        if (alive) {
+          setMonthQty((data ?? []).reduce((t, r) => t + Number((r as { quantity: number }).quantity ?? 0), 0))
+        }
+      }
+    }
+    load()
+    const t = setInterval(load, 60_000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [station.id, profileId, showHour, showMonth])
+
+  if (!showHour && !showMonth) return null
+  const hourTarget = station.hourly_target ?? 0
+  const monthTarget = station.monthly_target ?? 0
+  const pct = monthTarget > 0 ? Math.min(100, Math.round((monthQty / monthTarget) * 100)) : 0
+
+  return (
+    <>
+      {showHour && (
+        <div className="mob-card mob-highlight">
+          <div className="mob-card-label">Target per hour</div>
+          <div className="stamp-row">
+            {Array.from({ length: hourTarget }, (_, i) => (
+              <span
+                key={i}
+                className={`stamp ${i >= capBadge ? 'tier2' : ''} ${i < hourCount ? 'done' : ''}`}
+              >
+                ✓
+              </span>
+            ))}
+            {hourCount > hourTarget && (
+              <span className="stamp extra">+{hourCount - hourTarget}</span>
+            )}
+          </div>
+          <div className="mob-sub">
+            {hourCount} of {hourTarget} this hour
+            {hourTarget > capBadge
+              ? ` · blue from no. ${capBadge + 1}: the second-tier rate`
+              : ''}
+          </div>
+        </div>
+      )}
+      {showMonth && (
+        <div className="mob-card">
+          <div className="mob-card-label">Target per month</div>
+          <div className="mob-breakrow">
+            <span>Work done this month</span>
+            <span className="mob-entry-amt">{Number.isInteger(monthQty) ? monthQty : monthQty.toFixed(1)} / {monthTarget}</span>
+          </div>
+          <div className="mob-bartrack">
+            <div style={{ width: `${pct}%` }} />
+          </div>
+          <div className="mob-sub">{pct}% of this month's target</div>
+        </div>
+      )}
+    </>
+  )
+}
+
 function StationWorkPanel({
   station,
   tier,
@@ -1419,7 +1696,7 @@ function StationWorkPanel({
   jobs,
   rateFor,
   amountFor,
-  tier2RateFor,
+  ladderFor,
   profileId,
   jobColumnReady,
   canEntry,
@@ -1431,7 +1708,7 @@ function StationWorkPanel({
   jobs: Job[]
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   profileId: string | null
   jobColumnReady: boolean
   canEntry: boolean
@@ -1439,8 +1716,9 @@ function StationWorkPanel({
 }) {
   const [viewDate, setViewDate] = useState(() => new Date())
   const [records, setRecords] = useState<PhotoRecord[]>([])
-  const [stationEntries, setStationEntries] = useState<ProductionEntry[]>([])
   const [uploading, setUploading] = useState(false)
+  // Today's hours, behind the "i" beside the hour being worked.
+  const [showHours, setShowHours] = useState(false)
   const [jobId, setJobId] = useState('')
   const [, forceTick] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -1458,12 +1736,17 @@ function StationWorkPanel({
   // only, and ticked as a JOB RECORD — incentives and other support rates
   // are paid but never offered as a record to submit.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
-  const approvedJobs = jobs.filter(
-    (j) =>
-      j.station_id === station.id &&
-      j.approval_status === 'approved' &&
-      j.record_job !== false &&
-      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  const approvedJobs = onePerWork(
+    jobs.filter(
+      (j) =>
+        j.station_id === station.id &&
+        j.approval_status === 'approved' &&
+        j.active &&
+        j.record_job !== false &&
+        (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+    ),
+    tier,
+    grades,
   )
 
   // Auto-pick the job when there's only one option; otherwise wait for a choice.
@@ -1485,7 +1768,7 @@ function StationWorkPanel({
       ? 'id, station_id, photo_path, taken_at, job_id, entry_id'
       : 'id, station_id, photo_path, taken_at, entry_id'
     const { data, error } = await supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select<string, PhotoRecord>(cols)
       .eq('station_id', station.id)
       .gte('taken_at', start.toISOString())
@@ -1494,15 +1777,6 @@ function StationWorkPanel({
     if (error) onError(error.message)
     else setRecords(data ?? [])
 
-    if (hourlyPieceWork) {
-      const { data: entryRows, error: entryErr } = await supabase
-        .from('production_entries')
-        .select('*')
-        .eq('station_id', station.id)
-        .eq('work_date', dayISO(viewDate))
-      if (entryErr) onError(entryErr.message)
-      else setStationEntries(entryRows ?? [])
-    }
   }
 
   // Runs the shared conversion for just this station, then refreshes the
@@ -1558,7 +1832,7 @@ function StationWorkPanel({
         .upload(path, photo, { contentType: 'image/jpeg' })
       if (upErr) throw new Error(upErr.message)
       const { error: insErr } = await supabase
-        .from('photo_records')
+        .from('operation_photos')
         .insert({
           station_id: station.id,
           photo_path: path,
@@ -1575,23 +1849,59 @@ function StationWorkPanel({
     }
   }
 
-  function shiftDay(delta: number) {
-    const next = new Date(viewDate)
-    next.setDate(next.getDate() + delta)
-    if (dayISO(next) > dayISO(new Date())) return // no future days
-    setViewDate(next)
-  }
 
-  const photoUrl = (path: string | null) =>
-    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
 
-  const rateLabel = (jobId: string) => rateLabelFor(rateFor, tier2RateFor, jobId)
-  const hourBreakdown = (jobId: string, count: number) => breakdownFor(rateFor, tier2RateFor, jobId, count)
+  /**
+   * Today's hours, priced. A tiered rate counts within the hour — that is
+   * what the tier threshold means — so each hour is priced on its own and
+   * the day is their sum. Empty hours are left out; the hour being worked
+   * is kept whether or not it holds anything yet.
+   */
+  const hourRows = (() => {
+    if (!isToday) return [] as { hour: number; count: number; breakdown: string; amount: number; current: boolean }[]
+    const nowHour = new Date().getHours()
+    const counts = new Map<number, number>()
+    for (const r of records) {
+      if (jobId && r.job_id !== jobId) continue
+      const h = new Date(r.taken_at).getHours()
+      counts.set(h, (counts.get(h) ?? 0) + 1)
+    }
+    const hours = [...new Set([...counts.keys(), nowHour])].sort((a, b) => a - b)
+    return hours.map((hour) => {
+      const count = counts.get(hour) ?? 0
+      return {
+        hour,
+        count,
+        breakdown: jobId
+          ? ladderBreakdownFrom(ladderFor(jobId), count)
+              .map((step) => `${step.units} × ${RM(step.rate)}`)
+              .join(' + ')
+          : `${count}`,
+        amount: jobId ? amountFor(jobId, count) : 0,
+        current: hour === nowHour,
+      }
+    })
+  })()
+  const hoursTotal = hourRows.reduce((n, h) => n + h.amount, 0)
+
+  // Kept on the props so every screen taking a price ladder takes the same
+  // set; the hour sheet reads the ladder itself.
+  void rateFor
+
+  // What the station asks for each hour. Null means it asks for nothing in
+  // particular, so there is no row of stamps to draw against.
+  const hourlyTarget = station.hourly_target ?? null
+
 
   return (
     <>
-        {/* 1 — status stamp card */}
+        <StationTargetCards station={station} profileId={profileId} />
+
+        {/* 1 — the day and the hour in one block: what has been recorded
+               today, then the hour being worked right now. */}
         <div className="mob-card mob-highlight">
+          <div className="mob-card-label">Work done today</div>
+          <WorkDoneCard bare profileId={profileId} station={station} reloadKey={records.length} />
           {station.hourly_count ? (
             <>
               {!jobColumnReady && (
@@ -1607,11 +1917,7 @@ function StationWorkPanel({
                       ? `No approved piece rate for the ${tier.name} tier at this station yet.`
                       : 'No approved piece rate at this station yet.'}
                   </div>
-                ) : approvedJobs.length === 1 ? (
-                  <div className="mob-field-label">
-                    Job: {approvedJobs[0].name} · {rateLabel(approvedJobs[0].id)}{approvedJobs[0].unit}
-                  </div>
-                ) : (
+                ) : approvedJobs.length === 1 ? null : (
                   <>
                     <div className="mob-field-label">Job</div>
                     <select className="mob-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
@@ -1623,37 +1929,54 @@ function StationWorkPanel({
                   </>
                 )
               )}
-              <div className="mob-title mob-zone-title">{hourZone}</div>
-              <div className="stamp-row">
-                {Array.from({ length: target }, (_, i) => (
-                  <span
-                    key={i}
-                    className={`stamp ${i < stampsThisHour ? (rewardActive ? 'done reward' : 'done') : ''}`}
-                  >
-                    ✓
-                  </span>
-                ))}
-                {stampsThisHour > target && (
-                  <span className={`stamp extra ${rewardActive ? 'reward' : ''}`}>
-                    +{stampsThisHour - target}
-                  </span>
-                )}
+              <div className="mob-zone-row">
+                <span className="mob-title mob-zone-title">{hourZone}</span>
+                <button
+                  type="button"
+                  className="mob-info-btn"
+                  onClick={() => setShowHours(true)}
+                  aria-label="Today's hours"
+                  title="Today's hours"
+                >
+                  i
+                </button>
               </div>
-              <div className="mob-sub">
-                {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
-                {rewardActive && ' · bonus hour ✨'}
-              </div>
+              {/* One stamp per unit the station asks for this hour, filled
+                  as records come in. A station with no hourly target has
+                  nothing to draw a row of stamps against, so it counts. */}
+              {hourlyTarget == null ? (
+                <div className="mob-sub">
+                  {stampsThisHour} recorded this hour · {minutesLeft} min left
+                  {rewardActive && ' · bonus hour ✨'}
+                </div>
+              ) : (
+                <>
+                  <div className="stamp-row">
+                    {Array.from({ length: target }, (_, i) => (
+                      <span
+                        key={i}
+                        className={`stamp ${i < stampsThisHour ? (rewardActive ? 'done reward' : 'done') : ''}`}
+                      >
+                        ✓
+                      </span>
+                    ))}
+                    {stampsThisHour > target && (
+                      <span className={`stamp extra ${rewardActive ? 'reward' : ''}`}>
+                        +{stampsThisHour - target}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mob-sub">
+                    {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
+                    {rewardActive && ' · bonus hour ✨'}
+                  </div>
+                </>
+              )}
               {minPrev > 0 && (
                 <div className="mob-sub">
                   {nextHourBonus
                     ? `Minimum met (${stampsThisHour}/${minPrev}) — next hour is a bonus hour ✨`
                     : `${minPrev - stampsThisHour} more this hour to make ${hourLabel(now.getHours() + 1)} a bonus hour`}
-                </div>
-              )}
-              {hourlyPieceWork && jobId && (
-                <div className="mob-sub">
-                  {hourBreakdown(jobId, stampsThisHour)} ={' '}
-                  <strong>{RM(amountFor(jobId, stampsThisHour))}</strong> so far this hour · pending approval
                 </div>
               )}
             </>
@@ -1696,50 +2019,49 @@ function StationWorkPanel({
           )}
         </div>
 
-        {/* 3 — records with day navigation */}
-        <div className="mob-card">
-          <div className="mob-daynav">
-            <button className="mob-mini" onClick={() => shiftDay(-1)}>‹</button>
-            <span className="mob-title">
-              {isToday
-                ? "Today's records"
-                : viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
-            </span>
-            <button className="mob-mini" onClick={() => shiftDay(1)} disabled={isToday}>›</button>
-          </div>
-          {records.length === 0 && <div className="mob-sub">No records this day.</div>}
-          {station.hourly_count ? (
-            groupByHour(records).map(([hour, jid, rows]) => {
-              const entryId = rows[0]?.entry_id
-              const entry = entryId ? stationEntries.find((e) => e.id === entryId) : undefined
-              const jobName = jid ? jobs.find((j) => j.id === jid)?.name : undefined
-              return (
-                <div key={`${hour}-${jid ?? 'x'}`}>
-                  <div className="mob-hour-head">
-                    <span>
-                      {hourLabel(hour)} – {hourLabel(hour + 1)}{jobName ? ` · ${jobName}` : ''}
+        {showHours && (
+          <div className="mob-modal-wrap" role="dialog" aria-modal="true">
+            <div className="mob-modal">
+              <div className="mob-card-label">
+                <span>Today's hours</span>
+                <button className="mob-icon-btn corner" onClick={() => setShowHours(false)} aria-label="Close">×</button>
+              </div>
+              {/* Midnight to midnight, every hour listed whether or not
+                  anything was recorded in it — a blank hour is an answer. */}
+              {/* Only the hours that hold something, plus the one being
+                  worked — a fixed run of twenty-four rows is mostly empty
+                  and pushes the total off the screen. */}
+              <div className="mob-hourlist">
+                {hourRows.length === 0 && (
+                  <div className="mob-sub">Nothing recorded yet today.</div>
+                )}
+                {hourRows.map((h) => (
+                  <div className={`mob-hourrow ${h.current ? 'now' : ''}`} key={h.hour}>
+                    <span className="mob-hourrow-when">
+                      {hourLabel(h.hour)} – {hourLabel(h.hour + 1)}
+                      {h.current && <span className="mob-chip">now</span>}
                     </span>
-                    {entry ? (
-                      <span className="mob-entry-side">
-                        <span className="mob-entry-amt">{RM(amountFor(entry.job_id, entry.quantity))}</span>
-                        {statusChip(entry.approval_status)}
-                      </span>
-                    ) : (
-                      <span className={`mob-chip ${rows.length >= target ? 'ok' : ''}`}>
-                        {rows.length >= target ? `${rows.length} of ${target} ✓` : `${rows.length} of ${target}`}
-                      </span>
-                    )}
+                    <span className="mob-hourrow-sum">
+                      {h.count === 0 ? (
+                        <span className="muted">·</span>
+                      ) : (
+                        <>
+                          <span className="mob-station-meta">{h.breakdown}</span>
+                          <span className="mob-entry-amt">{RM(h.amount)}</span>
+                        </>
+                      )}
+                    </span>
                   </div>
-                  {rows.map((r) => (
-                    <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />
-                  ))}
+                ))}
+                <div className="mob-breakrow total">
+                  <span>Today total · {hourRows.reduce((n, h) => n + h.count, 0)} recorded</span>
+                  <span className="mob-entry-amt">{RM(hoursTotal)}</span>
                 </div>
-              )
-            })
-          ) : (
-            records.map((r) => <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />)
-          )}
-        </div>
+                            </div>
+            </div>
+          </div>
+        )}
+
     </>
   )
 }
@@ -1763,8 +2085,18 @@ function StationWorkPanel({
 /* tab is for recording work, and attendance has had its moment.        */
 /* ------------------------------------------------------------------ */
 
-/** A clock-in waiting on its confirm press: the photo, where, and when. */
-interface PendingClockIn {
+/**
+ * A stamp waiting on its confirm press: the photo, where, and when.
+ *
+ * Both ends of a shift go through this. Clocking out is as much a claim
+ * about being somewhere as clocking in — the hours between them are what
+ * gets paid — so it is witnessed the same way.
+ */
+interface PendingStamp {
+  /** Which end of the shift this is. */
+  kind: 'in' | 'out'
+  /** The shift being closed; only set when clocking out. */
+  shiftId?: string
   file: File
   preview: string
   at: string
@@ -1795,18 +2127,22 @@ function spanLabel(fromISO: string, toISO: string) {
 
 function ClockCard({
   profileId,
-  stationId,
+  station,
   onError,
 }: {
   profileId: string | null
-  stationId: string | null
+  station: Station | null
   onError: (m: string | null) => void
 }) {
+  const stationId = station?.id ?? null
   // Every stamp of the last seven days, so today's card and the week
   // strip read from one load.
   const [shifts, setShifts] = useState<Shift[]>([])
   const [busy, setBusy] = useState(false)
-  const [pending, setPending] = useState<PendingClockIn | null>(null)
+  const [pending, setPending] = useState<PendingStamp | null>(null)
+  // Which end of the shift the camera was opened for — the file comes
+  // back from the input with no memory of why it was asked for.
+  const aiming = useRef<{ kind: 'in' | 'out'; shiftId?: string }>({ kind: 'in' })
   // Folded down once the day has been stamped, and opened again by the
   // clock chip when it is time to clock out.
   const [open, setOpen] = useState(false)
@@ -1826,7 +2162,7 @@ function ClockCard({
     if (!profileId) return
     let cancelled = false
     supabase
-      .from('attendance')
+      .from('operation_attendance')
       .select('id, work_date, clock_in, clock_out')
       .eq('user_id', profileId)
       .gte('work_date', weekAgo)
@@ -1889,11 +2225,17 @@ function ClockCard({
 
   // The camera comes back with a file; where and when are settled at the
   // same moment, so the confirm screen can show all three together.
+  function openCamera(kind: 'in' | 'out', shiftId?: string) {
+    aiming.current = { kind, shiftId }
+    camera.current?.click()
+  }
+
   async function tookSelfie(file: File | undefined) {
     if (!file) return
     onError(null)
     const at = new Date().toISOString()
     setPending({
+      ...aiming.current,
       file,
       preview: URL.createObjectURL(file),
       at,
@@ -1909,7 +2251,7 @@ function ClockCard({
             ...p,
             coords,
             locating: false,
-            locationError: coords ? null : 'Location unavailable — clocking in without it.',
+            locationError: coords ? null : 'Location unavailable — stamping without it.',
           },
     )
   }
@@ -1920,7 +2262,8 @@ function ClockCard({
     if (camera.current) camera.current.value = ''
   }
 
-  async function confirmClockIn() {
+  /** Both ends land the same way: photo up first, then the stamp. */
+  async function confirmStamp() {
     if (!profileId || !pending || busy) return
     setBusy(true)
     onError(null)
@@ -1930,7 +2273,7 @@ function ClockCard({
     try {
       const photo = await compressImage(pending.file)
       const stamp = pending.at.replace(/[:.]/g, '-')
-      const path = `attendance/${profileId}-${stamp}.jpg`
+      const path = `attendance/${profileId}-${pending.kind}-${stamp}.jpg`
       const { error: upErr } = await supabase.storage
         .from('records')
         .upload(path, photo, { contentType: 'image/jpeg' })
@@ -1939,51 +2282,56 @@ function ClockCard({
     } catch (e) {
       onError(`Selfie did not upload: ${(e as Error).message}`)
     }
-
-    const row = {
-      user_id: profileId,
-      station_id: stationId,
-      work_date: today,
-      clock_in: pending.at,
-      photo_path: photoPath,
+    const where = {
       latitude: pending.coords?.lat ?? null,
       longitude: pending.coords?.lng ?? null,
       accuracy_m: pending.coords?.accuracy ?? null,
     }
-    const { data, error } = await supabase
-      .from('attendance')
-      .insert(row)
-      .select('id, work_date, clock_in, clock_out')
-      .single()
-    // Not saved is still worth showing: the card stamps so the screen can
-    // be walked through, and the message says exactly why it did not save.
-    if (error) {
-      onError(clockHelp(error.message))
-      setShifts((rows) => [
-        ...rows,
-        { id: `${LOCAL_SHIFT}-${rows.length}`, work_date: today, clock_in: pending.at, clock_out: null },
-      ])
+
+    if (pending.kind === 'out') {
+      const id = pending.shiftId
+      // A stamp the database never took has no row to close, so it is
+      // closed where it lives — on screen.
+      if (id && !id.startsWith(LOCAL_SHIFT)) {
+        const { error } = await supabase
+          .from('operation_attendance')
+          .update({
+            clock_out: pending.at,
+            out_photo_path: photoPath,
+            out_latitude: where.latitude,
+            out_longitude: where.longitude,
+            out_accuracy_m: where.accuracy_m,
+          })
+          .eq('id', id)
+        if (error) onError(clockHelp(error.message))
+      }
+      setShifts((rows) => rows.map((r) => (r.id === id ? { ...r, clock_out: pending.at } : r)))
     } else {
-      setShifts((rows) => [...rows, data as Shift])
+      const { data, error } = await supabase
+        .from('operation_attendance')
+        .insert({
+          user_id: profileId,
+          station_id: stationId,
+          work_date: today,
+          clock_in: pending.at,
+          photo_path: photoPath,
+          ...where,
+        })
+        .select('id, work_date, clock_in, clock_out')
+        .single()
+      // Not saved is still worth showing: the card stamps so the screen
+      // can be walked through, and the message says exactly why.
+      if (error) {
+        onError(clockHelp(error.message))
+        setShifts((rows) => [
+          ...rows,
+          { id: `${LOCAL_SHIFT}-${rows.length}`, work_date: today, clock_in: pending.at, clock_out: null },
+        ])
+      } else {
+        setShifts((rows) => [...rows, data as Shift])
+      }
     }
     discard()
-    setBusy(false)
-    setOpen(false)
-  }
-
-  async function clockOut() {
-    if (!profileId || !running || busy) return
-    setBusy(true)
-    onError(null)
-    const now = new Date().toISOString()
-    if (!running.id.startsWith(LOCAL_SHIFT)) {
-      const { error } = await supabase
-        .from('attendance')
-        .update({ clock_out: now })
-        .eq('id', running.id)
-      if (error) onError(clockHelp(error.message))
-    }
-    setShifts((rows) => rows.map((r) => (r.id === running.id ? { ...r, clock_out: now } : r)))
     setBusy(false)
     setOpen(false)
   }
@@ -1999,12 +2347,18 @@ function ClockCard({
     </svg>
   )
 
-  /** A tapped day, told in full: the first in, the last out, the hours. */
+  /**
+   * A tapped day, told in full — every in and out it holds, in order.
+   *
+   * A day is not one pair. Somebody who goes home for lunch and comes
+   * back has stamped twice, and showing only the first in and the last
+   * out would quietly pay them for the gap. Each pair is listed, and the
+   * hours are the pairs added up.
+   */
   function dayDetail(iso: string) {
     const rows = shifts
       .filter((s) => (s.work_date ?? '') === iso)
       .sort((a, b) => a.clock_in.localeCompare(b.clock_in))
-    const outs = rows.filter((s) => s.clock_out != null).map((s) => s.clock_out!).sort()
     const mins = rows.reduce(
       (t, s) =>
         t + (s.clock_out ? (new Date(s.clock_out).getTime() - new Date(s.clock_in).getTime()) / 60_000 : 0),
@@ -2012,9 +2366,7 @@ function ClockCard({
     )
     const h = Math.floor(mins / 60)
     return {
-      firstIn: rows[0]?.clock_in ?? null,
-      lastOut: outs[outs.length - 1] ?? null,
-      stillIn: rows.some((s) => s.clock_out == null),
+      rows,
       span: mins > 0 ? (h > 0 ? `${h}h ${Math.round(mins % 60)}m` : `${Math.round(mins)}m`) : null,
     }
   }
@@ -2056,14 +2408,26 @@ function ClockCard({
                 ✕
               </button>
             </div>
-            <div className="mob-row">
-              <span className="mob-field-label">Clock in</span>
-              <span>{d.firstIn ? clockTime(d.firstIn) : '—'}</span>
-            </div>
-            <div className="mob-row">
-              <span className="mob-field-label">Clock out</span>
-              <span>{d.lastOut ? clockTime(d.lastOut) : d.stillIn ? 'Still in' : '—'}</span>
-            </div>
+            {d.rows.length === 0 ? (
+              <div className="mob-row">
+                <span className="mob-field-label">Clock in</span>
+                <span>—</span>
+              </div>
+            ) : (
+              d.rows.map((r, i) => (
+                <div className="mob-row" key={r.id}>
+                  {/* The number is only worth printing when there is more
+                      than one pair to tell apart. */}
+                  <span className="mob-field-label">
+                    {d.rows.length > 1 ? `${i + 1}. ` : ''}In · out
+                  </span>
+                  <span>
+                    {clockTime(r.clock_in)} –{' '}
+                    {r.clock_out ? clockTime(r.clock_out) : 'still in'}
+                  </span>
+                </div>
+              ))
+            )}
             <div className="mob-row">
               <span className="mob-field-label">Work hours</span>
               <span>{d.span ?? '—'}</span>
@@ -2079,8 +2443,10 @@ function ClockCard({
   if (pending) {
     return (
       <div className="mob-card">
-        <div className="mob-card-label">Confirm clock in</div>
-        <img className="mob-selfie" src={pending.preview} alt="Clock-in selfie" />
+        <div className="mob-card-label">
+          {pending.kind === 'out' ? 'Confirm clock out' : 'Confirm clock in'}
+        </div>
+        <img className="mob-selfie" src={pending.preview} alt="Attendance selfie" />
         <div className="mob-row">
           <span className="mob-field-label">Time</span>
           <span>{clockTime(pending.at)} · {new Date(pending.at).toLocaleDateString()}</span>
@@ -2101,11 +2467,29 @@ function ClockCard({
             <span>±{Math.round(pending.coords.accuracy)} m</span>
           </div>
         )}
+        {/* The stamp against the station's preset coordinate (set in
+            Settings → Station tags). Advisory: an away stamp still lands,
+            marked as away — refusing it only teaches people to switch
+            location off. */}
+        {(() => {
+          const check = stationLocationCheck(station, pending.coords)
+          if (!check) return null
+          return (
+            <div className="mob-row">
+              <span className="mob-field-label">Station check</span>
+              <span style={{ color: check.ok ? '#15803d' : '#b45309', fontWeight: 700 }}>
+                {check.ok
+                  ? `✓ At ${station!.name} (${distanceLabel(check.distance)} away)`
+                  : `⚠ ${distanceLabel(check.distance)} from ${station!.name}`}
+              </span>
+            </div>
+          )
+        })()}
         {pending.locationError && <div className="mob-sub">{pending.locationError}</div>}
         <div className="mob-actions">
           <button className="mob-mini ghost" onClick={discard} disabled={busy}>Retake</button>
-          <button className="mob-mini go" onClick={confirmClockIn} disabled={busy || pending.locating}>
-            {busy ? 'Saving…' : 'Confirm clock in'}
+          <button className="mob-mini go" onClick={confirmStamp} disabled={busy || pending.locating}>
+            {busy ? 'Saving…' : pending.kind === 'out' ? 'Confirm clock out' : 'Confirm clock in'}
           </button>
         </div>
       </div>
@@ -2139,7 +2523,7 @@ function ClockCard({
                 <span className="mob-field-label">Clock out :</span>
                 <button
                   className="mob-clockoutmini"
-                  onClick={clockOut}
+                  onClick={() => openCamera('out', running.id)}
                   disabled={busy || !profileId}
                 >
                   {busy ? 'Saving…' : 'Clock out'}
@@ -2187,10 +2571,12 @@ function ClockCard({
               </div>
             </div>
           ) : (
-            todays.map((s) => (
+            todays.map((s, i) => (
               <div className={`mob-clockrow ${s.clock_out ? '' : 'open'}`} key={s.id}>
                 <div className="mob-clockcell">
-                  <span className="mob-field-label">Clock in</span>
+                  <span className="mob-field-label">
+                    {todays.length > 1 ? `${i + 1}. ` : ''}Clock in
+                  </span>
                   <span className="t">{clockTime(s.clock_in)}</span>
                 </div>
                 <div className="mob-clockcell">
@@ -2206,11 +2592,11 @@ function ClockCard({
 
           <button
             className={`mob-clockbtn ${running ? 'out' : ''}`}
-            onClick={() => (running ? clockOut() : camera.current?.click())}
+            onClick={() => (running ? openCamera('out', running.id) : openCamera('in'))}
             disabled={busy || !profileId}
           >
             {clockIcon}
-            {busy ? 'Saving…' : running ? 'Clock out' : 'Clock in — take a selfie'}
+            {busy ? 'Saving…' : running ? 'Clock out — take a selfie' : 'Clock in — take a selfie'}
           </button>
 
           {closed.length > 0 && (
@@ -2234,6 +2620,104 @@ function ClockCard({
 }
 
 /* ------------------------------------------------------------------ */
+/* WORK DONE TODAY — the run of ticks under the clock card.            */
+/*                                                                      */
+/* One tick per work record submitted today at this station, filling    */
+/* left to right against the station's daily target (Settings → Station */
+/* tags → Daily target). A record counts the moment it is submitted,    */
+/* approved or not: this says how much work has been DONE, and waiting  */
+/* on somebody else's verification is not a reason to have done less.   */
+/*                                                                      */
+/* No target set is a fair answer too — then it simply counts, with     */
+/* nothing to fill up.                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Past this many, a row of ticks stops reading as a count. */
+const TICK_LIMIT = 12
+
+function WorkDoneCard({
+  bare = false,
+  profileId,
+  station,
+  reloadKey,
+}: {
+  /** Render the figures alone, to sit inside another card. */
+  bare?: boolean
+  profileId: string | null
+  station: Station | null
+  reloadKey: number
+}) {
+  const [done, setDone] = useState(0)
+
+  useEffect(() => {
+    if (!profileId || !station) return
+    let cancelled = false
+    const load = () =>
+      supabase
+        .from('operation_entries')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', profileId)
+        .eq('station_id', station.id)
+        .eq('work_date', todayISO())
+        .then(({ count }) => {
+          if (!cancelled) setDone(count ?? 0)
+        })
+    load()
+    // An hourly station's records are not written when the photo is taken
+    // — they are made when the hour closes, by the sweep running at the
+    // top of this view. Nothing tells this card when that happens, so it
+    // asks again rather than sitting on a stale count.
+    const t = setInterval(load, 30_000)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+  }, [profileId, station?.id, reloadKey])
+
+  if (!station) return null
+  const target = station.daily_target ?? null
+  const pct = target ? Math.min(100, (done / target) * 100) : 0
+  const met = target != null && done >= target
+
+  const body = (
+    <>
+      {target == null ? (
+        <div className="mob-stat">{done}</div>
+      ) : target <= TICK_LIMIT ? (
+        <div className="stamp-row light">
+          {Array.from({ length: target }, (_, i) => (
+            <span className={`stamp ${i < done ? 'done' : ''}`} key={i}>✓</span>
+          ))}
+          {done > target && <span className="stamp extra">+{done - target}</span>}
+        </div>
+      ) : (
+        /* Forty ticks is a wall, not a count — the same number said as a
+           bar instead. */
+        <div className="mob-bartrack">
+          <div className={met ? 'best' : ''} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      {/* With no target there is nothing to say that the figure above
+          does not already say. */}
+      {target != null && (
+        <div className="mob-sub">
+          {met ? `${done} of ${target} — target met ✨` : `${done} of ${target} recorded today`}
+        </div>
+      )}
+    </>
+  )
+
+  if (bare) return body
+  return (
+    <div className="mob-card">
+      <div className="mob-card-label">Work done today</div>
+      {body}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* TAB 2 — RECORD: submit a work record → pending → verify → approve  */
 /* ------------------------------------------------------------------ */
 
@@ -2248,6 +2732,7 @@ function RecordTab({
   rateFor,
   amountFor,
   tier2RateFor,
+  ladderFor,
   canEntry,
   jobColumnReady,
   onError,
@@ -2262,6 +2747,7 @@ function RecordTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   canEntry: boolean
   jobColumnReady: boolean
   onError: (m: string | null) => void
@@ -2278,6 +2764,9 @@ function RecordTab({
   // there is nothing to type.
   const [photos, setPhotos] = useState<File[]>([])
   const [submitting, setSubmitting] = useState(false)
+  // Bumped by anything that lands a record, so the tick card counts again
+  // without the whole tab being rebuilt around a shared list.
+  const [recorded, setRecorded] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Assistant Station Head is paid on the shift's actual output, not a
@@ -2310,11 +2799,16 @@ function RecordTab({
   // JOB RECORD are offered: incentives and other support rates are priced
   // for payroll but are not a record anyone submits.
   const tierOf = (gid: string | null) => grades.find((g) => g.id === gid)?.sort_order
-  const stationJobs = jobs.filter(
-    (j) =>
-      j.station_id === stationId &&
-      j.record_job !== false &&
-      (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+  const stationJobs = onePerWork(
+    jobs.filter(
+      (j) =>
+        j.station_id === stationId &&
+        j.active &&
+        j.record_job !== false &&
+        (!j.grade_id || tier == null || (tierOf(j.grade_id) ?? 99) >= tier.sort_order),
+    ),
+    tier,
+    grades,
   )
   const job = jobs.find((j) => j.id === jobId)
   const rate = jobId ? rateFor(jobId) : 0
@@ -2347,7 +2841,7 @@ function RecordTab({
     }
     setPulling(true)
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('quantity, approval_status')
       .eq('job_id', operatorJob.id)
       .eq('work_date', dutyDate)
@@ -2380,7 +2874,7 @@ function RecordTab({
     onError(null)
     try {
       const { data, error } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .insert({
           work_date: isASH ? dutyDate : todayISO(),
           station_id: stationId,
@@ -2404,7 +2898,7 @@ function RecordTab({
             .upload(path, compressed, { contentType: 'image/jpeg' })
           if (!upErr) {
             await supabase
-              .from('photo_records')
+              .from('operation_photos')
               .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
           }
         }
@@ -2413,6 +2907,7 @@ function RecordTab({
       setQty('')
       setDutyShift('')
       setPhotos([])
+      setRecorded((n) => n + 1)
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -2431,6 +2926,7 @@ function RecordTab({
         rateFor={rateFor}
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
         onBack={() => setDetail(null)}
       />
     )
@@ -2448,6 +2944,8 @@ function RecordTab({
         stations={stations}
         jobs={jobs}
         amountFor={amountFor}
+        canEdit={effectiveCapabilities(tier).includes('edit-entry')}
+        myStations={myStations}
         onOpen={setDetail}
         onBack={() => setView('form')}
       />
@@ -2477,11 +2975,19 @@ function RecordTab({
             </button>
           </div>
 
-          <ClockCard
-            profileId={profileId}
-            stationId={myStation?.id ?? null}
-            onError={onError}
-          />
+          {isEntitled(tier, 'clock-in-out', grades) && (
+            <ClockCard
+              profileId={profileId}
+              station={myStation ?? null}
+              onError={onError}
+            />
+          )}
+
+          {/* "Work done today" now heads the work panel itself, so it is
+              only drawn here when there is no panel to head. */}
+          {(!canEntry || myStations.length === 0) && (
+            <WorkDoneCard profileId={profileId} station={myStation} reloadKey={recorded} />
+          )}
 
           {!canEntry ? (
             <div className="mob-card">
@@ -2517,7 +3023,7 @@ function RecordTab({
                   jobs={jobs}
                   rateFor={rateFor}
                   amountFor={amountFor}
-                  tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
                   profileId={profileId}
                   jobColumnReady={jobColumnReady}
                   canEntry={canEntry}
@@ -2550,10 +3056,22 @@ function RecordTab({
           </button>
         </div>
 
-        <ClockCard
+        {isEntitled(tier, 'clock-in-out', grades) && (
+          <ClockCard
+            profileId={profileId}
+            station={ownStation ?? null}
+            onError={onError}
+          />
+        )}
+
+{/* The target dashboards this station's ticks switch on — the
+            plain record form gets them just like the hourly panel. */}
+        {ownStation && <StationTargetCards station={ownStation} profileId={profileId} />}
+
+        <WorkDoneCard
           profileId={profileId}
-          stationId={ownStation?.id ?? null}
-          onError={onError}
+          station={stations.find((x) => x.id === stationId) ?? ownStation}
+          reloadKey={recorded}
         />
 
         {!canEntry ? (
@@ -2637,7 +3155,7 @@ function RecordTab({
                     <span>
                       {tier2Rate == null
                         ? `${pulledQty} × ${RM(rate)}${job.unit}`
-                        : breakdownFor(rateFor, tier2RateFor, jobId, pulledQty)}
+                        : breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, pulledQty)}
                     </span>
                     <span>{RM(ashAmount)}</span>
                   </div>
@@ -2662,7 +3180,7 @@ function RecordTab({
                       <span>
                         {tier2Rate == null
                           ? `${qty} × ${RM(rate)}${job.unit}`
-                          : breakdownFor(rateFor, tier2RateFor, jobId, Number(qty))}
+                          : breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, Number(qty))}
                       </span>
                       <span>{RM(amount)}</span>
                     </div>
@@ -2709,7 +3227,7 @@ function RecordTab({
                 </div>
                 {atStationLevel && job && (
                   <div className="mob-breakrow total">
-                    <span>{breakdownFor(rateFor, tier2RateFor, jobId, photos.length)}{job.unit}</span>
+                    <span>{breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, photos.length)}{job.unit}</span>
                     <span>{RM(amountFor(jobId, photos.length))}</span>
                   </div>
                 )}
@@ -2750,17 +3268,15 @@ function RecordTab({
 /* there. Tapping a row opens the full submitted record.               */
 /* ------------------------------------------------------------------ */
 
-const HISTORY_RANGES = [
-  { key: 'today', label: 'Today', days: 0 },
-  { key: '7d', label: '7 days', days: 6 },
-  { key: '30d', label: '30 days', days: 29 },
-] as const
-
 function RecordHistory({
   profileId,
   stations,
   jobs,
   amountFor,
+  canEdit,
+  station = null,
+  myStations = [],
+  initialRange = 'today',
   onOpen,
   onBack,
 }: {
@@ -2768,85 +3284,261 @@ function RecordHistory({
   stations: Station[]
   jobs: Job[]
   amountFor: (jobId: string, quantity: number) => number
+  /** The tier's Edit tick (Work entry setting) — without it, no pencil. */
+  canEdit: boolean
+  /**
+   * Whose history this is. Without a station it is YOUR records, reached
+   * from "My work done". With one — the › beside a station on the Output
+   * record — it is everything recorded AT that station, whoever did it,
+   * and the screen is headed with the station's name.
+   */
+  station?: Station | null
+  /**
+   * The viewer's OWN station tags, for when the records cannot say where
+   * they were done — a day with nothing submitted has no station in it,
+   * and that is exactly the day the question gets asked.
+   */
+  myStations?: Station[]
+  /**
+   * The window to open on. Coming from the Output record it is the one
+   * that was being read there — clicking through from "30 days" and
+   * landing on "Today" throws the question away and makes the numbers
+   * look wrong.
+   */
+  initialRange?: DayRange
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
-  const [rangeKey, setRangeKey] = useState<(typeof HISTORY_RANGES)[number]['key']>('today')
+  const [rangeKey, setRangeKey] = useState<HistoryRange>(
+    RANGE_FROM_OUTPUT[initialRange] ?? 'today',
+  )
+  // The earlier-months list, folded away behind the history icon.
+  const [showMonths, setShowMonths] = useState(false)
+  const months = useMemo(recentMonths, [])
+  const pickedMonth = months.find((m) => m.key === rangeKey) ?? null
   const [rows, setRows] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
+  // The entry whose pencil was tapped, and the number being retyped.
+  const [editing, setEditing] = useState<ProductionEntry | null>(null)
+  const [editQty, setEditQty] = useState('')
+  const [editErr, setEditErr] = useState<string | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  // Only work still in (or thrown out of) the queue may be reworked —
+  // an approved number is settled.
+  const editable = (e: ProductionEntry) =>
+    canEdit && ['pending', 'rejected', undefined].includes(e.approval_status as never)
+
+  async function saveEdit() {
+    if (!editing) return
+    const qty = Number(editQty)
+    if (editQty.trim() === '' || !Number.isFinite(qty) || qty <= 0) {
+      return setEditErr('Work done must be a positive number.')
+    }
+    setSavingEdit(true)
+    setEditErr(null)
+    // A fixed entry goes back through verify and approve.
+    const { data, error } = await supabase
+      .from('operation_entries')
+      .update({
+        quantity: qty,
+        approval_status: 'pending',
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      } as never)
+      .eq('id', editing.id)
+      .select('id')
+    setSavingEdit(false)
+    if (error) return setEditErr(error.message)
+    if (!data || data.length === 0) {
+      return setEditErr('The database would not let you edit this entry.')
+    }
+    setRows((rs) =>
+      rs.map((r) =>
+        r.id === editing.id
+          ? { ...r, quantity: qty, approval_status: 'pending', verified_by: null, approved_by: null }
+          : r,
+      ),
+    )
+    setEditing(null)
+  }
 
   useEffect(() => {
-    if (!profileId) return
-    const range = HISTORY_RANGES.find((r) => r.key === rangeKey)!
-    const d = new Date()
-    d.setDate(d.getDate() - range.days)
-    const since = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+    if (!station && !profileId) return
+    // A finished month has an end as well as a start, so the window is
+    // read as a pair rather than as "everything since".
+    const { from, to } = historyWindow(rangeKey)
     setLoading(true)
-    supabase
-      .from('production_entries')
+    let q = supabase
+      .from('operation_entries')
       .select('*')
-      .eq('user_id', profileId)
-      .gte('work_date', since)
-      .order('created_at', { ascending: false })
+      .gte('work_date', from)
+      .lte('work_date', to)
+    // Station mode reads the whole station; personal mode reads your rows.
+    q = station ? q.eq('station_id', station.id) : q.eq('user_id', profileId!)
+    q.order('created_at', { ascending: false })
       .limit(200)
       .then(({ data }) => {
         setRows(data ?? [])
         setLoading(false)
       })
-  }, [profileId, rangeKey])
+  }, [profileId, rangeKey, station])
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
 
+  /**
+   * Which station these records are from. A station's own history knows
+   * already; YOUR history did not say at all, and "Work Record History"
+   * over a list of jobs left the question hanging — so it is read off the
+   * records themselves. Most people work one station and get its name;
+   * anyone who does not gets the count, which is the honest answer.
+   */
+  const spanned = [...new Set(rows.map((e) => e.station_id))]
+  const named = (n: number, one: () => string) =>
+    n === 1 ? one() : n > 1 ? `${n} stations` : null
+  const headStation = station
+    ? station.name
+    : // The records first — they are what is on the screen. An empty
+      // range says nothing about where you work, so the station tags
+      // answer instead, and only a person with no tag at all gets silence.
+      named(spanned.length, () => stationName(spanned[0])) ??
+      named(myStations.length, () => myStations[0].name) ??
+      // Nobody tagged to a station is not scoped to one, which the
+      // Profile tab already words this way.
+      'All Stations'
+
   return (
     <>
       <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Record</button>
         <span className="mob-brand">MJM</span>
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Work Record History</div>
+        <MobSubHeader title="Work Record History" onBack={onBack} />
+        {/* The station, with the way back through earlier months beside
+            it — three columns, so the name stays centred on the screen
+            rather than on the space left over next to the button. */}
+        <div className="mob-histhead">
+          <span className="mob-card-label centred">{headStation}</span>
+          <button
+            className={`mob-icon-btn ${showMonths ? 'on' : ''}`}
+            onClick={() => setShowMonths((v) => !v)}
+            title="Earlier months"
+            aria-label="Earlier months"
+            aria-expanded={showMonths}
+          >
+            <IconHistory />
+          </button>
+        </div>
 
-        <div className="mob-seg" role="tablist">
+        {/* The same picker as the Output record — one window question,
+            asked the same way wherever it is asked. */}
+        <div className="mob-queue-chips" role="tablist">
           {HISTORY_RANGES.map((r) => (
             <button
               key={r.key}
               role="tab"
               aria-selected={rangeKey === r.key}
               className={rangeKey === r.key ? 'on' : ''}
-              onClick={() => setRangeKey(r.key)}
+              onClick={() => {
+                setRangeKey(r.key)
+                setShowMonths(false)
+              }}
             >
               {r.label}
             </button>
           ))}
         </div>
 
+        {/* Opened by the icon, or held open by the month being read — a
+            picked month with its own list folded away would leave the
+            three chips all dark and nothing saying why. */}
+        {(showMonths || pickedMonth) && (
+          <div className="mob-queue-chips">
+            {months.map((m) => (
+              <button
+                key={m.key}
+                className={rangeKey === m.key ? 'on' : ''}
+                onClick={() => {
+                  setRangeKey(m.key)
+                  setShowMonths(false)
+                }}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="mob-card">
           {loading ? (
             <div className="mob-sub">Loading…</div>
           ) : rows.length === 0 ? (
-            <div className="mob-sub">
-              {rangeKey === 'today' ? 'Nothing submitted today.' : 'Nothing submitted in this range.'}
-            </div>
+            <div className="mob-empty">Nothing in list</div>
           ) : (
-            rows.map((e) => (
-              <button className="mob-entry" key={e.id} onClick={() => onOpen(e)}>
-                <span className="mob-entry-main">
+            rows.map((e) =>
+              editing?.id === e.id ? (
+                <div className="mob-entry-edit" key={e.id}>
                   <span className="mob-entry-name">{jobName(e.job_id)}</span>
-                  <span className="mob-station-meta">
-                    {stationName(e.station_id)} ·{' '}
-                    {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-                      day: '2-digit', month: 'short',
-                    })}
-                  </span>
-                </span>
-                <span className="mob-entry-side">
-                  <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-                  {statusChip(e.approval_status)}
-                </span>
-              </button>
-            ))
+                  {editErr && <div className="error">{editErr}</div>}
+                  <div className="mob-entry-edit-row">
+                    <input
+                      className="mob-input"
+                      inputMode="decimal"
+                      value={editQty}
+                      onChange={(ev) => setEditQty(ev.target.value)}
+                      aria-label="Work done"
+                      autoFocus
+                    />
+                    <button className="mob-mini ghost" onClick={() => setEditing(null)}>Cancel</button>
+                    <button className="mob-mini go" disabled={savingEdit} onClick={saveEdit}>
+                      {savingEdit ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                  <div className="mob-station-meta">Saving sends it for verification again.</div>
+                </div>
+              ) : (
+                <div className="mob-entry-wrap" key={e.id}>
+                  <button className="mob-entry" onClick={() => onOpen(e)}>
+                    <span className="mob-entry-main">
+                      <span className="mob-entry-name">{jobName(e.job_id)}</span>
+                      {/* The station is named once, over the list. Saying
+                          it again on every row only squeezes the job. */}
+                      <span className="mob-station-meta">
+                        {spanned.length > 1 ? `${stationName(e.station_id)} · ` : ''}
+                        {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+                          day: '2-digit', month: 'short',
+                        })}
+                      </span>
+                    </span>
+                    <span className="mob-entry-side">
+                      <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                      {statusChip(e.approval_status)}
+                    </span>
+                  </button>
+                  {editable(e) && (
+                    <button
+                      className="mob-entry-pen"
+                      title="Edit this record"
+                      aria-label={`Edit ${jobName(e.job_id)}`}
+                      onClick={() => {
+                        setEditing(e)
+                        setEditQty(String(Number(e.quantity)))
+                        setEditErr(null)
+                      }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ),
+            )
           )}
         </div>
       </div>
@@ -2885,6 +3577,7 @@ function EntryDetail({
   rateFor,
   amountFor,
   tier2RateFor,
+  ladderFor,
   onBack,
   workerTier,
   decide,
@@ -2897,6 +3590,7 @@ function EntryDetail({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   onBack: () => void
   /** The tier tag of whoever submitted it — the viewer's own by default. */
   workerTier?: Grade | null
@@ -2906,7 +3600,7 @@ function EntryDetail({
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
     supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select('*')
       .eq('entry_id', entry.id)
       .then(({ data }) => setPhotos(data ?? []))
@@ -2927,12 +3621,13 @@ function EntryDetail({
   const hhmm = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const rate1 = rateFor(entry.job_id)
   const rate2 = tier2RateFor(entry.job_id)
+  const L = ladderFor(entry.job_id)
 
   // One row per photo where the work was stamped hour by hour, otherwise
   // the entry is the single row. The rate on a row is the tier that unit
   // actually earned.
   const rateAt = (index: number) =>
-    rate2 != null && index >= TIER1_UNIT_CAP ? rate2 : rate1
+    rate2 != null ? L[Math.min(index, L.length - 1)] : rate1
   const rows =
     photos.length > 0
       ? photos
@@ -2956,25 +3651,21 @@ function EntryDetail({
   // The sum, said the way it was worked out: each rate against the units
   // that earned it.
   const calcLines =
-    rate2 == null || entry.quantity <= TIER1_UNIT_CAP
+    rate2 == null
       ? [{ label: `${fmtQty(entry.quantity)} × ${RM(rate1)}`, value: entry.quantity * rate1 }]
-      : [
-          { label: `${TIER1_UNIT_CAP} × ${RM(rate1)}`, value: TIER1_UNIT_CAP * rate1 },
-          {
-            label: `${fmtQty(entry.quantity - TIER1_UNIT_CAP)} × ${RM(rate2)}`,
-            value: (entry.quantity - TIER1_UNIT_CAP) * rate2,
-          },
-        ]
+      : ladderBreakdownFrom(L, entry.quantity).map((s) => ({
+          label: `${fmtQty(s.units)} × ${RM(s.rate)}`,
+          value: s.units * s.rate,
+        }))
 
   return (
     <>
       <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Records</button>
         <span className="mob-brand">MJM</span>
       </div>
 
       <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Submitted work record</div>
+        <MobSubHeader title="Submitted work record" onBack={onBack} />
 
         {/* Whose record this is and what it is for. No money here — the
             rate belongs with the parameters it was applied to, and the
@@ -3129,7 +3820,7 @@ function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () =>
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select('*')
       .eq('entry_id', entry.id)
       .order('taken_at', { ascending: true })
@@ -3186,6 +3877,15 @@ function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () =>
 
 type WorkFilter = 'pending' | 'approved' | 'rejected'
 
+/** How far back the approved / rejected history reaches. */
+type DateMode = 'today' | 'month' | 'range'
+
+const DATE_MODES: { key: DateMode; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: 'month', label: 'This month' },
+  { key: 'range', label: 'Date range' },
+]
+
 
 /* ------------------------------------------------------------------ */
 /* The review, for the tiers that run the whole mill. Their Performance */
@@ -3210,7 +3910,7 @@ function ReviewSections({
     const from = new Date()
     from.setDate(from.getDate() - 40) // this month and this week, both covered
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .gte('work_date', dayISO(from))
       .then(({ data, error }) => {
@@ -3235,9 +3935,11 @@ function ReviewSections({
 
   return (
     <>
+      {/* Block titles wear the KPI dashboard's card label — small, grey,
+          tracked out — so the two tabs read as one family. */}
       {stationPct.length > 0 && (
         <div className="mob-card">
-          <div className="mob-title">Approval completion by station</div>
+          <div className="mob-card-label">Approval completion by station</div>
           <div className="mob-bars">
             {stationPct.map((s) => (
               <div className="mob-barrow" key={s.id}>
@@ -3253,7 +3955,7 @@ function ReviewSections({
       )}
 
       <div className="mob-card">
-        <div className="mob-title">Exception flags</div>
+        <div className="mob-card-label">Exception flags</div>
         {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
         {flags.map((f, i) => (
           <div className={`mob-flag ${f.kind}`} key={i}>
@@ -3264,7 +3966,7 @@ function ReviewSections({
       </div>
 
       <div className="mob-card">
-        <div className="mob-title">My work done</div>
+        <div className="mob-card-label">My work done</div>
         <div className="mob-sub">Target 100% approved</div>
         <ScoreMeter label="Today" score={myToday} />
         <ScoreMeter label="This week" score={myThisWeek} />
@@ -3288,7 +3990,9 @@ function MyWorkTab({
   rateFor,
   amountFor,
   tier2RateFor,
+  ladderFor,
   myEmail,
+  initialFilter = 'pending',
   onError,
 }: {
   profileId: string | null
@@ -3300,7 +4004,10 @@ function MyWorkTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   myEmail: string
+  /** The bucket to open on, when the Performance tab named one. */
+  initialFilter?: WorkFilter
   onError: (m: string | null) => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
@@ -3314,8 +4021,19 @@ function MyWorkTab({
   const [viewPhotos, setViewPhotos] = useState<ProductionEntry | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-  const [filter, setFilter] = useState<WorkFilter>('pending')
+  const [filter, setFilter] = useState<WorkFilter>(initialFilter)
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
+  // Narrow the list by the submitter's tier — only worth offering when
+  // this tier may look at more than its own. Empty is ALL, not none.
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set())
+  // Which station blocks are open. Collapsed is the default: a station
+  // head with six stations wants the shape first, the records second.
+  const [openStations, setOpenStations] = useState<Set<string>>(new Set())
+  // Approved and rejected are a history, so they open on today and widen
+  // from there. Pending is a queue and always shows all of it.
+  const [dateMode, setDateMode] = useState<DateMode>('today')
+  const [fromDate, setFromDate] = useState(todayISO())
+  const [toDate, setToDate] = useState(todayISO())
 
   // Which buttons show is decided by the tag, not the rung: tick verify on
   // a tier and that tier verifies; tick approve and it approves. A tier
@@ -3327,11 +4045,16 @@ function MyWorkTab({
   const showMill = isEntitled(tier, 'mill-dashboard', grades)
   const canVerify = caps.includes('verify')
   const canApprove = caps.includes('approve')
+  // Whose work this tier may look at: the ticks under Operation Module →
+  // "View work record of" (Settings → Tier Tag Access Manage). One tier —
+  // its own — means there is nothing to filter between.
+  const viewableIds = viewableTierIds(tier, grades, 'entry')
+  const viewableTiers = grades.filter((g) => viewableIds.includes(g.id))
 
   async function load() {
     if (!profileId) return
     const mine = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .eq('user_id', profileId)
       .order('created_at', { ascending: false })
@@ -3343,7 +4066,7 @@ function MyWorkTab({
     // too — otherwise their own records fall through the rung test.
     if (profileId) {
       const { data: me } = await supabase
-        .from('access_profiles')
+        .from('shared_profiles')
         .select('id, full_name, email, grade_id, station_id, station_ids')
         .eq('id', profileId)
         .maybeSingle()
@@ -3354,7 +4077,7 @@ function MyWorkTab({
     let waiting: ProductionEntry[] = []
     if (canVerify || canApprove) {
       const { data } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .in('approval_status', ['pending', 'verified'])
         .order('created_at', { ascending: true })
@@ -3368,21 +4091,26 @@ function MyWorkTab({
       let byId = new Map<string, Profile>()
       if (submitterIds.length > 0) {
         const { data: p } = await supabase
-          .from('access_profiles')
+          .from('shared_profiles')
           .select('id, full_name, email, grade_id, station_id, station_ids')
           .in('id', submitterIds)
         byId = new Map(((p ?? []) as Profile[]).map((x) => [x.id, x]))
       }
-      const tierOf = (userId: string | null | undefined) => {
-        const who = userId ? byId.get(userId) : undefined
-        return who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order ?? null : null
-      }
+      /**
+       * Whose work this tier may look at is one setting, read in one place:
+       * Operation Module → "View work record of".
+       *
+       * There is no exception for the signed-in account's own records. The
+       * queue used to let those through whatever tier they came from, so
+       * that a demo driven from one login always had something to review —
+       * but that put work from ABOVE the previewed tier into its queue,
+       * which is the one thing the ladder is there to prevent. A quiet
+       * queue is the correct answer when nothing below has been submitted.
+       */
       const below = (e: ProductionEntry) => {
         if (tier == null) return false
-        if (e.user_id === profileId) return true // previewing — see above
-        const order = tierOf(e.user_id)
-        if (order == null) return true
-        return order > tier.sort_order
+        const who = e.user_id ? byId.get(e.user_id) : undefined
+        return canViewTier(tier, grades, 'entry', who?.grade_id ?? null)
       }
       waiting = all.filter(
         (e) =>
@@ -3402,7 +4130,7 @@ function MyWorkTab({
     const entryIds = [...own, ...waiting].map((e) => e.id)
     if (entryIds.length > 0) {
       const { data: ph } = await supabase
-        .from('photo_records')
+        .from('operation_photos')
         .select('id, entry_id')
         .in('entry_id', entryIds)
       const m = new Map<string, number>()
@@ -3431,7 +4159,7 @@ function MyWorkTab({
     setBusy(e.id)
     onError(null)
     const { error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .update({
         quantity: qty,
         approval_status: 'pending',
@@ -3463,13 +4191,14 @@ function MyWorkTab({
     if (next === 'rejected') {
       Object.assign(fields, {
         rejected_reason: reason || null,
+        rejected_by: myEmail,
         verified_by: null,
         verified_at: null,
         approved_by: null,
         approved_at: null,
       })
     }
-    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    const { error } = await supabase.from('operation_entries').update(fields).eq('id', e.id)
     setBusy(null)
     if (error) return onError(error.message)
     load()
@@ -3505,91 +4234,61 @@ function MyWorkTab({
   // AND verified but waiting for the final approval.
   const inBucket = (e: ProductionEntry, k: WorkFilter) =>
     k === 'pending' ? ['pending', 'verified'].includes(stat(e)) : stat(e) === k
-  const count = (k: WorkFilter) => entries.filter((e) => inBucket(e, k)).length
-  const shown = entries.filter((e) => inBucket(e, filter))
+  /** The tier tag of whoever submitted a record. */
+  const tierIdOf = (e: ProductionEntry) =>
+    (e.user_id ? submitters.get(e.user_id)?.grade_id : null) ?? null
+  const matchesTier = (e: ProductionEntry) => {
+    if (tierFilter.size === 0) return true
+    const id = tierIdOf(e)
+    return id != null && tierFilter.has(id)
+  }
+
+  // Pending is a queue — all of it, always. Approved and rejected are a
+  // history, so they open on today and widen only when asked.
+  const dateFrom =
+    filter === 'pending' ? null
+      : dateMode === 'today' ? todayISO()
+        : dateMode === 'month' ? todayISO().slice(0, 8) + '01'
+          : fromDate
+  const dateTo = filter === 'pending' || dateMode !== 'range' ? todayISO() : toDate
+  const inDates = (e: ProductionEntry) =>
+    dateFrom === null || (e.work_date >= dateFrom && e.work_date <= dateTo)
+
+  const keep = (e: ProductionEntry) => matchesTier(e) && inDates(e)
+  // The chips count what their tab would show, date window included, so a
+  // number on a chip and the list behind it can never disagree.
+  const count = (k: WorkFilter) => {
+    const mine = entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && (k === 'pending' || inDates(x)))
+    // Work waiting on YOU is listed under Pending too, so it is counted
+    // there — a chip reading (0) above a card that is plainly pending is
+    // the sort of thing that makes a screen untrustworthy.
+    return mine.length + (k === 'pending' ? queue.filter(matchesTier).length : 0)
+  }
+  const shown = entries.filter((e) => inBucket(e, filter)).filter(keep)
   // Someone else's work only ever sits in the pending view — once acted on
   // it leaves the queue entirely.
-  const queueShown = filter === 'pending' ? queue : []
+  const queueShown = filter === 'pending' ? queue.filter(matchesTier) : []
 
-  if (detail) {
-    return (
-      <EntryDetail
-        entry={detail}
-        myName={names.get(detail.user_id ?? '') ?? myName}
-        tier={tier}
-        stations={stations}
-        jobs={jobs}
-        rateFor={rateFor}
-        amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
-        onBack={() => setDetail(null)}
-        // The submitter's OWN tag, always — showing the previewed tier
-        // here made a record look as though it came from the rung doing
-        // the looking.
-        workerTier={
-          grades.find((g) => g.id === submitters.get(detail.user_id ?? '')?.grade_id) ?? null
-        }
-        decide={
-          reviewable(detail) && (canVerify || canApprove)
-            ? {
-                canVerify,
-                canApprove,
-                busy: busy === detail.id,
-                act: (next) => {
-                  const e = detail
-                  setDetail(null)
-                  act(e, next)
-                },
-              }
-            : undefined
-        }
-      />
-    )
-  }
+  /**
+   * The list, gathered under the station each record belongs to. Somebody
+   * standing at one station has no grouping to do, so their records are
+   * listed flat; more than one and each station folds, showing its name
+   * and how many records are under it until it is opened.
+   */
+  const stationsInList = [...new Set([...shown, ...queueShown].map((e) => e.station_id))]
+  const grouped = stationsInList.length > 1
+  const stationBlocks = stations
+    .filter((st) => stationsInList.includes(st.id))
+    .map((st) => ({
+      station: st,
+      mine: shown.filter((e) => e.station_id === st.id),
+      queue: queueShown.filter((e) => e.station_id === st.id),
+    }))
 
-  const emptyText: Record<WorkFilter, string> = {
-    pending: 'Nothing waiting for approval right now.',
-    approved: 'No approved work yet.',
-    rejected: 'Nothing rejected — good work ✅',
-  }
-
-  return (
+  /** This person's own records. */
+  const MyRecordCards = ({ list }: { list: ProductionEntry[] }) => (
     <>
-      <div className="mob-header">
-        <span className="mob-brand">MJM</span>
-      </div>
-
-      <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
-          <div className="mob-role">My work</div>
-          <div className="mob-sub">Everything you recorded and where it stands</div>
-        </div>
-
-        {showMill && (
-          <ReviewSections stations={stations} profileId={profileId} onError={onError} />
-        )}
-
-        <div className="mob-queue-chips">
-          <button className={filter === 'pending' ? 'on' : ''} onClick={() => setFilter('pending')}>
-            Pending ({count('pending')})
-          </button>
-          <button className={filter === 'approved' ? 'on' : ''} onClick={() => setFilter('approved')}>
-            Approved ({count('approved')})
-          </button>
-          <button className={filter === 'rejected' ? 'on' : ''} onClick={() => setFilter('rejected')}>
-            Rejected ({count('rejected')})
-          </button>
-        </div>
-
-        {loading ? (
-          <p className="muted small">Loading…</p>
-        ) : (
-          <>
-            {shown.length === 0 && queueShown.length === 0 && (
-              <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
-            )}
-
-            {shown.map((e) => (
+            {list.map((e) => (
               <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
                 <button type="button" className="mob-plainbtn" onClick={() => setDetail(e)}>
                   <span className="perf-top">
@@ -3625,8 +4324,13 @@ function MyWorkTab({
                 )}
               </div>
             ))}
+    </>
+  )
 
-            {queueShown.map((e) => {
+  /** Somebody else's work, waiting on this person to verify or approve. */
+  const ReviewQueueCards = ({ list }: { list: ProductionEntry[] }) => (
+    <>
+            {list.map((e) => {
               const who = e.user_id ? submitters.get(e.user_id) : undefined
               const grade = who?.grade_id ? grades.find((g) => g.id === who.grade_id) : undefined
               const tags = who
@@ -3662,6 +4366,175 @@ function MyWorkTab({
                 </button>
               )
             })}
+    </>
+  )
+
+  if (detail) {
+    return (
+      <EntryDetail
+        entry={detail}
+        myName={names.get(detail.user_id ?? '') ?? myName}
+        tier={tier}
+        stations={stations}
+        jobs={jobs}
+        rateFor={rateFor}
+        amountFor={amountFor}
+        tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
+        onBack={() => setDetail(null)}
+        // The submitter's OWN tag, always — showing the previewed tier
+        // here made a record look as though it came from the rung doing
+        // the looking.
+        workerTier={
+          grades.find((g) => g.id === submitters.get(detail.user_id ?? '')?.grade_id) ?? null
+        }
+        decide={
+          reviewable(detail) && (canVerify || canApprove)
+            ? {
+                canVerify,
+                canApprove,
+                busy: busy === detail.id,
+                act: (next) => {
+                  const e = detail
+                  setDetail(null)
+                  act(e, next)
+                },
+              }
+            : undefined
+        }
+      />
+    )
+  }
+
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+      </div>
+
+      <div className="mob-body">
+        {/* Same head as the KPI dashboard: the title alone, no strapline. */}
+        <div className="mob-pagehead">
+          <div className="mob-role">My Work Done</div>
+        </div>
+
+        {showMill && (
+          <ReviewSections stations={stations} profileId={profileId} onError={onError} />
+        )}
+
+        <div className="mob-queue-chips">
+          <button className={filter === 'pending' ? 'on' : ''} onClick={() => setFilter('pending')}>
+            Pending ({count('pending')})
+          </button>
+          <button className={filter === 'approved' ? 'on' : ''} onClick={() => setFilter('approved')}>
+            Approved ({count('approved')})
+          </button>
+          <button className={filter === 'rejected' ? 'on' : ''} onClick={() => setFilter('rejected')}>
+            Rejected ({count('rejected')})
+          </button>
+          {/* Only worth offering when this tier may look past its own rank
+              — one tier means nothing to choose between. */}
+          {viewableTiers.length > 1 && (
+            <FilterMenu
+              title="Tier"
+              allLabel="All tiers"
+              options={viewableTiers.map((g) => ({ key: g.id, name: g.name, color: g.color }))}
+              picked={tierFilter}
+              onToggle={(key) =>
+                setTierFilter((cur) => {
+                  const next = new Set(cur)
+                  if (!next.delete(key)) next.add(key)
+                  return next
+                })
+              }
+              onAll={() => setTierFilter(new Set())}
+            />
+          )}
+        </div>
+
+        {/* Approved and rejected are a history and open on today. Pending
+            is a queue — every item in it is waiting now, so a date window
+            would only hide work somebody is waiting on. */}
+        {filter !== 'pending' && (
+          <>
+            <div className="mob-queue-chips wrap">
+              {DATE_MODES.map((m) => (
+                <button
+                  key={m.key}
+                  className={dateMode === m.key ? 'on' : ''}
+                  onClick={() => setDateMode(m.key)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            {dateMode === 'range' && (
+              <div className="mob-daterange">
+                <label>
+                  <span className="mob-field-label">From</span>
+                  <input
+                    className="mob-input"
+                    type="date"
+                    value={fromDate}
+                    max={toDate}
+                    onChange={(e) => setFromDate(e.target.value)}
+                  />
+                </label>
+                <label>
+                  <span className="mob-field-label">To</span>
+                  <input
+                    className="mob-input"
+                    type="date"
+                    value={toDate}
+                    min={fromDate}
+                    onChange={(e) => setToDate(e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+          </>
+        )}
+
+        {loading ? (
+          <p className="muted small">Loading…</p>
+        ) : shown.length === 0 && queueShown.length === 0 ? (
+          <div className="mob-card"><div className="mob-empty">Nothing in list</div></div>
+        ) : grouped ? (
+          stationBlocks.map((b) => {
+            const total = b.mine.length + b.queue.length
+            if (total === 0) return null
+            const open = openStations.has(b.station.id)
+            return (
+              <div className="mob-stationgroup" key={b.station.id}>
+                <button
+                  type="button"
+                  className="mob-stationgroup-head"
+                  onClick={() =>
+                    setOpenStations((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(b.station.id)) next.delete(b.station.id)
+                      else next.add(b.station.id)
+                      return next
+                    })
+                  }
+                >
+                  <span className="mob-caret">{open ? '⌄' : '›'}</span>
+                  <span className="mob-entry-name">{b.station.name}</span>
+                  <span className="mob-entry-amt">{total}</span>
+                </button>
+                {open && (
+                  <>
+                    <MyRecordCards list={b.mine} />
+                    <ReviewQueueCards list={b.queue} />
+                  </>
+                )}
+              </div>
+            )
+          })
+        ) : (
+          <>
+            <MyRecordCards list={shown} />
+            <ReviewQueueCards list={queueShown} />
           </>
         )}
       </div>
@@ -3732,313 +4605,6 @@ function SignupWelcome({ myName }: { myName: string }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* APPROVALS — a sub-screen of Performance, reached from the "awaiting */
-/* review" alert. It is NOT a bottom tab: the tab bar is the same five */
-/* buttons for every tier. 'verify' level works the To-verify queue;   */
-/* 'approve' level gets both queues. Own submissions are never queued  */
-/* back to the person who submitted them.                              */
-/* ------------------------------------------------------------------ */
-
-function ApprovalsScreen({
-  profileId,
-  myEmail,
-  level,
-  stations,
-  jobs,
-  amountFor,
-  onBack,
-  onError,
-}: {
-  profileId: string | null
-  myEmail: string
-  level: 'verify' | 'approve'
-  stations: Station[]
-  jobs: Job[]
-  amountFor: (jobId: string, quantity: number) => number
-  onBack: () => void
-  onError: (m: string | null) => void
-}) {
-  const [entries, setEntries] = useState<ProductionEntry[]>([])
-  const [people, setPeople] = useState<Map<string, string>>(new Map())
-  const [queue, setQueue] = useState<'verify' | 'approve'>('verify')
-  const [detail, setDetail] = useState<ProductionEntry | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  async function load() {
-    const [e, p] = await Promise.all([
-      supabase
-        .from('production_entries')
-        .select('*')
-        .in('approval_status', ['pending', 'verified'])
-        .order('created_at', { ascending: true }),
-      supabase.from('access_profiles').select('id, full_name, email'),
-    ])
-    if (e.error) onError(e.error.message)
-    // Never queue someone's own submissions to themselves.
-    setEntries(
-      ((e.data ?? []) as ProductionEntry[]).filter(
-        (x) =>
-          x.user_id !== profileId &&
-          ['pending', 'verified'].includes(x.approval_status ?? ''),
-      ),
-    )
-    setPeople(
-      new Map(
-        ((p.data ?? []) as Profile[]).map((x) => [x.id, x.full_name ?? x.email ?? '?']),
-      ),
-    )
-    setLoading(false)
-  }
-  useEffect(() => {
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId])
-
-  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const submitterName = (e: ProductionEntry) => people.get(e.user_id ?? '') ?? '?'
-
-  const pendingList = entries.filter((e) => e.approval_status === 'pending')
-  const verifiedList = entries.filter((e) => e.approval_status === 'verified')
-  const list = level === 'approve' && queue === 'approve' ? verifiedList : pendingList
-
-  if (detail) {
-    return (
-      <ApprovalDetail
-        entry={detail}
-        submitter={submitterName(detail)}
-        level={level}
-        myEmail={myEmail}
-        stations={stations}
-        jobs={jobs}
-        amountFor={amountFor}
-        onBack={() => setDetail(null)}
-        onDone={() => {
-          setDetail(null)
-          load()
-        }}
-        onError={onError}
-      />
-    )
-  }
-
-  return (
-    <>
-      <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Performance</button>
-        <span className="mob-brand">MJM</span>
-      </div>
-
-      <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
-          <div className="mob-role">Approvals</div>
-          <div className="mob-sub">
-            {level === 'approve' ? 'Verification & final approval' : 'Work verification'}
-          </div>
-        </div>
-
-        {level === 'approve' && (
-          <div className="mob-queue-chips">
-            <button className={queue === 'verify' ? 'on' : ''} onClick={() => setQueue('verify')}>
-              To verify ({pendingList.length})
-            </button>
-            <button className={queue === 'approve' ? 'on' : ''} onClick={() => setQueue('approve')}>
-              To approve ({verifiedList.length})
-            </button>
-          </div>
-        )}
-
-        {loading ? (
-          <p className="muted small">Loading…</p>
-        ) : list.length === 0 ? (
-          <div className="mob-card">
-            <div className="mob-sub">Nothing waiting — all caught up ✅</div>
-          </div>
-        ) : (
-          list.map((e) => (
-            <button className="mob-station perf" key={e.id} onClick={() => setDetail(e)}>
-              <span className="perf-top">
-                <span>{submitterName(e)}</span>
-                <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-              </span>
-              <span className="perf-top">
-                <span className="mob-station-meta">
-                  {jobName(e.job_id)} · {stationName(e.station_id)} ·{' '}
-                  {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                </span>
-                {statusChip(e.approval_status)}
-              </span>
-            </button>
-          ))
-        )}
-      </div>
-    </>
-  )
-}
-
-/* One entry under review: parameters, photo evidence, then the action. */
-function ApprovalDetail({
-  entry,
-  submitter,
-  level,
-  myEmail,
-  stations,
-  jobs,
-  amountFor,
-  onBack,
-  onDone,
-  onError,
-}: {
-  entry: ProductionEntry
-  submitter: string
-  level: 'verify' | 'approve'
-  myEmail: string
-  stations: Station[]
-  jobs: Job[]
-  amountFor: (jobId: string, quantity: number) => number
-  onBack: () => void
-  onDone: () => void
-  onError: (m: string | null) => void
-}) {
-  const [photos, setPhotos] = useState<PhotoRecord[]>([])
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    supabase
-      .from('photo_records')
-      .select('*')
-      .eq('entry_id', entry.id)
-      .then(({ data }) => setPhotos(data ?? []))
-  }, [entry.id])
-
-  const job = jobs.find((j) => j.id === entry.job_id)
-  const station = stations.find((s) => s.id === entry.station_id)
-  const total = amountFor(entry.job_id, entry.quantity)
-  const status = entry.approval_status ?? 'pending'
-  const canVerifyNow = status === 'pending'
-  const canApproveNow = status === 'verified' && level === 'approve'
-  const photoUrl = (path: string | null) =>
-    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
-
-  async function act(next: 'verified' | 'approved' | 'rejected') {
-    let reason: string | null = null
-    if (next === 'rejected') {
-      reason = window.prompt('Reason for rejecting (shown to the worker):') ?? null
-      if (reason === null) return // cancelled
-    }
-    setBusy(true)
-    onError(null)
-    const now = new Date().toISOString()
-    const fields: Partial<ProductionEntry> & Record<string, unknown> = { approval_status: next }
-    if (next === 'verified') {
-      fields.verified_by = myEmail
-      fields.verified_at = now
-    }
-    if (next === 'approved') {
-      fields.approved_by = myEmail
-      fields.approved_at = now
-    }
-    if (next === 'rejected') fields.rejected_reason = reason || null
-    const { error } = await supabase.from('production_entries').update(fields).eq('id', entry.id)
-    setBusy(false)
-    if (error) return onError(error.message)
-    onDone()
-  }
-
-  return (
-    <>
-      <div className="mob-header">
-        <button className="mob-back" onClick={onBack}>‹ Approvals</button>
-        <span className="mob-brand">MJM</span>
-      </div>
-
-      <div className="mob-body">
-        <div className="mob-role" style={{ padding: '0 0.2rem' }}>Review work entry</div>
-
-        <div className="mob-card">
-          <div className="mob-row">
-            <span>
-              <div className="mob-entry-name">{submitter}</div>
-              <div className="mob-station-meta">
-                {job?.name ?? 'Work'} · {station?.name ?? '?'} ·{' '}
-                {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-                  day: 'numeric', month: 'long',
-                })}
-              </div>
-            </span>
-            <span className="mob-detail-amt">{RM(total)}</span>
-          </div>
-          {statusChip(status)}
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">Submitted parameters</div>
-          <div className="mob-grid2">
-            <div>
-              <div className="mob-field-label">Quantity</div>
-              <div className="mob-param">{entry.quantity} {job ? job.unit.replace('/', '') : ''}</div>
-            </div>
-            <div>
-              <div className="mob-field-label">Amount</div>
-              <div className="mob-param">{RM(total)}</div>
-            </div>
-          </div>
-          {entry.verified_by && (
-            <div className="mob-sub">Verified by {entry.verified_by}</div>
-          )}
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">
-            Photo evidence{' '}
-            <span className="mob-chip">{photos.length} photo{photos.length === 1 ? '' : 's'}</span>
-          </div>
-          {photos.length === 0 && <div className="mob-sub">No photos attached.</div>}
-          <div className="mob-photo-grid">
-            {photos.map((p) => {
-              const url = photoUrl(p.photo_path)
-              return url ? (
-                <a key={p.id} href={url} target="_blank" rel="noreferrer">
-                  <img className="mob-photo" src={url} alt="evidence" />
-                </a>
-              ) : (
-                <span key={p.id} className="mob-chip">no photo</span>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="mob-card">
-          <div className="mob-title">
-            {canApproveNow ? 'Final approval' : canVerifyNow ? 'Verification' : 'Review'}
-          </div>
-          {canVerifyNow && (
-            <button className="mob-btn approve" disabled={busy} onClick={() => act('verified')}>
-              ✓ Verify this work
-            </button>
-          )}
-          {canApproveNow && (
-            <button className="mob-btn approve" disabled={busy} onClick={() => act('approved')}>
-              ✓ Approve — final
-            </button>
-          )}
-          {(canVerifyNow || canApproveNow) && (
-            <button className="mob-btn reject" disabled={busy} onClick={() => act('rejected')}>
-              ✗ Reject…
-            </button>
-          )}
-          {!canVerifyNow && !canApproveNow && (
-            <div className="mob-sub">
-              Waiting for a final approver — your access level covers verification only.
-            </div>
-          )}
-        </div>
-      </div>
-    </>
-  )
-}
-
-/* ------------------------------------------------------------------ */
 /* TAB 5 — PROFILE. Who you are, and nothing else. Same layout for     */
 /* every tier, top to bottom:                                          */
 /*   1  selfie (uploadable), name, tier, station                      */
@@ -4066,6 +4632,10 @@ function ProfileTab({
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ employee_code: '', phone: '' })
+  // The Worker ID is the payroll key: retyping it — even your own — takes
+  // the "Edit Worker ID" tick on the tier tag. Without it the row stays a
+  // plain value while the phone stays editable.
+  const canEditWorkerId = effectiveCapabilities(tier).includes('worker-id-edit')
   // What was just saved, so the card shows the new value without waiting
   // for the whole app's profile to be reloaded.
   const [saved, setSaved] = useState<{ employee_code: string; phone: string } | null>(null)
@@ -4177,7 +4747,7 @@ function ProfileTab({
             <>
               <div className="mob-row">
                 <span className="mob-field-label">Worker ID</span>
-                {editing ? (
+                {editing && canEditWorkerId ? (
                   <input
                     className="mob-row-input"
                     value={form.employee_code}
@@ -4250,7 +4820,7 @@ function AvatarPicker({
     if (!profile?.id) return
     let cancelled = false
     supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .select('avatar_path')
       .eq('id', profile.id)
       .maybeSingle()
@@ -4339,9 +4909,12 @@ function AvatarPicker({
 function MyNumbersSection({
   profileId,
   amountFor,
+  onOpen,
 }: {
   profileId: string | null
   amountFor: (jobId: string, quantity: number) => number
+  /** Opens the 30-day work record history behind the earnings figure. */
+  onOpen: () => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
 
@@ -4350,7 +4923,7 @@ function MyNumbersSection({
     const from = new Date()
     from.setDate(from.getDate() - 40) // this month, plus a little carry-over
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .eq('user_id', profileId)
       .gte('work_date', dayISO(from))
@@ -4360,40 +4933,26 @@ function MyNumbersSection({
   const monthStart = todayISO().slice(0, 8) + '01'
   const paid = entries.filter((e) => e.work_date >= monthStart && e.approval_status !== 'rejected')
   const total = paid.reduce((s, e) => s + amountFor(e.job_id, e.quantity), 0)
-  const days = new Set(paid.map((e) => e.work_date)).size
-  const avg = days > 0 ? total / days : 0
-  const waiting = entries.filter((e) =>
-    ['pending', 'verified'].includes(e.approval_status ?? ''),
-  ).length
 
+  // One figure, one door: the month's earnings, opening the 30-day work
+  // record history behind it. (The day-by-day / per-entry earnings view
+  // will grow out of that screen later.)
   return (
     <>
-      <div className="mob-card-label" style={{ padding: '0 0.2rem' }}>
-        This month
-      </div>
-      <div className="mob-grid2">
-        <div className="mob-card">
-          <div className="mob-field-label">Earned</div>
-          <div className="mob-stat">{RM(total)}</div>
+      <div className="mob-sectionhead">Payout Record</div>
+      <button className="mob-card tapcard block" onClick={onOpen}>
+        <div className="mob-cardhead">
+          <span className="mob-card-label">This month earned</span>
+          <span className="mob-caret" aria-hidden="true">›</span>
         </div>
-        <div className="mob-card">
-          <div className="mob-field-label">Days worked</div>
-          <div className="mob-stat">{days}</div>
-        </div>
-      </div>
-      <div className="mob-grid2">
-        <div className="mob-card">
-          <div className="mob-field-label">Avg / day</div>
-          <div className="mob-stat">{RM(avg)}</div>
-        </div>
-        <div className="mob-card">
-          <div className="mob-field-label">Pending approval</div>
-          <div className="mob-stat">{waiting}</div>
-        </div>
-      </div>
+        <div className="mob-stat">{RM(total)}</div>
+      </button>
     </>
   )
 }
+
+/** Stands in for a grade id in the contract filter: rates tagged to none. */
+const UNTAGGED_KEY = 'untagged'
 
 /* ------------------------------------------------------------------ */
 /* PIECE-RATE CONTRACT: what each job pays, YOUR tier first and then   */
@@ -4409,6 +4968,7 @@ function ContractSection({
   myStationIds,
   rateFor,
   tier2RateFor,
+  ladderFor,
 }: {
   tier: Grade | null
   grades: Grade[]
@@ -4417,6 +4977,7 @@ function ContractSection({
   myStationIds: string[]
   rateFor: (jobId: string) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
 }) {
   const scoped =
     myStationIds.length === 0 ? jobs : jobs.filter((j) => myStationIds.includes(j.station_id))
@@ -4441,35 +5002,59 @@ function ContractSection({
     .filter((x) => x.rows.length > 0 || x.grade.id === tier?.id)
 
   /**
-   * One job's terms, spelled out. A tiered rate is two different prices
-   * depending on how much is done inside the hour, so it is written as the
-   * two conditions it is rather than squeezed into one arrow.
+   * Which rungs are showing. Empty is ALL — not "none" — because that is
+   * what the block does before anybody touches it, and it means the All
+   * chip needs no state of its own: it is simply the empty set.
+   *
+   * Picking is additive, so two rungs can be read side by side. Picking
+   * the last one off falls back to All rather than leaving a blank card.
+   */
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const toggle = (key: string) =>
+    setPicked((cur) => {
+      const next = new Set(cur)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  const showing = (key: string) => picked.size === 0 || picked.has(key)
+  const shownGroups = groups.filter((g) => showing(g.grade.id))
+  const showUntagged = untagged.length > 0 && showing(UNTAGGED_KEY)
+
+  /**
+   * One job's terms. A tiered rate is two prices depending on how much is
+   * done inside the hour, so it is two lines — but each line is as short
+   * as the thing it says: "1st – 4th/hr", not a sentence about it.
    */
   const JobRow = ({ job }: { job: Job }) => {
     const unit = job.unit.replace('/', '')
     const tier2 = tier2RateFor(job.id)
+    const steps = ladderStepsFrom(ladderFor(job.id))
     return (
       <div className="mob-contract-job">
         <div className="mob-contract-name">
           <span className="mob-person-name">{job.name}</span>
           {manyStations && <span className="mob-station-meta">{stationName(job.station_id)}</span>}
         </div>
-        {tier2 == null ? (
+        {tier2 == null && steps.length < 2 ? (
           <div className="mob-contract-term">
             <span>Every {unit}</span>
             <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
           </div>
         ) : (
           <>
-            <div className="mob-contract-term">
-              <span>First {TIER1_UNIT_CAP} {unit}s in an hour</span>
-              <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
-            </div>
-            <div className="mob-contract-term">
-              <span>{TIER1_UNIT_CAP + 1}th onward, same hour</span>
-              <span className="mob-entry-amt">{RM(tier2)}{job.unit}</span>
-            </div>
-            <div className="mob-contract-note">Counts back to the first rate each new hour.</div>
+            {steps.map((step) => (
+              <div className="mob-contract-term" key={step.from}>
+                <span>
+                  {step.to == null
+                    ? `${ordinal(step.from)} onward/hr`
+                    : step.from === step.to
+                      ? `${ordinal(step.from)}/hr`
+                      : `${ordinal(step.from)} – ${ordinal(step.to)}/hr`}
+                </span>
+                <span className="mob-entry-amt">{RM(step.rate)}{job.unit}</span>
+              </div>
+            ))}
+            <div className="mob-contract-note">Resets every hour.</div>
           </>
         )}
       </div>
@@ -4477,12 +5062,33 @@ function ContractSection({
   }
 
   return (
-    <div className="mob-card">
-      <div className="mob-card-label">Piece rate contract</div>
+    <>
+      <div className="mob-sectionhead">Piece Rate</div>
+      <div className="mob-card">
+      {/* The filter sits in the block's own heading rather than as a row
+          of chips beneath it — only the rungs actually here are offered,
+          so it never filters to nothing. */}
+      <div className="mob-card-label spread">
+        <span>Piece rate contract</span>
+        {groups.length + (untagged.length > 0 ? 1 : 0) > 1 && (
+          <FilterMenu
+            title="Tier"
+            allLabel="All tiers"
+            options={[
+              ...groups.map(({ grade }) => ({ key: grade.id, name: grade.name, color: grade.color })),
+              ...(untagged.length > 0 ? [{ key: UNTAGGED_KEY, name: 'Any tier' }] : []),
+            ]}
+            picked={picked}
+            onToggle={toggle}
+            onAll={() => setPicked(new Set())}
+          />
+        )}
+      </div>
+
       {groups.length === 0 && untagged.length === 0 && (
         <div className="mob-sub">No approved piece rate at your station yet.</div>
       )}
-      {groups.map(({ grade, rows }) => (
+      {shownGroups.map(({ grade, rows }) => (
         <div key={grade.id}>
           <div className="mob-contract-tier">
             <span className={`tag-dot dot-${grade.color}`} aria-hidden="true" />
@@ -4496,7 +5102,7 @@ function ContractSection({
           )}
         </div>
       ))}
-      {untagged.length > 0 && (
+      {showUntagged && (
         <div>
           <div className="mob-contract-tier">
             <span className="tag-dot dot-grey" aria-hidden="true" />
@@ -4505,7 +5111,8 @@ function ContractSection({
           {untagged.map((j) => <JobRow key={j.id} job={j} />)}
         </div>
       )}
-    </div>
+      </div>
+    </>
   )
 }
 
@@ -4514,150 +5121,6 @@ function ContractSection({
 /* row per month showing what was earned, opening onto the basic       */
 /* salary, piece-work lines and adjustments behind it. RLS only lets   */
 /* people see their own lines, so this is safe for every tier.         */
-/* ------------------------------------------------------------------ */
-
-const PAYSLIP_MONTHS = 3
-
-function PayslipSection({ profile }: { profile: Profile | null }) {
-  const [runs, setRuns] = useState<PayrollRun[]>([])
-  const [lines, setLines] = useState<PayrollLine[]>([])
-  const [adjs, setAdjs] = useState<PayrollAdjustment[]>([])
-  const [jobNames, setJobNames] = useState<Map<string, string>>(new Map())
-  const [open, setOpen] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    if (!profile?.id) return
-    ;(async () => {
-      const [{ data: runRows }, { data: l }, { data: a }] = await Promise.all([
-        supabase
-          .from('payroll_runs')
-          .select('id, period_start, period_end, status, created_at, finalized_at')
-          .eq('status', 'finalized')
-          .order('period_end', { ascending: false })
-          .limit(12),
-        supabase.from('payroll_lines').select('*').eq('user_id', profile.id),
-        supabase.from('payroll_adjustments').select('*').eq('user_id', profile.id),
-      ])
-      const finalized = (runRows ?? []) as PayrollRun[]
-      // A run is "mine" when it carries my lines or adjustments. Someone on
-      // a flat basic salary has neither, so for them every finalized run
-      // still counts — that salary is what they were paid.
-      const hasMine = (r: PayrollRun) =>
-        (l ?? []).some((x) => x.run_id === r.id) || (a ?? []).some((x) => x.run_id === r.id)
-      const onBasic = Number(profile.basic_salary ?? 0) > 0
-      const mine = finalized.filter((r) => hasMine(r) || onBasic).slice(0, PAYSLIP_MONTHS)
-      setRuns(mine)
-      setOpen(mine[0]?.id ?? null) // the newest opens on arrival
-      setLines((l ?? []) as PayrollLine[])
-      setAdjs((a ?? []) as PayrollAdjustment[])
-      const jobIds = [...new Set((l ?? []).map((x) => x.job_id))]
-      if (jobIds.length > 0) {
-        const { data: j } = await supabase.from('jobs').select('id, name').in('id', jobIds)
-        setJobNames(new Map((j ?? []).map((x) => [x.id as string, x.name as string])))
-      }
-      setLoading(false)
-    })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.id])
-
-  const basic = Number(profile?.basic_salary ?? 0)
-  const linesOf = (runId: string) => lines.filter((x) => x.run_id === runId)
-  const adjsOf = (runId: string) => adjs.filter((x) => x.run_id === runId)
-  const totalOf = (runId: string) =>
-    basic +
-    linesOf(runId).reduce((s, x) => s + Number(x.amount), 0) +
-    adjsOf(runId).reduce((s, x) => s + Number(x.amount), 0)
-  // A payroll period is named by the month it ends in.
-  const monthOf = (r: PayrollRun) =>
-    new Date(r.period_end + 'T00:00:00').toLocaleDateString(undefined, {
-      month: 'long',
-      year: 'numeric',
-    })
-
-  return (
-    <div className="mob-card">
-      <div className="mob-card-label">Payslip</div>
-      {loading ? (
-        <div className="mob-sub">Loading…</div>
-      ) : runs.length === 0 ? (
-        <div className="mob-sub">No finalized payroll yet.</div>
-      ) : (
-        runs.map((r) => {
-          const isOpen = open === r.id
-          return (
-            <div className="mob-payslip" key={r.id}>
-              <button
-                className="mob-disclosure"
-                aria-expanded={isOpen}
-                onClick={() => setOpen(isOpen ? null : r.id)}
-              >
-                <span>
-                  <span className="mob-entry-name">{monthOf(r)}</span>
-                  <span className="mob-station-meta" style={{ display: 'block' }}>
-                    {r.period_start} → {r.period_end}
-                  </span>
-                </span>
-                <span className="mob-entry-side">
-                  <span className="mob-entry-amt">{RM(totalOf(r.id))}</span>
-                  <span className={`mob-caret ${isOpen ? 'open' : ''}`} aria-hidden="true">›</span>
-                </span>
-              </button>
-              {isOpen && (
-                <>
-                  {basic > 0 && (
-                    <div className="mob-breakrow">
-                      <span>Basic salary (monthly)</span>
-                      <span>{basic.toFixed(2)}</span>
-                    </div>
-                  )}
-                  {linesOf(r.id).map((x) => (
-                    <div className="mob-breakrow" key={x.id}>
-                      <span>
-                        {jobNames.get(x.job_id) ?? 'Piece work'} × {Number(x.quantity)}
-                      </span>
-                      <span>{Number(x.amount).toFixed(2)}</span>
-                    </div>
-                  ))}
-                  {adjsOf(r.id).map((x) => (
-                    <div className="mob-breakrow" key={x.id}>
-                      <span>Adjustment — {x.reason}</span>
-                      <span>{Number(x.amount).toFixed(2)}</span>
-                    </div>
-                  ))}
-                  <div className="mob-breakrow total">
-                    <span>Total pay</span>
-                    <span>{RM(totalOf(r.id))}</span>
-                  </div>
-                </>
-              )}
-            </div>
-          )
-        })
-      )}
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* TAB 4 — TEAM                                                        */
-/*                                                                     */
-/* 1. Pending Allocation — name only, one icon to pull them into your  */
-/*    team, keeping the tier they signed up on.                        */
-/* 2. My Team — the chart for YOUR station and team. It starts one     */
-/*    rung under the admin tier and walks down to you: name and tier,  */
-/*    nothing else, since every rung is your own station anyway.       */
-/* 3. Team members — one lane per tier. Drag a member onto the lane    */
-/*    matches what they actually do. A leader may hand out any tier    */
-/*    BELOW their own; their own tier and anything above it is locked, */
-/*    and dropping there explains the ceiling instead of failing       */
-/*    silently.                                                        */
-/*                                                                     */
-/* Every rule here is read off sort_order, never off a tier's NAME —   */
-/* add or rename a tier in Tags management and these screens follow it */
-/* with no code change.                                                */
-/* ------------------------------------------------------------------ */
-
 
 
 function TeamTab({
@@ -4717,8 +5180,8 @@ function TeamTab({
 
   async function load() {
     const [p, t] = await Promise.all([
-      supabase.from('access_profiles').select('*'),
-      supabase.from('teams').select('*').order('sort_order'),
+      supabase.from('shared_profiles').select('*'),
+      supabase.from('shared_teams').select('*').order('sort_order'),
     ])
     if (p.error) setError(p.error.message)
     else setPeople((p.data ?? []) as Profile[])
@@ -4953,7 +5416,7 @@ function TeamTab({
     setBusy(p.id)
     setError(null)
     const { error: err } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update({
         supervisor_id: profile.id,
         grade_id: placeable ? p.grade_id : floor?.id ?? p.grade_id,
@@ -4981,7 +5444,7 @@ function TeamTab({
     setBusy(p.id)
     setError(null)
     const { error: err } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update({
         supervisor_id: profile.id,
         grade_id: target.grade.id,
@@ -5023,7 +5486,7 @@ function TeamTab({
     if (clash) return setError(`This station already has a team called "${name}".`)
     setBusy('new-team')
     setError(null)
-    const { error: err } = await supabase.from('teams').insert({
+    const { error: err } = await supabase.from('shared_teams').insert({
       name,
       grade_id: teamLeaderTier.id,
       station_id: activeStation?.id ?? myStationIds[0] ?? null,
@@ -5049,7 +5512,7 @@ function TeamTab({
     setError(null)
     for (const [id, to] of staged) {
       const { error: err } = await supabase
-        .from('access_profiles')
+        .from('shared_profiles')
         .update({ grade_id: to.gradeId, team_id: to.teamId })
         .eq('id', id)
       if (err) {
@@ -5378,7 +5841,7 @@ function TeamTab({
       </div>
 
       <div className="mob-body">
-        <div style={{ padding: '0 0.2rem' }}>
+        <div className="mob-pagehead">
           <div className="mob-role">My team</div>
         </div>
 

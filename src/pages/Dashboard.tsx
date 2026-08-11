@@ -113,7 +113,7 @@ export default function Dashboard() {
         )
       }
       const { data } = await supabase
-        .from('grades')
+        .from('shared_grades')
         .select('modules, sort_order')
         .eq('id', profile.grade_id)
         .maybeSingle()
@@ -280,15 +280,15 @@ function StationBoard() {
       const spanEnd = weekEnd > monthEnd ? weekEnd : monthEnd
 
       const [s, e, span] = await Promise.all([
-        supabase.from('stations').select('id, name, sort_order').order('sort_order'),
+        supabase.from('shared_stations').select('id, name, sort_order').order('sort_order'),
         supabase
-          .from('production_entries')
+          .from('operation_entries')
           .select('station_id, quantity, created_at, approval_status')
           .gte('created_at', start.toISOString())
           .lt('created_at', end.toISOString())
           .neq('approval_status', 'rejected'),
         supabase
-          .from('production_entries')
+          .from('operation_entries')
           .select('station_id, quantity, created_at, approval_status')
           .gte('created_at', spanStart.toISOString())
           .lt('created_at', spanEnd.toISOString())
@@ -513,10 +513,10 @@ function OnShiftBoard() {
     async function load() {
       const start = currentDayStart()
       const [s, g, e] = await Promise.all([
-        supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-        supabase.from('grades').select('*').order('sort_order'),
+        supabase.from('shared_stations').select('id, name, sort_order').order('sort_order'),
+        supabase.from('shared_grades').select('*').order('sort_order'),
         supabase
-          .from('production_entries')
+          .from('operation_entries')
           .select('station_id, user_id, created_by, created_at')
           .gte('created_at', start.toISOString())
           .order('created_at', { ascending: false }),
@@ -534,11 +534,11 @@ function OnShiftBoard() {
 
       const ids = [...new Set([...latest.values()].map((l) => l.who).filter(Boolean))] as string[]
       const profiles = ids.length
-        ? (await supabase.from('access_profiles').select('id, full_name, email, grade_id, team_id').in('id', ids)).data ?? []
+        ? (await supabase.from('shared_profiles').select('id, full_name, email, grade_id, team_id').in('id', ids)).data ?? []
         : []
       const teamIds = [...new Set(profiles.map((p) => p.team_id).filter(Boolean))] as string[]
       const teams = teamIds.length
-        ? (await supabase.from('teams').select('id, name').in('id', teamIds)).data ?? []
+        ? (await supabase.from('shared_teams').select('id, name').in('id', teamIds)).data ?? []
         : []
 
       setRows(

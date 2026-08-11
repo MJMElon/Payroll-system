@@ -136,12 +136,12 @@ export default function WorkerManagement() {
 
   async function load() {
     const [p, g, s, t, j, r] = await Promise.all([
-      supabase.from('access_profiles').select('*').order('full_name'),
-      supabase.from('grades').select('*').order('sort_order'),
-      supabase.from('stations').select('*').order('sort_order'),
-      supabase.from('teams').select('*').order('sort_order'),
+      supabase.from('shared_profiles').select('*').order('full_name'),
+      supabase.from('shared_grades').select('*').order('sort_order'),
+      supabase.from('shared_stations').select('*').order('sort_order'),
+      supabase.from('shared_teams').select('*').order('sort_order'),
       supabase
-        .from('jobs')
+        .from('piece_rate_jobs')
         .select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
       supabase.from('piece_rates').select('id, job_id, rate, effective_from, tier2_rate'),
     ])
@@ -182,6 +182,9 @@ export default function WorkerManagement() {
   const seesAll = isTop || myCaps.includes('user-access')
   // Granted functions. Building your OWN branch is always allowed.
   const canEditProfile = isTop || myCaps.includes('worker-edit')
+  // The Worker ID is the payroll key, so retyping it is not covered by
+  // the general profile grant — it takes its own tick.
+  const canEditWorkerId = isTop || myCaps.includes('worker-id-edit')
   // Pay is its own grant, so a lower tier can keep details tidy without
   // ever seeing what anyone earns.
   const canEditSalary = isTop || myCaps.includes('worker-salary')
@@ -338,7 +341,7 @@ export default function WorkerManagement() {
     const name = nextTeamName(siblings.map((t) => t.name))
     setError(null)
     const { data, error } = await supabase
-      .from('teams')
+      .from('shared_teams')
       .insert({
         name,
         grade_id: headGrade.id,
@@ -381,7 +384,7 @@ export default function WorkerManagement() {
       return setError(`This station already has a team called "${name}".`)
     }
     setRenamingId(null)
-    const { error } = await supabase.from('teams').update({ name }).eq('id', team.id)
+    const { error } = await supabase.from('shared_teams').update({ name }).eq('id', team.id)
     if (error) return setError(error.message)
     setError(null)
     load()
@@ -393,7 +396,7 @@ export default function WorkerManagement() {
         ? `Remove ${team.name}? Its ${members} member${members === 1 ? '' : 's'} stay in the chain, out of a team.`
         : `Remove ${team.name}?`
     if (!window.confirm(warn)) return
-    const { error } = await supabase.from('teams').delete().eq('id', team.id)
+    const { error } = await supabase.from('shared_teams').delete().eq('id', team.id)
     if (error) return setError(error.message)
     setError(null)
     load()
@@ -471,7 +474,7 @@ export default function WorkerManagement() {
     if (person.role !== 'admin') patch.role = roleForTier(landedTier, landedName)
 
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -530,7 +533,7 @@ export default function WorkerManagement() {
     }
     setError(null)
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -591,7 +594,7 @@ export default function WorkerManagement() {
     if (hasChartPos) patch.chart_pos = null
     if (person.role !== 'admin') patch.role = 'operator'
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -645,7 +648,7 @@ export default function WorkerManagement() {
       patch.team_id = null
     }
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -707,7 +710,7 @@ export default function WorkerManagement() {
       patch.station_id = station.id
     }
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -751,7 +754,7 @@ export default function WorkerManagement() {
       .filter(({ p, i }) => (p.chart_pos ?? null) !== i)
     const results = await Promise.all(
       updates.map(({ p, i }) =>
-        supabase.from('access_profiles').update({ chart_pos: i }).eq('id', p.id).select('id'),
+        supabase.from('shared_profiles').update({ chart_pos: i }).eq('id', p.id).select('id'),
       ),
     )
     const err = results.find((r) => r.error)?.error
@@ -759,7 +762,7 @@ export default function WorkerManagement() {
       setError(
         /chart_pos/i.test(err.message)
           ? 'The database is missing the chart_pos column — run the latest supabase/setup.sql ' +
-            '(or just: alter table public.access_profiles add column chart_pos int;).'
+            '(or just: alter table public.shared_profiles add column chart_pos int;).'
           : err.message,
       )
     } else if (results.length > 0 && results.every((r) => !r.data || r.data.length === 0)) {
@@ -1305,6 +1308,7 @@ export default function WorkerManagement() {
               jobs={jobs}
               rates={rates}
               canEditProfile={canEditProfile}
+              canEditWorkerId={canEditWorkerId}
               canEditSalary={canEditSalary && worksAtAStation(tierOf(selected))}
               onSave={(patch) => saveProfile(selected, patch)}
               onClose={() => setSelectedId(null)}
@@ -1381,6 +1385,7 @@ function WorkerPanel({
   jobs,
   rates,
   canEditProfile,
+  canEditWorkerId,
   canEditSalary,
   onSave,
   onClose,
@@ -1392,6 +1397,7 @@ function WorkerPanel({
   jobs: Job[]
   rates: PieceRate[]
   canEditProfile: boolean
+  canEditWorkerId: boolean
   canEditSalary: boolean
   onSave: (patch: Record<string, unknown>) => Promise<boolean>
   onClose: () => void
@@ -1420,9 +1426,9 @@ function WorkerPanel({
     const patch: Record<string, unknown> = {}
     if (canEditProfile) {
       patch.full_name = form.full_name.trim() || null
-      patch.employee_code = form.employee_code.trim() || null
       patch.phone = form.phone.trim() || null
     }
+    if (canEditWorkerId) patch.employee_code = form.employee_code.trim() || null
     if (canEditSalary) {
       const v = form.basic_salary.trim()
       patch.basic_salary = v === '' ? null : Number(v)
@@ -1459,7 +1465,7 @@ function WorkerPanel({
     .filter((j) => j.grade_id === null || j.grade_id === person.grade_id)
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  const canEdit = canEditProfile || canEditSalary
+  const canEdit = canEditProfile || canEditWorkerId || canEditSalary
   const tierChip = grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : null
 
   return (
@@ -1482,7 +1488,11 @@ function WorkerPanel({
             <>
               <Row label="Tier" value={tierChip} />
               <EditRow label="Name" value={form.full_name} onChange={set('full_name')} />
-              <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} />
+              {canEditWorkerId ? (
+                <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} />
+              ) : (
+                <Row label="Staff no." value={person.employee_code} />
+              )}
               <Row label="Station" value={stationText} />
               <Row label="Team" value={team?.name} />
               <Row label="Email" value={person.email} />
@@ -1492,6 +1502,9 @@ function WorkerPanel({
             <>
               <Row label="Tier" value={tierChip} />
               <Row label="Name" value={displayName(person)} />
+              {canEditWorkerId && (
+                <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} />
+              )}
               <Row label="Station" value={stationText} />
             </>
           )}
