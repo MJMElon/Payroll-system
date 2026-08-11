@@ -1675,6 +1675,9 @@ function StationTargetCards({
   station: Station
   profileId: string | null
 }) {
+  // The rate's own tier threshold decides where the badges turn blue; a
+  // station without a tiered rate keeps the default cap.
+  const capBadge = tier1Cap(null)
   const showHour = station.show_hourly_target === true && (station.hourly_target ?? 0) > 0
   const showMonth = station.show_monthly_target === true && (station.monthly_target ?? 0) > 0
   const [hourCount, setHourCount] = useState(0)
@@ -1729,7 +1732,7 @@ function StationTargetCards({
             {Array.from({ length: hourTarget }, (_, i) => (
               <span
                 key={i}
-                className={`stamp ${i >= TIER1_UNIT_CAP ? 'tier2' : ''} ${i < hourCount ? 'done' : ''}`}
+                className={`stamp ${i >= capBadge ? 'tier2' : ''} ${i < hourCount ? 'done' : ''}`}
               >
                 ✓
               </span>
@@ -1740,8 +1743,8 @@ function StationTargetCards({
           </div>
           <div className="mob-sub">
             {hourCount} of {hourTarget} this hour
-            {hourTarget > TIER1_UNIT_CAP
-              ? ` · blue from no. ${TIER1_UNIT_CAP + 1}: the second-tier rate`
+            {hourTarget > capBadge
+              ? ` · blue from no. ${capBadge + 1}: the second-tier rate`
               : ''}
           </div>
         </div>
