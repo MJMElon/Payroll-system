@@ -251,14 +251,30 @@ export default function WorkerManagement() {
     (myTier === 1 || myCaps.includes('user-access') || myTier <= tier) &&
     stationInScope(stationId)
   const canManageTeam = (t: Team) => canOwnTeamsAt(teamTier(t), t.station_id)
-  /** May I hang someone under this leader? */
+  /**
+   * Does this person stand inside MY station reach? At one of my stations,
+   * or not yet at any — someone still to be placed. A mill-wide viewer has
+   * no station tags, so every station is theirs.
+   */
+  const inMyStations = (p: Profile) => {
+    const ids = stationsOf(p)
+    return ids.length === 0 || ids.some((id) => stationInScope(id))
+  }
+  /** May I hang someone under this leader? Myself, my own chain — or a
+   *  leader below my tier at my own station, so a head can fill their
+   *  station's teams whether or not the supervisor links are wired up. */
   const canPlaceUnder = (leader: Profile) =>
-    canAssignAnywhere || leader.id === profile?.id || inMyBranch(leader)
-  /** May I move this person out of where they are now? */
+    canAssignAnywhere ||
+    leader.id === profile?.id ||
+    inMyBranch(leader) ||
+    (belowMe(tierOf(leader)) && inMyStations(leader))
+  /** May I move this person out of where they are now? Reaching DOWN the
+   *  tiers at my own station is enough — a station head moves the names
+   *  at their station without needing a supervisor link to each one. */
   const canMove = (p: Profile) =>
     p.id !== profile?.id &&
     belowMe(tierOf(p)) &&
-    (canAssignAnywhere || inMyBranch(p) || p.supervisor_id === profile?.id)
+    (canAssignAnywhere || inMyBranch(p) || p.supervisor_id === profile?.id || inMyStations(p))
   /** May I put someone on this tier without giving them a leader yet? */
   const canPlaceOnTier = (g: Grade) => belowMe(g.sort_order)
 
@@ -415,13 +431,13 @@ export default function WorkerManagement() {
     }
     if (!canPlaceUnder(leader)) {
       return setError(
-        `You can only add people under yourself or under someone who reports up to you, and ` +
+        `You can only add people under yourself or under a leader below you at your own station, and ` +
           `${displayName(leader)} is neither. The "Assign workers to ANY team" function opens this up.`,
       )
     }
     if (person.tags_confirmed && !canMove(person)) {
       return setError(
-        `You can only move someone who reports up to you, and ${displayName(person)} does not. ` +
+        `You can only move someone below your own tier at your own station, and ${displayName(person)} does not. ` +
           'The "Assign workers to ANY team" function opens this up.',
       )
     }
@@ -583,7 +599,7 @@ export default function WorkerManagement() {
     if (!person.tags_confirmed) return
     if (!canMove(person)) {
       return setError(
-        `You can only move someone who reports up to you, and ${displayName(person)} does not.`,
+        `You can only move someone below your own tier at your own station, and ${displayName(person)} does not.`,
       )
     }
     setError(null)
@@ -627,7 +643,7 @@ export default function WorkerManagement() {
     }
     if (person.tags_confirmed && !canMove(person)) {
       return setError(
-        `You can only move someone who reports up to you, and ${displayName(person)} does not. ` +
+        `You can only move someone below your own tier at your own station, and ${displayName(person)} does not. ` +
           'The "Assign workers to ANY team" function opens this up.',
       )
     }
@@ -682,7 +698,7 @@ export default function WorkerManagement() {
     }
     if (person.tags_confirmed && !canMove(person)) {
       return setError(
-        `You can only move someone who reports up to you, and ${displayName(person)} does not.`,
+        `You can only move someone below your own tier at your own station, and ${displayName(person)} does not.`,
       )
     }
     if (!belowMe(grade.sort_order)) {
@@ -696,7 +712,7 @@ export default function WorkerManagement() {
       (team?.created_by ? profiles.find((x) => x.id === team.created_by) ?? null : null)
     if (leader && !canPlaceUnder(leader)) {
       return setError(
-        `You can only add people under yourself or under someone who reports up to you, and ` +
+        `You can only add people under yourself or under a leader below you at your own station, and ` +
           `${displayName(leader)} is neither.`,
       )
     }
@@ -741,7 +757,7 @@ export default function WorkerManagement() {
     }
     if (!canMove(person)) {
       return setError(
-        `You can only move someone who reports up to you, and ${displayName(person)} does not.`,
+        `You can only move someone below your own tier at your own station, and ${displayName(person)} does not.`,
       )
     }
     setError(null)
