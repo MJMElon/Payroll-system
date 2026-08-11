@@ -220,8 +220,19 @@ export default function DemoMobile() {
   // drilled into. Bumping this remounts the tab, so every screen it was
   // holding open falls away with it.
   const [tabPress, setTabPress] = useState(0)
+  // Which bucket My work opens on when something else sends you there.
+  // Pressing the tab itself always means "Pending", the tab's own front
+  // door; only a card that named a bucket changes it.
+  const [workFilter, setWorkFilter] = useState<WorkFilter>('pending')
   const goTab = (t: Tab) => {
     setTab(t)
+    if (t === 'mywork') setWorkFilter('pending')
+    setTabPress((n) => n + 1)
+  }
+  /** Open My work on a named bucket — from the Performance tab's cards. */
+  const goMyWork = (f: WorkFilter = 'pending') => {
+    setWorkFilter(f)
+    setTab('mywork')
     setTabPress((n) => n + 1)
   }
   const [signupPreview, setSignupPreview] = useState(false)
@@ -416,9 +427,8 @@ export default function DemoMobile() {
                     profile={profile}
                     profileId={profile?.id ?? null}
                     myStationIds={myStationIds}
-                    myEmail={profile?.email ?? 'unknown'}
                     jobColumnReady={jobColumnReady}
-                    onMyWork={() => setTab('mywork')}
+                    onMyWork={goMyWork}
                     onError={setError}
                   />
                 ) : tab === 'mywork' ? (
@@ -433,6 +443,7 @@ export default function DemoMobile() {
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
                     myEmail={profile?.email ?? 'unknown'}
+                    initialFilter={workFilter}
                     onError={setError}
                   />
                 ) : tab === 'team' ? (
@@ -567,6 +578,8 @@ const DAY_RANGES = [
   { key: '7d', label: '7 days', days: 6 },
   { key: '30d', label: '30 days', days: 29 },
 ] as const
+
+type DayRange = (typeof DAY_RANGES)[number]['key']
 
 function MobSubHeader({ title, onBack }: { title: string; onBack: () => void }) {
   return (
@@ -786,7 +799,6 @@ function PerformanceTab({
   profile,
   profileId,
   myStationIds,
-  myEmail,
   jobColumnReady,
   onMyWork,
   onError,
@@ -801,18 +813,21 @@ function PerformanceTab({
   profile: Profile | null
   profileId: string | null
   myStationIds: string[]
-  myEmail: string
   jobColumnReady: boolean
-  onMyWork: () => void
+  /** Send the viewer to My work, optionally straight to one bucket. */
+  onMyWork: (filter?: WorkFilter) => void
   onError: (m: string | null) => void
 }) {
   const [station, setStation] = useState<Station | null>(null)
   // The screens this tab drills into: the work record behind "My work
   // done", and the two queues behind the cards under it.
-  const [sub, setSub] = useState<null | 'history' | 'pending' | 'rejected' | 'output'>(null)
+  const [sub, setSub] = useState<null | 'history' | 'output'>(null)
   // Set by the › beside a station on the Output record: the history that
   // opens is that station's, and Back returns to the Output record.
   const [historyStation, setHistoryStation] = useState<Station | null>(null)
+  // Which window that history opens on — carried over from the Output
+  // record, so clicking through from "30 days" stays on 30 days.
+  const [historyRange, setHistoryRange] = useState<DayRange>('today')
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const tierCaps = effectiveCapabilities(tier)
@@ -985,6 +1000,7 @@ function PerformanceTab({
         amountFor={amountFor}
         canEdit={tierCaps.includes('edit-entry')}
         station={historyStation}
+        initialRange={historyStation ? historyRange : 'today'}
         onOpen={setDetail}
         onBack={() => {
           // A station's history was entered from the Output record, so
@@ -1002,34 +1018,12 @@ function PerformanceTab({
         stations={stations}
         jobs={jobs}
         entries={entries}
-        onStation={(st) => {
+        onStation={(st, range) => {
           setHistoryStation(st)
+          setHistoryRange(range)
           setSub('history')
         }}
         onBack={() => setSub(null)}
-      />
-    )
-  }
-
-  if (sub === 'pending' || sub === 'rejected') {
-    return (
-      <QueueScreen
-        kind={sub}
-        profileId={profileId}
-        myName={profileName(profile)}
-        myEmail={myEmail}
-        tier={tier}
-        grades={grades}
-        stations={stations}
-        jobs={jobs}
-        rateFor={rateFor}
-        amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
-        onBack={() => {
-          setSub(null)
-          loadEntries()
-        }}
-        onError={onError}
       />
     )
   }
@@ -1223,7 +1217,7 @@ function PerformanceTab({
         )}
 
         {canEntry && needsFix > 0 && (
-          <button className="mob-alert" onClick={onMyWork}>
+          <button className="mob-alert" onClick={() => onMyWork('rejected')}>
             ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
           </button>
         )}
@@ -1232,11 +1226,14 @@ function PerformanceTab({
             tab ends here: this is the day's own work, not the mill's. */}
         {showKpi && (
           <div className="mob-grid2">
-            <button className="mob-card tapcard" onClick={() => setSub('pending')}>
+            {/* The same records My work already lists under Pending, so
+                this opens THAT rather than a second screen saying the
+                same thing in different words. */}
+            <button className="mob-card tapcard" onClick={() => onMyWork('pending')}>
               <span className="mob-field-label">Pending Approval</span>
               <span className="mob-stat">{(reviews > 0 ? awaiting.length : 0) + myWaiting}</span>
             </button>
-            <button className="mob-card tapcard" onClick={() => setSub('rejected')}>
+            <button className="mob-card tapcard" onClick={() => onMyWork('rejected')}>
               <span className="mob-field-label">Rejected</span>
               <span className="mob-stat">{(reviews > 0 ? rejectedWk.length : 0) + myRejectedWk}</span>
             </button>
@@ -1313,7 +1310,8 @@ function OutputRecordScreen({
   stations: Station[]
   jobs: Job[]
   entries: ProductionEntry[]
-  onStation: (s: Station) => void
+  /** The station, and the window it was being read over. */
+  onStation: (s: Station, range: DayRange) => void
   onBack: () => void
 }) {
   const [range, setRange] = useState<(typeof DAY_RANGES)[number]['key']>('today')
@@ -1328,6 +1326,10 @@ function OutputRecordScreen({
 
   return (
     <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+      </div>
+
       <div className="mob-body">
         <MobSubHeader title="Output record" onBack={onBack} />
         <div className="mob-queue-chips">
@@ -1345,7 +1347,7 @@ function OutputRecordScreen({
         ) : (
           record.map((r) => (
             <div className="mob-card" key={r.station.id}>
-              <button className="mob-cardhead" onClick={() => onStation(r.station)}>
+              <button className="mob-cardhead" onClick={() => onStation(r.station, range)}>
                 <span className="mob-card-label">{r.station.name}</span>
                 <span className="mob-caret" aria-hidden="true">›</span>
               </button>
@@ -2981,6 +2983,7 @@ function RecordHistory({
   amountFor,
   canEdit,
   station = null,
+  initialRange = 'today',
   onOpen,
   onBack,
 }: {
@@ -2997,10 +3000,17 @@ function RecordHistory({
    * and the screen is headed with the station's name.
    */
   station?: Station | null
+  /**
+   * The window to open on. Coming from the Output record it is the one
+   * that was being read there — clicking through from "30 days" and
+   * landing on "Today" throws the question away and makes the numbers
+   * look wrong.
+   */
+  initialRange?: DayRange
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
-  const [rangeKey, setRangeKey] = useState<(typeof DAY_RANGES)[number]['key']>('today')
+  const [rangeKey, setRangeKey] = useState<DayRange>(initialRange)
   const [rows, setRows] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
   // The entry whose pencil was tapped, and the number being retyped.
@@ -3604,6 +3614,7 @@ function MyWorkTab({
   amountFor,
   tier2RateFor,
   myEmail,
+  initialFilter = 'pending',
   onError,
 }: {
   profileId: string | null
@@ -3616,6 +3627,8 @@ function MyWorkTab({
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
   myEmail: string
+  /** The bucket to open on, when the Performance tab named one. */
+  initialFilter?: WorkFilter
   onError: (m: string | null) => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
@@ -3629,7 +3642,7 @@ function MyWorkTab({
   const [viewPhotos, setViewPhotos] = useState<ProductionEntry | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-  const [filter, setFilter] = useState<WorkFilter>('pending')
+  const [filter, setFilter] = useState<WorkFilter>(initialFilter)
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
 
   // Which buttons show is decided by the tag, not the rung: tick verify on
@@ -4042,270 +4055,6 @@ function SignupWelcome({ myName }: { myName: string }) {
         <div className="mob-sub" style={{ textAlign: 'center' }}>
           Nothing else to do — this screen unlocks by itself once you are added.
         </div>
-      </div>
-    </>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* PENDING VERIFY and REJECTED — the two sub-screens of Performance.    */
-/*                                                                      */
-/* Each reads the same way, in two sections: what is waiting on ME      */
-/* first, then what is waiting on somebody else. Both sides come from   */
-/* the LADDER, so the same screen serves every tier without a rung      */
-/* named anywhere:                                                      */
-/*                                                                      */
-/*   Pending   1  work from below me that my tag says I verify/approve  */
-/*             2  my own submissions, still waiting on my upper         */
-/*                                                                      */
-/*   Rejected  1  my work, sent back to me by my upper                  */
-/*             2  work from below me that went back down                */
-/*                                                                      */
-/* A section with nothing in it is not drawn. An Operator has nobody    */
-/* below, so an Operator simply gets one section — no empty half, and   */
-/* no tier test in the code that says so.                               */
-/* ------------------------------------------------------------------ */
-
-function QueueScreen({
-  kind,
-  profileId,
-  myName,
-  myEmail,
-  tier,
-  grades,
-  stations,
-  jobs,
-  rateFor,
-  amountFor,
-  tier2RateFor,
-  onBack,
-  onError,
-}: {
-  kind: 'pending' | 'rejected'
-  profileId: string | null
-  myName: string
-  myEmail: string
-  tier: Grade | null
-  grades: Grade[]
-  stations: Station[]
-  jobs: Job[]
-  rateFor: (jobId: string) => number
-  amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
-  onBack: () => void
-  onError: (m: string | null) => void
-}) {
-  const [mine, setMine] = useState<ProductionEntry[]>([])
-  const [theirs, setTheirs] = useState<ProductionEntry[]>([])
-  const [people, setPeople] = useState<Map<string, Profile>>(new Map())
-  const [loading, setLoading] = useState(true)
-  const [detail, setDetail] = useState<ProductionEntry | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
-
-  const caps = effectiveCapabilities(tier)
-  const canVerify = caps.includes('verify')
-  const canApprove = caps.includes('approve')
-  const reviews = canVerify || canApprove
-
-  async function load() {
-    if (!profileId) return
-    setLoading(true)
-    const wanted = kind === 'pending' ? ['pending', 'verified'] : ['rejected']
-    const [mineRes, allRes, peopleRes] = await Promise.all([
-      supabase
-        .from('operation_entries')
-        .select('*')
-        .eq('user_id', profileId)
-        .in('approval_status', wanted)
-        .order('created_at', { ascending: false })
-        .limit(100),
-      // Somebody else's work is only worth loading for a tag that acts on
-      // it — for the pending screen that is verify/approve, and for the
-      // rejected screen it is the same tags looking back at what they sent
-      // down.
-      reviews
-        ? supabase
-            .from('operation_entries')
-            .select('*')
-            .in('approval_status', wanted)
-            .neq('user_id', profileId)
-            .order('created_at', { ascending: true })
-            .limit(200)
-        : Promise.resolve({ data: [] as ProductionEntry[], error: null }),
-      supabase.from('shared_profiles').select('id, full_name, email, grade_id'),
-    ])
-    if (mineRes.error) onError(mineRes.error.message)
-    const byId = new Map(((peopleRes.data ?? []) as Profile[]).map((p) => [p.id, p]))
-    setPeople(byId)
-    setMine((mineRes.data ?? []) as ProductionEntry[])
-
-    // Strictly DOWN the ladder — verify and approve never reach sideways
-    // or up, and neither does looking at what you sent back.
-    const below = (e: ProductionEntry) => {
-      if (tier == null) return false
-      const who = e.user_id ? byId.get(e.user_id) : undefined
-      const order = who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order : null
-      // Somebody with no tier tag cannot be placed, so they count as below
-      // rather than disappearing from every queue there is.
-      return order == null || order > tier.sort_order
-    }
-    const all = ((allRes.data ?? []) as ProductionEntry[]).filter(below)
-    setTheirs(
-      kind === 'pending'
-        ? all.filter(
-            (e) =>
-              (canVerify && e.approval_status === 'pending') ||
-              (canApprove && e.approval_status === 'verified'),
-          )
-        : // Whoever sent it back, if it was recorded. Rows rejected before
-          // the column existed name nobody, and are kept rather than lost.
-          all.filter((e) => !e.rejected_by || e.rejected_by === myEmail),
-    )
-    setLoading(false)
-  }
-  useEffect(() => {
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, kind])
-
-  /** Move someone else's entry along the flow, or send it back. */
-  async function act(e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') {
-    let reason: string | null = null
-    if (next === 'rejected') {
-      reason = window.prompt('Reason for rejecting (shown to the worker):') ?? null
-      if (reason === null) return
-    }
-    setBusy(e.id)
-    onError(null)
-    const now = new Date().toISOString()
-    const fields: Record<string, unknown> = { approval_status: next }
-    if (next === 'verified') Object.assign(fields, { verified_by: myEmail, verified_at: now })
-    if (next === 'approved') Object.assign(fields, { approved_by: myEmail, approved_at: now })
-    if (next === 'rejected') {
-      Object.assign(fields, {
-        rejected_reason: reason || null,
-        rejected_by: myEmail,
-        verified_by: null,
-        verified_at: null,
-        approved_by: null,
-        approved_at: null,
-      })
-    }
-    const { error } = await supabase.from('operation_entries').update(fields).eq('id', e.id)
-    setBusy(null)
-    if (error) return onError(error.message)
-    load()
-  }
-
-  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const nameOf = (e: ProductionEntry) => {
-    const p = e.user_id ? people.get(e.user_id) : undefined
-    return p ? profileName(p) : '?'
-  }
-  const tierOf = (e: ProductionEntry) => {
-    const p = e.user_id ? people.get(e.user_id) : undefined
-    return grades.find((g) => g.id === p?.grade_id) ?? null
-  }
-
-  if (detail) {
-    const isMine = detail.user_id === profileId
-    return (
-      <EntryDetail
-        entry={detail}
-        myName={isMine ? myName : nameOf(detail)}
-        tier={tier}
-        stations={stations}
-        jobs={jobs}
-        rateFor={rateFor}
-        amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
-        onBack={() => setDetail(null)}
-        workerTier={isMine ? tier : tierOf(detail)}
-        // Your own record is never yours to wave through, and a record
-        // already sent back is not at a step anybody acts on.
-        decide={
-          !isMine && kind === 'pending' && reviews
-            ? {
-                canVerify,
-                canApprove,
-                busy: busy === detail.id,
-                act: (next) => {
-                  const e = detail
-                  setDetail(null)
-                  act(e, next)
-                },
-              }
-            : undefined
-        }
-      />
-    )
-  }
-
-  const Row = ({ e, who }: { e: ProductionEntry; who?: string }) => (
-    <button className="mob-station perf" key={e.id} onClick={() => setDetail(e)}>
-      <span className="perf-top">
-        <span>{who ?? jobName(e.job_id)}</span>
-        <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-      </span>
-      <span className="perf-top">
-        <span className="mob-station-meta">
-          {who ? `${jobName(e.job_id)} · ` : ''}
-          {stationName(e.station_id)} ·{' '}
-          {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-            day: '2-digit', month: 'short',
-          })}
-        </span>
-        {statusChip(e.approval_status)}
-      </span>
-    </button>
-  )
-
-  // Section 1 is always the half that is about ME — waiting on my action
-  // when pending, sent back to me when rejected.
-  const sections =
-    kind === 'pending'
-      ? [
-          { title: 'Waiting on me', rows: theirs, named: true },
-          { title: 'My work waiting on my upper', rows: mine, named: false },
-        ]
-      : [
-          { title: 'My work sent back to me', rows: mine, named: false },
-          { title: 'Work I sent back', rows: theirs, named: true },
-        ]
-  const filled = sections.filter((s) => s.rows.length > 0)
-
-  return (
-    <>
-      <div className="mob-header">
-        <span className="mob-brand">MJM</span>
-      </div>
-
-      <div className="mob-body">
-        <MobSubHeader title={kind === 'pending' ? 'Pending Approval' : 'Rejected'} onBack={onBack} />
-
-        {loading ? (
-          <p className="muted small">Loading…</p>
-        ) : filled.length === 0 ? (
-          <div className="mob-card">
-            <div className="mob-sub">
-              {kind === 'pending'
-                ? 'Nothing waiting — all caught up ✅'
-                : 'Nothing rejected — good work ✅'}
-            </div>
-          </div>
-        ) : (
-          filled.map((s) => (
-            <div key={s.title}>
-              <div className="mob-card-label" style={{ padding: '0 0.2rem 0.35rem' }}>
-                {s.title} <span className="mob-station-meta">({s.rows.length})</span>
-              </div>
-              {s.rows.map((e) => (
-                <Row key={e.id} e={e} who={s.named ? nameOf(e) : undefined} />
-              ))}
-            </div>
-          ))
-        )}
       </div>
     </>
   )
