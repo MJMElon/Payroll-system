@@ -5472,6 +5472,18 @@ function TeamTab({
   // somebody other than the reader.
   /** Where a person sits once the staged moves are taken into account. */
   const placedGrade = (p: Profile) => staged.get(p.id)?.gradeId ?? p.grade_id
+  /**
+   * The team a person is SHOWN in. A staged move carries a teamId — null
+   * included, which is how somebody is moved out of a team — so a staged
+   * entry always wins over the saved column.
+   *
+   * Without this a staged move only lit the name up and left it in the
+   * column it came from, which read as the drop having done nothing.
+   */
+  const placedTeam = (p: Profile) => {
+    const move = staged.get(p.id)
+    return move ? move.teamId : p.team_id ?? null
+  }
 
   const stationHeads =
     stationTier && activeStation
@@ -5494,7 +5506,7 @@ function TeamTab({
         key: t.id,
         team: t,
         name: t.name || NO_TEAM_NAME,
-        members: people.filter((p) => p.team_id === t.id && atStation(p)),
+        members: people.filter((p) => placedTeam(p) === t.id && atStation(p)),
       }))
     : []
   /**
@@ -5512,7 +5524,7 @@ function TeamTab({
   // most often.
   const looseMembers = runsTeams
     ? people.filter((p) => {
-        if (p.team_id || !atStation(p)) return false
+        if (placedTeam(p) || !atStation(p)) return false
         const order = grades.find((g) => g.id === p.grade_id)?.sort_order
         // Only the rungs a team is actually made of — a station head with
         // no team is not "loose", they head the station.
