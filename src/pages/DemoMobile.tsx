@@ -4457,16 +4457,26 @@ function MyWorkTab({
 
   // Pending is a queue — all of it, always. Approved and rejected are a
   // history, so they open on today and widen only when asked.
-  const dateFrom =
-    filter === 'pending' ? null
-      : dateMode === 'today' ? todayISO()
+  // The window belongs to the BUCKET being asked about, never to whichever
+  // tab happens to be open. Reading the open tab meant that from Pending
+  // (no window) the Approved chip counted every approved record ever,
+  // then clicking it applied "today" and showed none — a (3) over an
+  // empty list.
+  const windowFor = (k: WorkFilter) => {
+    if (k === 'pending') return null
+    const from =
+      dateMode === 'today' ? todayISO()
         : dateMode === 'month' ? todayISO().slice(0, 8) + '01'
           : fromDate
-  const dateTo = filter === 'pending' || dateMode !== 'range' ? todayISO() : toDate
-  const inDates = (e: ProductionEntry) =>
-    dateFrom === null || (e.work_date >= dateFrom && e.work_date <= dateTo)
+    const to = dateMode !== 'range' ? todayISO() : toDate
+    return { from, to }
+  }
+  const inDatesFor = (e: ProductionEntry, k: WorkFilter) => {
+    const w = windowFor(k)
+    return w === null || (e.work_date >= w.from && e.work_date <= w.to)
+  }
 
-  const keep = (e: ProductionEntry) => matchesTier(e) && inDates(e)
+  const keep = (e: ProductionEntry) => matchesTier(e) && inDatesFor(e, filter)
   // Each station + job + hour of live photos will close into ONE record,
   // so that is what the Pending chip counts them as.
   const liveGroups = new Set(
@@ -4479,7 +4489,7 @@ function MyWorkTab({
   // The chips count what their tab would show, date window included, so a
   // number on a chip and the list behind it can never disagree.
   const count = (k: WorkFilter) => {
-    const mine = entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && (k === 'pending' || inDates(x)))
+    const mine = entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && inDatesFor(x, k))
     // Work waiting on YOU is listed under Pending too, so it is counted
     // there — a chip reading (0) above a card that is plainly pending is
     // the sort of thing that makes a screen untrustworthy.
