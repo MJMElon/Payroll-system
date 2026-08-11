@@ -1974,6 +1974,13 @@ button.mob-breakrow {
   flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none;
   padding: 0 0.9rem 0.9rem; display: flex; flex-direction: column; gap: 0.7rem;
 }
+/* The body is a column flexbox, so its cards are flex items — and a card
+   that may clip its content (overflow: hidden, e.g. the review fold) has
+   no minimum size, so flex SQUASHES it to fit the screen instead of
+   letting it overflow. Nothing sticks out, so there is nothing to scroll,
+   and the card's own tail (the verify buttons) is clipped away. Cards in
+   a scroller must never shrink: overflowing is the point. */
+.mob-body > * { flex-shrink: 0; }
 .mob-card {
   background: #fff; border-radius: 16px; padding: 0.85rem 0.95rem;
   box-shadow: 0 1px 2px rgba(10, 40, 28, 0.05), 0 6px 18px rgba(10, 60, 40, 0.07);
