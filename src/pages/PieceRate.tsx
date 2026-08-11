@@ -943,29 +943,34 @@ function RatesList({
     ? groupJobs(jobs).find((g) => groupKey(g) === manageKey) ?? null
     : null
   const tagCols = tagColumns(grades, filtered)
-  const colCount = 3 + tagCols.length + 1 + 1
+  const colCount = 3 + tagCols.length + 1
 
   // Download the visible masterlist as CSV (opens directly in Excel).
+  // Each tier carries its own effective date — the dates can differ, so
+  // every rate column is followed by that tier's own date column.
   function exportCsv() {
     const esc = (v: string) => `"${v.replace(/"/g, '""')}"`
-    const head = ['Station', 'Work description', 'Unit', ...tagCols.map((c) => `${c.label} (RM)`), 'Effective date']
+    const head = [
+      'Station',
+      'Work description',
+      'Unit',
+      ...tagCols.flatMap((c) => [`${c.label} (RM)`, `${c.label} effective`]),
+    ]
     const lines = [head.map(esc).join(',')]
     for (const g of groups) {
-      const dates = g.jobs
-        .map((j) => currentRate.get(j.id)?.effective_from)
-        .filter((d): d is string => Boolean(d))
-        .sort()
       const cells = [
         stationName(g.station_id),
         g.name,
         g.jobs[0]?.unit ?? '',
-        ...tagCols.map((c) => {
+        ...tagCols.flatMap((c) => {
           const j = g.jobs.find((x) => (x.grade_id ?? NO_TAG) === c.key)
           const r = j ? currentRate.get(j.id) : undefined
-          if (!r) return ''
-          return r.tier2_rate != null ? `${r.rate} / ${r.tier2_rate}` : String(r.rate)
+          if (!r) return ['', '']
+          return [
+            r.tier2_rate != null ? `${r.rate} / ${r.tier2_rate}` : String(r.rate),
+            r.effective_from,
+          ]
         }),
-        dates.length ? dates[dates.length - 1] : '',
       ]
       lines.push(cells.map(esc).join(','))
     }
@@ -1010,7 +1015,6 @@ function RatesList({
               {tagCols.map((c) => (
                 <th key={c.key} className="right pr-eqcol">{c.label} (RM)</th>
               ))}
-              <th className="pr-eqcol">Effective date</th>
               <th className="right pr-actcol">Actions</th>
             </tr>
           </thead>
@@ -1023,26 +1027,24 @@ function RatesList({
               </tr>
             )}
             {groups.map((g) => {
-              const dates = g.jobs
-                .map((j) => currentRate.get(j.id)?.effective_from)
-                .filter((d): d is string => Boolean(d))
-                .sort()
-              const effectiveDate = dates.length ? dates[dates.length - 1] : null
               return (
                 <tr key={groupKey(g)}>
                   <td>{stationName(g.station_id)}</td>
                   <td>{g.name}</td>
                   <td className="muted">{g.jobs[0]?.unit}</td>
+                  {/* Each tier keeps its own effective date under its own
+                      rate — one shared date column cannot say three tiers
+                      whose rates changed on different days. */}
                   {tagCols.map((c) => {
                     const j = g.jobs.find((x) => (x.grade_id ?? NO_TAG) === c.key)
                     const rate = j ? currentRate.get(j.id) : undefined
                     return (
                       <td key={c.key} className="right">
                         <RateCell rate={rate} />
+                        {rate && <div className="muted small pr-rate-date">{rate.effective_from}</div>}
                       </td>
                     )
                   })}
-                  <td className="muted">{effectiveDate ?? '—'}</td>
                   {/* The list only VIEWS: the window it opens starts
                       read-only, and the pencil to edit lives inside it. */}
                   <td className="right">

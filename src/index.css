@@ -2568,6 +2568,8 @@ button.mob-title.spread { cursor: pointer; }
 /* The read face's rate line — amount with its unit right beside it — and
    the edit face mirroring it: number box, unit picker beside. */
 .pr-rate-inline { display: inline-flex; align-items: baseline; gap: 0.4rem; }
+/* Masterlist: each tier's own effective date rides under its rate. */
+.pr-rate-date { font-size: 0.72rem; margin-top: 0.15rem; }
 .pr-manage-edit.row { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
 
 /* Take a just-added tier column back out. */
