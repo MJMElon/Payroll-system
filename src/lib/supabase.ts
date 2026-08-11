@@ -187,10 +187,22 @@ export interface PieceRate {
   job_id: string
   rate: number
   effective_from: string
-  // Tiered hourly rate (e.g. cage-tipping): tier1 = `rate`, applied to the
-  // first 4 units that hour; tier2_rate applies to the 5th unit onward,
-  // resetting every hour. Null/undefined means a flat rate — no tiering.
+  // Tiered hourly rate (e.g. cage-tipping): `rate` pays each of the first
+  // N records of an hour, tier2_rate each record after that — both PER
+  // RECORD in the job's own unit; the hour only resets the count.
+  // Null/undefined means a flat rate — no tiering.
   tier2_rate?: number | null
+  // N above — how many records of each hour pay the first rate. Stored per
+  // rate so one station can tier at 4 and another at 6. Null (or a legacy
+  // database without the column) means the original 4 — read it through
+  // tier1Cap(), never directly.
+  tier_threshold?: number | null
+}
+
+/** How many records of each hour pay a tiered rate's first tier. */
+export function tier1Cap(r: { tier_threshold?: number | null } | null | undefined): number {
+  const n = r?.tier_threshold
+  return n && n > 0 ? n : 4
 }
 
 export interface ProductionEntry {
