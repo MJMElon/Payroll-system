@@ -11,7 +11,7 @@
 // My work, Team and Profile are identical for everyone — they just read that
 // person's own data.
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -598,9 +598,44 @@ function FilterMenu({
   onAll: () => void
 }) {
   const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement | null>(null)
+  // Where the list was scrolled to when the tick was made, and the box it
+  // was scrolled in.
+  const box = useRef<HTMLElement | null>(null)
+  const keep = useRef<number | null>(null)
   const narrowed = picked.size > 0
+
+  /**
+   * Ticking a tier makes the list longer or shorter, and the scroll box
+   * settles somewhere else — so the filter you are still tapping slides
+   * out from under your thumb. Hold the scroll position across the change
+   * instead: note it before, put it back after the list has re-rendered
+   * but before the browser paints, so nothing is ever seen to move.
+   */
+  function hold(change: () => void) {
+    let node: HTMLElement | null = root.current?.parentElement ?? null
+    while (node) {
+      const oy = getComputedStyle(node).overflowY
+      if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight) break
+      node = node.parentElement
+    }
+    box.current = node
+    keep.current = node ? node.scrollTop : null
+    change()
+  }
+
+  useLayoutEffect(() => {
+    const node = box.current
+    const top = keep.current
+    keep.current = null
+    if (!node || top == null) return
+    // The list may now be shorter than where we were, so never ask for a
+    // position that no longer exists.
+    node.scrollTop = Math.min(top, Math.max(0, node.scrollHeight - node.clientHeight))
+  })
+
   return (
-    <div className="mob-filter">
+    <div className="mob-filter" ref={root}>
       <button
         type="button"
         className={`mob-filter-btn ${narrowed ? 'on' : ''}`}
@@ -625,7 +660,7 @@ function FilterMenu({
             <button
               type="button"
               className={`mob-filter-row ${picked.size === 0 ? 'on' : ''}`}
-              onClick={onAll}
+              onClick={() => hold(onAll)}
             >
               <span className="mob-filter-tick">{picked.size === 0 ? '✓' : ''}</span>
               <span>{allLabel}</span>
@@ -635,7 +670,7 @@ function FilterMenu({
                 type="button"
                 key={o.key}
                 className={`mob-filter-row ${picked.has(o.key) ? 'on' : ''}`}
-                onClick={() => onToggle(o.key)}
+                onClick={() => hold(() => onToggle(o.key))}
               >
                 <span className="mob-filter-tick">{picked.has(o.key) ? '✓' : ''}</span>
                 {o.color && <span className={`tag-dot dot-${o.color}`} aria-hidden="true" />}
