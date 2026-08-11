@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
+import { useAllowedModules } from '../lib/useAllowedModules'
 
 export default function Layout() {
   const { profile, session, signOut } = useAuth()
@@ -12,29 +13,27 @@ export default function Layout() {
   // standard page width gives every other page.
   const isWide = pathname.startsWith('/piece-rate')
   const role = profile?.role
-  // Settings is for admins/managers, plus anyone at least one tier above the
-  // bottom (they confirm new signups there).
-  const [upperTier, setUpperTier] = useState(false)
   // The tier tag is what the rest of the app goes by, so it is the tag —
   // not the account's role — that belongs next to the email.
   const [tierName, setTierName] = useState<string | null>(null)
   useEffect(() => {
     async function check() {
-      if (!profile?.grade_id) {
-        setTierName(null)
-        return setUpperTier(false)
-      }
-      const [{ data: mine }, { data: all }] = await Promise.all([
-        supabase.from('shared_grades').select('name, sort_order').eq('id', profile.grade_id).maybeSingle(),
-        supabase.from('shared_grades').select('sort_order').order('sort_order', { ascending: false }).limit(1),
-      ])
-      const bottom = all?.[0]?.sort_order ?? 0
+      if (!profile?.grade_id) return setTierName(null)
+      const { data: mine } = await supabase
+        .from('shared_grades')
+        .select('name')
+        .eq('id', profile.grade_id)
+        .maybeSingle()
       setTierName(mine?.name ?? null)
-      setUpperTier(mine != null && mine.sort_order < bottom)
     }
     check()
   }, [profile])
-  const canSettings = role === 'admin' || role === 'manager' || upperTier
+  // The gear follows the Settings Module tick exactly as the route does,
+  // so nobody is shown a door they cannot open.
+  const allowedModules = useAllowedModules()
+  const canSettings =
+    allowedModules !== undefined &&
+    (allowedModules === null || allowedModules.includes('settings'))
 
   return (
     <div className="app">

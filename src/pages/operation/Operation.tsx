@@ -362,6 +362,15 @@ export default function Operation() {
     return null
   }
 
+  /** An approval is not a locked door: the approve tag may still throw an
+   *  APPROVED record back to rejected — the same self-exclusion and
+   *  payroll lock apply. */
+  const canUnapprove = (e: ProductionEntry) =>
+    approvalLevel === 'approve' &&
+    !isLocked(e) &&
+    (isManagement || e.user_id !== profile?.id) &&
+    stat(e) === 'approved'
+
   // Edit / delete: managers always; a worker may fix or remove their OWN
   // entry while it is still pending (or was rejected — editing resubmits).
   const canModify = (e: ProductionEntry) =>
@@ -477,7 +486,18 @@ export default function Operation() {
     const fields: Record<string, unknown> = { approval_status: next }
     if (next === 'verified') Object.assign(fields, { verified_by: me, verified_at: now })
     if (next === 'approved') Object.assign(fields, { approved_by: me, approved_at: now })
-    if (next === 'rejected') fields.rejected_reason = reason || null
+    if (next === 'rejected') {
+      // Rejection wipes the signatures with it — a thrown-back record must
+      // earn verify and approve again, exactly as the mobile flow does.
+      Object.assign(fields, {
+        rejected_reason: reason || null,
+        rejected_by: me,
+        verified_by: null,
+        verified_at: null,
+        approved_by: null,
+        approved_at: null,
+      })
+    }
     return fields
   }
 
@@ -883,6 +903,7 @@ export default function Operation() {
           groupAmount={groupAmount(detailGroup)}
           evidenceOf={evidenceOf}
           actionFor={actionFor}
+          canUnapprove={canUnapprove}
           busy={busy}
           badge={badge}
           onAct={act}
@@ -938,6 +959,7 @@ function GroupModal({
   groupAmount,
   evidenceOf,
   actionFor,
+  canUnapprove,
   busy,
   badge,
   onAct,
@@ -957,6 +979,8 @@ function GroupModal({
   groupAmount: number
   evidenceOf: (entryId: string) => { url: string; takenAt: string | null } | null
   actionFor: (e: ProductionEntry) => 'verified' | 'approved' | null
+  /** The approve tag may throw an APPROVED record back to rejected. */
+  canUnapprove: (e: ProductionEntry) => boolean
   busy: string | null
   badge: (s: string) => JSX.Element
   onAct: (e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') => void
@@ -1124,7 +1148,7 @@ function GroupModal({
                                 ✓ Approve
                               </button>
                             )}
-                            {step && (
+                            {(step || canUnapprove(e)) && (
                               <button className="linkbtn danger" disabled={busy === e.id} onClick={() => onAct(e, 'rejected')}>
                                 ✗ Reject
                               </button>

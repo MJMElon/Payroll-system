@@ -1009,6 +1009,12 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font-size: 0.8rem; font-weight: 700; color: var(--muted);
 }
 
+/* The month a history window covers, on its own line under the title. */
+.mob-hist-month {
+  text-align: center; font-weight: 800; font-size: 0.95rem;
+  letter-spacing: -0.01em; margin-top: -0.2rem;
+}
+
 /* The station's name with the earlier-months button beside it: three
    columns, so the name is centred on the screen and not on the space
    left over next to the button. */

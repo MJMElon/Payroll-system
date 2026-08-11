@@ -50,7 +50,9 @@ export default function App() {
           </Route>
           <Route path="/unauthorized" element={<Unauthorized />} />
 
-          <Route path="/settings" element={<Settings />} />
+          <Route element={<RequireModule moduleKey="settings" />}>
+            <Route path="/settings" element={<Settings />} />
+          </Route>
 
           {/* Role-restricted areas. Engineers can open Payroll for the
               report tabs; run data itself stays admin/manager-only via RLS. */}

@@ -3483,18 +3483,17 @@ function RecordHistory({
       </div>
 
       <div className="mob-body">
-        {/* The month IS the title — "Aug 2026" over its records reads in
-            one glance; the generic name keeps the day/week windows. */}
-        <MobSubHeader
-          title={
-            pickedMonth
+        {/* The screen keeps its name; the month reads on its own line
+            under it, and the station under that — so a monthly view says
+            all three, in that order, before the list starts. */}
+        <MobSubHeader title="Work Done History" onBack={onBack} />
+        {(pickedMonth || rangeKey === 'month') && (
+          <div className="mob-hist-month">
+            {pickedMonth
               ? pickedMonth.label
-              : rangeKey === 'month'
-                ? new Date().toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
-                : 'Work Record History'
-          }
-          onBack={onBack}
-        />
+              : new Date().toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+          </div>
+        )}
         {/* The station, with the way back through earlier months beside
             it — three columns, so the name stays centred on the screen
             rather than on the space left over next to the button. */}
@@ -3813,7 +3812,11 @@ function EntryDetail({
                 <button className="mob-btn approve" style={{ flex: 1 }} disabled={decide.busy}
                   onClick={() => decide.act('approved')}>✓ Approve</button>
               )}
-              {['pending', 'verified'].includes(status) && (
+              {/* An approval is not a locked door: whoever holds the
+                  approve tag may still throw an approved record back —
+                  the reject asks for a reason like any other. */}
+              {(['pending', 'verified'].includes(status) ||
+                (status === 'approved' && decide.canApprove)) && (
                 <button className="mob-btn reject" style={{ flex: 1 }} disabled={decide.busy}
                   onClick={() => decide.act('rejected')}>✗ Reject</button>
               )}
@@ -4807,6 +4810,13 @@ function ProfileTab({
     : 0
   const isPaidByPiece = tier != null && rungsBelow <= 2
 
+  // The Settings entry follows the Settings Module tick on the tier tag
+  // (tier 1 always holds it); an untagged admin account keeps its role's
+  // answer, the same one the web top bar gives.
+  const canSettings = tier
+    ? tier.sort_order === 1 || (tier.modules ?? []).includes('settings')
+    : profile?.role === 'admin' || profile?.role === 'manager'
+
   const stationNames =
     !isPaidByPiece || myStationIds.length === 0
       ? 'All Stations'
@@ -4906,6 +4916,18 @@ function ProfileTab({
           )}
         </div>
 
+        {/* 3 — the door into Settings, for the tiers whose tag ticks the
+            Settings Module. It opens the same pages the web gear does. */}
+        {canSettings && (
+          <Link to="/settings" className="mob-card tapcard block" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <div className="mob-cardhead">
+              <span className="mob-card-label">Settings</span>
+              <span className="mob-caret" aria-hidden="true">›</span>
+            </div>
+            <div className="mob-sub">Tier &amp; station tags, coordinates, targets</div>
+          </Link>
+        )}
+
       </div>
     </>
   )
@@ -4931,7 +4953,11 @@ function AvatarPicker({
   const [path, setPath] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
   const [uploading, setUploading] = useState(false)
+  // Tapping the face asks HOW: straight to the camera, or a photo that
+  // already exists — two inputs, since `capture` is decided up front.
+  const [choosing, setChoosing] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const galleryRef = useRef<HTMLInputElement>(null)
 
   // Read the stored path straight from the row rather than trusting the
   // cached auth profile — this tab remounts on every visit, so a photo
@@ -4990,10 +5016,17 @@ function AvatarPicker({
         style={{ display: 'none' }}
         onChange={(e) => handleFile(e.target.files?.[0])}
       />
+      <input
+        ref={galleryRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={(e) => handleFile(e.target.files?.[0])}
+      />
       <button
         className="mob-avatar-btn"
         disabled={uploading || !profile?.id}
-        onClick={() => fileRef.current?.click()}
+        onClick={() => setChoosing((v) => !v)}
         aria-label={path ? 'Change your photo' : 'Add your photo'}
       >
         {url ? (
@@ -5009,6 +5042,28 @@ function AvatarPicker({
           </svg>
         </span>
       </button>
+      {choosing && !uploading && (
+        <div className="mob-actions" style={{ justifyContent: 'center' }}>
+          <button
+            className="mob-mini"
+            onClick={() => {
+              setChoosing(false)
+              fileRef.current?.click()
+            }}
+          >
+            📷 Camera
+          </button>
+          <button
+            className="mob-mini"
+            onClick={() => {
+              setChoosing(false)
+              galleryRef.current?.click()
+            }}
+          >
+            🖼 Upload photo
+          </button>
+        </div>
+      )}
       {/* Only speak up when there is something to say — the camera badge
           already reads as "tap me", so a caption in the quiet case just
           pushes the name away from the face. */}

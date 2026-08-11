@@ -30,6 +30,11 @@ export const MODULE_OPTIONS = [
   { key: 'worker-management', label: 'Team Manage Module' },
   { key: 'report', label: 'Report Module' },
   { key: 'demo-mobile', label: 'Demo Mobile View Module' },
+  // The Settings pages themselves. Ticked, the tier gets the gear on the
+  // web top bar AND the Settings entry on the mobile Profile tab; what
+  // they may change inside is still governed per function by the ticks
+  // above and the database policies.
+  { key: 'settings', label: 'Settings Module' },
 ] as const
 
 /** Open to every tier, with or without a tick. */
