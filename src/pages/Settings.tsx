@@ -27,8 +27,9 @@ import { useOverlayClose } from '../lib/useOverlayClose'
 import { useWideShell } from '../lib/useWideShell'
 
 import AuditLogTab from './settings/AuditLogTab'
+import TierReachTab from './settings/TierReachTab'
 
-type Tab = 'tags' | 'audit'
+type Tab = 'tags' | 'reach' | 'audit'
 /** Which face of a row's pop-out is showing. */
 type Mode = 'view' | 'edit'
 /** Just enough of a Piece Rate work type to say it is holding a station. */
@@ -144,6 +145,9 @@ export default function Settings() {
         <button className={`tab ${tab === 'tags' ? 'active' : ''}`} onClick={() => setTab('tags')}>
           Tier &amp; Station Tags Setting
         </button>
+        <button className={`tab ${tab === 'reach' ? 'active' : ''}`} onClick={() => setTab('reach')}>
+          Tier Reach
+        </button>
         {canAudit && (
           <button className={`tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>
             Audit trail record
@@ -152,6 +156,7 @@ export default function Settings() {
       </div>
 
       {tab === 'tags' && <TagsTab />}
+      {tab === 'reach' && <TierReachTab />}
       {tab === 'audit' && canAudit && <AuditLogTab />}
     </div>
   )

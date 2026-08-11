@@ -1317,10 +1317,6 @@ function OutputRecordScreen({
           ))}
         </div>
 
-        <div className="mob-sub" style={{ padding: '0 0.2rem' }}>
-          Approved work records · {stations.length === 1 ? stations[0].name : `${stations.length} stations`}
-        </div>
-
         {record.length === 0 ? (
           <div className="mob-card">
             <div className="mob-sub">Nothing set to show on the mill dashboard yet.</div>
