@@ -842,6 +842,18 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-org-node .tag-dot { width: 11px; height: 11px; border-radius: 4px; flex: none; }
 .mob-org-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mob-org-text .mob-entry-name { font-size: 0.85rem; }
+/* An upper rung held by several people: every name in one row that
+   slides sideways — pull left to reach the names past the edge. */
+.mob-org-names {
+  display: flex; align-items: baseline; gap: 0.6rem;
+  max-width: 100%; overflow-x: auto;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.mob-org-names::-webkit-scrollbar { display: none; }
+.mob-org-names .mob-person-name { flex: none; white-space: nowrap; }
+.mob-org-names .mob-person-name + .mob-person-name {
+  padding-left: 0.6rem; border-left: 1px solid #dfe4ea;
+}
 
 /* A label with nothing beside it reads better centred. */
 .mob-card-label.centred { justify-content: center; letter-spacing: 0.14em; }
