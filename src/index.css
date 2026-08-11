@@ -1661,6 +1661,15 @@ button.mob-breakrow {
   color: var(--accent-strong); background: var(--accent-soft);
   border-radius: 999px; padding: 0.05rem 0.45rem;
 }
+/* A named list inside a module's block — "View piece rate contract of" and
+   its ticks — so the module can hold more than one kind of setting. */
+.module-subhead {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.7rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin-bottom: 0.1rem;
+}
+.module-subhead .module-count { margin-left: 0; }
 .module-caps {
   display: flex; flex-direction: column; gap: 0.25rem;
   margin: 0.4rem 0 0.15rem; padding-left: 1.5rem;

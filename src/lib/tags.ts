@@ -146,6 +146,74 @@ export function isEntitled(
   return effectiveEntitlements(grade, allGrades).includes(key)
 }
 
+/**
+ * Whose piece rate contracts / work records a tier may VIEW.
+ *
+ * This is a reach question, not an ability one: two tiers can both hold
+ * "Verify" and still be meant to see different people's work. It is set per
+ * tag under the module it governs — Piece Rate for contracts, Operation for
+ * work records — as a tick per tier, so adding or removing a tier changes
+ * the list on its own.
+ */
+export type ViewScope = 'rate' | 'entry'
+
+export const VIEW_SCOPES: { scope: ViewScope; module: string; label: string }[] = [
+  { scope: 'rate', module: 'piece-rate', label: 'View piece rate contract of' },
+  { scope: 'entry', module: 'operation', label: 'View work record of' },
+]
+
+/** The module a view list hangs off, so the tag editor knows where to draw it. */
+export const MODULE_VIEW = Object.fromEntries(
+  VIEW_SCOPES.map((v) => [v.module, v]),
+) as Record<string, { scope: ViewScope; module: string; label: string } | undefined>
+
+/**
+ * What a tag that has never been asked may view: its own rank and every
+ * rank below it, never upward — the rule the whole system ran on before
+ * this was settable, so switching it on changes nothing until a box moves.
+ */
+export function defaultViewTiers(
+  sortOrder: number,
+  allGrades: { id: string; sort_order: number }[],
+): string[] {
+  return allGrades.filter((g) => g.sort_order >= sortOrder).map((g) => g.id)
+}
+
+/** The tier ids this tag may view, falling back to the rank-based default. */
+export function viewableTierIds(
+  grade:
+    | { sort_order: number; view_rate_tiers?: string[] | null; view_entry_tiers?: string[] | null }
+    | null
+    | undefined,
+  allGrades: { id: string; sort_order: number }[],
+  scope: ViewScope,
+): string[] {
+  if (!grade) return []
+  const stored = scope === 'rate' ? grade.view_rate_tiers : grade.view_entry_tiers
+  // Null is "never asked", which is not the same as "may view nothing".
+  if (stored == null) return defaultViewTiers(grade.sort_order, allGrades)
+  // Read through the live tier list, so an id left behind by a deleted tag
+  // simply drops out rather than lingering as a stale grant.
+  return allGrades.filter((g) => stored.includes(g.id)).map((g) => g.id)
+}
+
+/**
+ * May this tag see something carrying `targetGradeId`? Work with no tier
+ * tag belongs to no rung and is open to everyone, here as everywhere.
+ */
+export function canViewTier(
+  grade:
+    | { sort_order: number; view_rate_tiers?: string[] | null; view_entry_tiers?: string[] | null }
+    | null
+    | undefined,
+  allGrades: { id: string; sort_order: number }[],
+  scope: ViewScope,
+  targetGradeId: string | null | undefined,
+): boolean {
+  if (!targetGradeId) return true
+  return viewableTierIds(grade, allGrades, scope).includes(targetGradeId)
+}
+
 export const ALL_CAPABILITIES: string[] = CAPABILITY_OPTIONS.map((c) => c.key)
 export const CAPABILITY_GROUPS: string[] = Array.from(new Set(CAPABILITY_OPTIONS.map((c) => c.group)))
 

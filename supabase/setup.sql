@@ -623,6 +623,14 @@ alter table public.shared_grades add column if not exists capabilities text[] no
 -- tier and everything below it), so nothing changes until somebody sets it.
 alter table public.shared_grades add column if not exists entitlements text[];
 
+-- Whose piece rate contracts / work records a tier may VIEW, as a list of
+-- grade ids. Set per tag in Settings -> Tier Tag Access Manage, under the
+-- module each one governs. Nullable with no default on purpose: null means
+-- the tag was never asked, and the app then falls back to the rule the
+-- whole system ran on before — its own rank and every rank below.
+alter table public.shared_grades add column if not exists view_rate_tiers text[];
+alter table public.shared_grades add column if not exists view_entry_tiers text[];
+
 -- Sensible defaults for the seeded tags (only fills empty ones).
 update public.shared_grades set capabilities = '{data-entry}'
   where name in ('Operator', 'Assistant Station Head', 'Station Head', 'General Worker')
