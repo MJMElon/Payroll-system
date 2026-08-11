@@ -593,6 +593,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .rate-tiered { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 0.1rem; }
 .rate-tier-line { font-weight: 700; white-space: nowrap; font-size: 0.85rem; }
 .rate-tier-lbl { font-weight: 500; color: var(--muted); font-size: 0.68rem; margin-right: 0.3rem; }
+.rate-tier-unit { font-weight: 500; color: var(--muted); font-size: 0.68rem; margin-left: 0.2rem; }
 .rate-tiered-pill { margin-top: 0.1rem; font-size: 0.62rem; padding: 0.05rem 0.4rem; }
 
 /* Station status hour board */
@@ -2524,7 +2525,7 @@ button.mob-title.spread { cursor: pointer; }
    read as three columns rather than as one crowded block. */
 .modal.modal-manage { max-width: min(1180px, 96vw); }
 .pr-manage { min-width: max-content; }
-.pr-manage th, .pr-manage td { vertical-align: top; padding: 0.85rem 1.4rem; }
+.pr-manage th, .pr-manage td { vertical-align: top; padding: 0.85rem 0.6rem; }
 /* The row labels down the left are quieter than the tier names on top —
    they name the line, the tier columns are what is being compared. */
 .pr-manage tbody th {
@@ -2566,12 +2567,19 @@ button.mob-title.spread { cursor: pointer; }
   padding: 0.7rem 1rem; background: var(--bg);
 }
 .pr-block .view-row:last-child { border-bottom: none; }
+/* Every block shares ONE label column, so the fill-in values of all
+   three blocks start on the same vertical line: Station's name, the
+   work, the Show ticks and each tier's rate and date all line up. */
+.pr-block .view-row { gap: 0; padding: 0.3rem 0.6rem; }
+.pr-block .view-label { flex: 0 0 16rem; }
+.pr-manage tbody th,
+.pr-manage th.pr-manage-corner { width: 16rem; min-width: 16rem; }
 .pr-block .quiet-input { width: min(100%, 32ch); font: inherit; }
 
 /* Function sheet: the function's name on the left, its ticks right beside
    it under Show / No show, and a filler column so the block reads at the
    same full width as its neighbours. */
-.pr-func th:first-child { width: 16rem; min-width: 13rem; }
+.pr-func th:first-child { width: 16rem; min-width: 16rem; }
 .pr-func th.pr-func-tick, .pr-func td.pr-func-tick { width: 6rem; text-align: center; }
 .pr-func input[type='checkbox'] { width: auto; }
 .pr-func tr:last-child td { border-bottom: none; }
