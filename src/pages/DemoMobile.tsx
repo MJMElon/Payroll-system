@@ -3748,13 +3748,19 @@ function MyWorkTab({
           .in('id', submitterIds)
         byId = new Map(((p ?? []) as Profile[]).map((x) => [x.id, x]))
       }
-      // Whose work this tier may look at is one setting, read in one
-      // place: Operation Module → "View work record of". The queue used to
-      // answer it with its own strictly-below comparison, which could
-      // disagree with the module on the very same records.
+      /**
+       * Whose work this tier may look at is one setting, read in one place:
+       * Operation Module → "View work record of".
+       *
+       * There is no exception for the signed-in account's own records. The
+       * queue used to let those through whatever tier they came from, so
+       * that a demo driven from one login always had something to review —
+       * but that put work from ABOVE the previewed tier into its queue,
+       * which is the one thing the ladder is there to prevent. A quiet
+       * queue is the correct answer when nothing below has been submitted.
+       */
       const below = (e: ProductionEntry) => {
         if (tier == null) return false
-        if (e.user_id === profileId) return true // previewing — see above
         const who = e.user_id ? byId.get(e.user_id) : undefined
         return canViewTier(tier, grades, 'entry', who?.grade_id ?? null)
       }
@@ -3899,8 +3905,13 @@ function MyWorkTab({
   const keep = (e: ProductionEntry) => matchesTier(e) && inDates(e)
   // The chips count what their tab would show, date window included, so a
   // number on a chip and the list behind it can never disagree.
-  const count = (k: WorkFilter) =>
-    entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && (k === 'pending' || inDates(x))).length
+  const count = (k: WorkFilter) => {
+    const mine = entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && (k === 'pending' || inDates(x)))
+    // Work waiting on YOU is listed under Pending too, so it is counted
+    // there — a chip reading (0) above a card that is plainly pending is
+    // the sort of thing that makes a screen untrustworthy.
+    return mine.length + (k === 'pending' ? queue.filter(matchesTier).length : 0)
+  }
   const shown = entries.filter((e) => inBucket(e, filter)).filter(keep)
   // Someone else's work only ever sits in the pending view — once acted on
   // it leaves the queue entirely.
