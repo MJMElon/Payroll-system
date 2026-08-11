@@ -1002,6 +1002,7 @@ function PerformanceTab({
         amountFor={amountFor}
         canEdit={tierCaps.includes('edit-entry')}
         station={historyStation}
+        myStations={stations.filter((s) => myStationIds.includes(s.id))}
         initialRange={historyStation ? historyRange : 'today'}
         onOpen={setDetail}
         onBack={() => {
@@ -2664,6 +2665,7 @@ function RecordTab({
         jobs={jobs}
         amountFor={amountFor}
         canEdit={effectiveCapabilities(tier).includes('edit-entry')}
+        myStations={myStations}
         onOpen={setDetail}
         onBack={() => setView('form')}
       />
@@ -2985,6 +2987,7 @@ function RecordHistory({
   amountFor,
   canEdit,
   station = null,
+  myStations = [],
   initialRange = 'today',
   onOpen,
   onBack,
@@ -3002,6 +3005,12 @@ function RecordHistory({
    * and the screen is headed with the station's name.
    */
   station?: Station | null
+  /**
+   * The viewer's OWN station tags, for when the records cannot say where
+   * they were done — a day with nothing submitted has no station in it,
+   * and that is exactly the day the question gets asked.
+   */
+  myStations?: Station[]
   /**
    * The window to open on. Coming from the Output record it is the one
    * that was being read there — clicking through from "30 days" and
@@ -3091,13 +3100,18 @@ function RecordHistory({
    * anyone who does not gets the count, which is the honest answer.
    */
   const spanned = [...new Set(rows.map((e) => e.station_id))]
+  const named = (n: number, one: () => string) =>
+    n === 1 ? one() : n > 1 ? `${n} stations` : null
   const headStation = station
     ? station.name
-    : spanned.length === 1
-      ? stationName(spanned[0])
-      : spanned.length > 1
-        ? `${spanned.length} stations`
-        : null
+    : // The records first — they are what is on the screen. An empty
+      // range says nothing about where you work, so the station tags
+      // answer instead, and only a person with no tag at all gets silence.
+      named(spanned.length, () => stationName(spanned[0])) ??
+      named(myStations.length, () => myStations[0].name) ??
+      // Nobody tagged to a station is not scoped to one, which the
+      // Profile tab already words this way.
+      'All Stations'
 
   return (
     <>
