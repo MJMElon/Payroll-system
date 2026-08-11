@@ -2828,7 +2828,9 @@ function RecordTab({
   const [pulling, setPulling] = useState(false)
 
   useEffect(() => {
-    if (!isASH) return
+    // Loaded for EVERY tier, not only the assistant head: the submitter's
+    // team names the shift their record is stamped with, which is what the
+    // assistant head's cage pull adds up.
     let cancelled = false
     ;(async () => {
       // The team they belong to names the shift; the team they lead is the
@@ -2847,7 +2849,7 @@ function RecordTab({
     return () => {
       cancelled = true
     }
-  }, [isASH, teamId, teamName])
+  }, [teamId, teamName])
 
   // "Team A" works shift A. A team named any other way cannot name a
   // shift, and the form says so rather than guessing.
@@ -2907,20 +2909,36 @@ function RecordTab({
       return
     }
     setPulling(true)
-    supabase
-      .from('operation_entries')
-      .select('quantity, approval_status')
-      .eq('job_id', operatorJob.id)
-      .eq('work_date', dutyDate)
-      .eq('shift', dutyShift)
-      .then(({ data, error }) => {
-        setPulling(false)
-        if (error) return onError(error.message)
-        const total = (data ?? [])
-          .filter((e) => e.approval_status !== 'rejected')
-          .reduce((s, e) => s + Number(e.quantity), 0)
-        setPulledQty(total)
-      })
+    ;(async () => {
+      // An entry stamped with the shift counts directly. An entry with NO
+      // stamp — converted from photos, or made before the mobile stamped
+      // shifts — counts when its maker stands in this shift's team, since
+      // the board is what names the shift ("Team A" works shift A).
+      const [en, tm, pf] = await Promise.all([
+        supabase
+          .from('operation_entries')
+          .select('quantity, approval_status, shift, user_id')
+          .eq('job_id', operatorJob.id)
+          .eq('work_date', dutyDate),
+        supabase.from('shared_teams').select('id, name'),
+        supabase.from('shared_profiles').select('id, team_id'),
+      ])
+      setPulling(false)
+      if (en.error) return onError(en.error.message)
+      const shiftTeams = new Set(
+        (tm.data ?? [])
+          .filter((t) => new RegExp(`${dutyShift}$`, 'i').test((t.name ?? '').trim()))
+          .map((t) => t.id),
+      )
+      const onShift = new Set(
+        (pf.data ?? []).filter((p) => p.team_id && shiftTeams.has(p.team_id)).map((p) => p.id),
+      )
+      const total = (en.data ?? [])
+        .filter((e) => e.approval_status !== 'rejected')
+        .filter((e) => (e.shift ? e.shift === dutyShift : onShift.has(e.user_id)))
+        .reduce((s, e) => s + Number(e.quantity), 0)
+      setPulledQty(total)
+    })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isASH, operatorJob?.id, dutyDate, dutyShift])
 
@@ -2962,7 +2980,10 @@ function RecordTab({
           job_id: jobId,
           user_id: profileId,
           quantity: n,
-          shift: isASH ? dutyShift : null,
+          // Every tier's record carries its shift when the team names one
+          // ("Team A" works shift A) — the assistant head's cage pull adds
+          // these up, so an unstamped record would fall out of their pay.
+          shift: dutyShift || null,
           created_by: profileId,
           approval_status: 'pending',
         })
