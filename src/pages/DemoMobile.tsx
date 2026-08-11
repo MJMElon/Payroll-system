@@ -2132,6 +2132,18 @@ function getCoords(): Promise<{ lat: number; lng: number; accuracy: number } | n
   })
 }
 
+/** Metres between two coordinates — close enough at mill scale. */
+function distanceM(aLat: number, aLng: number, bLat: number, bLng: number) {
+  const R = 6371000
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(bLat - aLat)
+  const dLng = toRad(bLng - aLng)
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2
+  return Math.round(2 * R * Math.asin(Math.sqrt(s)))
+}
+
 /** "4h 22m" — a shift length as it would be said out loud. */
 function spanLabel(fromISO: string, toISO: string) {
   const mins = Math.max(0, Math.round((new Date(toISO).getTime() - new Date(fromISO).getTime()) / 60_000))
@@ -2773,10 +2785,17 @@ function RecordTab({
   const [view, setView] = useState<'form' | 'history'>('form')
   const [stationId, setStationId] = useState('')
   const [jobId, setJobId] = useState('')
-  const [qty, setQty] = useState('')
-  // Photos ARE the record now: one entry, one photo per unit of work, so
-  // there is nothing to type.
-  const [photos, setPhotos] = useState<File[]>([])
+  // ONE photo per work record — the evidence, stamped with when and where
+  // it was taken the moment the shutter fires. No quantity is typed:
+  // every submission is one record.
+  const [photo, setPhoto] = useState<{
+    file: File
+    preview: string
+    at: string
+    coords: { lat: number; lng: number; accuracy: number } | null
+    locating: boolean
+  } | null>(null)
+  const [photoView, setPhotoView] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   // Bumped by anything that lands a record, so the tick card counts again
   // without the whole tab being rebuilt around a shared list.
@@ -2827,7 +2846,7 @@ function RecordTab({
   const job = jobs.find((j) => j.id === jobId)
   const rate = jobId ? rateFor(jobId) : 0
   const tier2Rate = jobId ? tier2RateFor(jobId) : null
-  const amount = jobId ? amountFor(jobId, Number(qty) || 0) : 0
+  const amount = jobId ? amountFor(jobId, 1) : 0
 
   // The same job at the same station, tagged to the tier DIRECTLY BELOW
   // this one — that is whose Daily Job Record entries are the cages
@@ -2871,19 +2890,33 @@ function RecordTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isASH, operatorJob?.id, dutyDate, dutyShift])
 
+  // Where and when are settled the moment the shot comes back, so the
+  // card can show all of it before anything is sent.
+  async function tookPhoto(file: File | undefined) {
+    if (!file) return
+    onError(null)
+    const at = new Date().toISOString()
+    setPhoto({ file, preview: URL.createObjectURL(file), at, coords: null, locating: true })
+    const coords = await getCoords()
+    setPhoto((p) => (p == null ? p : { ...p, coords, locating: false }))
+  }
+
+  function retakePhoto() {
+    if (photo) URL.revokeObjectURL(photo.preview)
+    setPhoto(null)
+    setPhotoView(false)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
   async function submit() {
     if (isASH) {
       if (!profileId || !stationId || !jobId || !dutyDate || !dutyShift || !pulledQty) return
-    } else if (atStationLevel) {
-      if (!profileId || !stationId || !jobId || photos.length === 0) return
-    } else if (!profileId || !stationId || !jobId || !Number(qty)) {
+    } else if (!profileId || !stationId || !jobId || !photo) {
       return
     }
-    // At station level the photos ARE the count — one per unit of work.
-    const n = isASH ? pulledQty : atStationLevel ? photos.length : Number(qty)
+    // One submission is one record; only the ASH shift pull carries more.
+    const n = isASH ? pulledQty : 1
     if (n <= 0) return onError('Quantity must be a positive number.')
-    // Guard against fat-finger quantities (e.g. 400 instead of 40).
-    if (n > 200 && !window.confirm(`Quantity ${n} looks unusually large. Submit anyway?`)) return
     setSubmitting(true)
     onError(null)
     try {
@@ -2902,25 +2935,22 @@ function RecordTab({
         .select()
         .single()
       if (error) throw new Error(error.message)
-      if (data) {
-        for (const [i, file] of photos.entries()) {
-          const compressed = await compressImage(file)
-          const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-          const path = `${stationId}/entry-${stamp}-${i}.jpg`
-          const { error: upErr } = await supabase.storage
-            .from('records')
-            .upload(path, compressed, { contentType: 'image/jpeg' })
-          if (!upErr) {
-            await supabase
-              .from('operation_photos')
-              .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
-          }
+      if (data && photo) {
+        const compressed = await compressImage(photo.file)
+        const stamp = photo.at.replace(/[:.]/g, '-')
+        const path = `${stationId}/entry-${stamp}.jpg`
+        const { error: upErr } = await supabase.storage
+          .from('records')
+          .upload(path, compressed, { contentType: 'image/jpeg' })
+        if (!upErr) {
+          await supabase
+            .from('operation_photos')
+            .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
         }
       }
       setJobId('')
-      setQty('')
       setDutyShift('')
-      setPhotos([])
+      retakePhoto()
       setRecorded((n) => n + 1)
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
@@ -3176,30 +3206,11 @@ function RecordTab({
                 )}
               </>
             ) : (
-              !atStationLevel && (
-                <>
-                  <div className="mob-field-label">Quantity{job ? ` (${job.unit.replace('/', '')})` : ''}</div>
-                  <input
-                    className="mob-input"
-                    type="number"
-                    min="0"
-                    step="any"
-                    placeholder="0"
-                    value={qty}
-                    onChange={(e) => setQty(e.target.value)}
-                  />
-
-                  {job && Number(qty) > 0 && (
-                    <div className="mob-breakrow total">
-                      <span>
-                        {tier2Rate == null
-                          ? `${qty} × ${RM(rate)}${job.unit}`
-                          : breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, Number(qty))}
-                      </span>
-                      <span>{RM(amount)}</span>
-                    </div>
-                  )}
-                </>
+              job && (
+                <div className="mob-breakrow total">
+                  <span>1 × {RM(rate)}{job.unit}</span>
+                  <span>{RM(amount)}</span>
+                </div>
               )
             )}
 
@@ -3209,48 +3220,68 @@ function RecordTab({
               accept="image/*"
               capture="environment"
               style={{ display: 'none' }}
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (f) setPhotos((prev) => [...prev, f])
-                if (fileRef.current) fileRef.current.value = ''
-              }}
+              onChange={(e) => tookPhoto(e.target.files?.[0])}
             />
 
-            {/* Each photo is one unit of work, so they are shown back before
-                anything is sent — a miscount is obvious here and nowhere
-                later. */}
-            {photos.length > 0 && (
-              <>
-                <div className="mob-field-label">
-                  {photos.length} photo{photos.length === 1 ? '' : 's'}
-                  {atStationLevel && job ? ` · ${photos.length}${job.unit}` : ''}
-                </div>
-                <div className="mob-photo-grid">
-                  {photos.map((f, i) => (
-                    <span className="mob-photo-slot" key={`${f.name}-${i}`}>
-                      <img className="mob-photo" src={URL.createObjectURL(f)} alt={`photo ${i + 1}`} />
-                      <button
-                        className="mob-photo-x"
-                        onClick={() => setPhotos((prev) => prev.filter((_, x) => x !== i))}
-                        aria-label={`Remove photo ${i + 1}`}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                {atStationLevel && job && (
-                  <div className="mob-breakrow total">
-                    <span>{breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, photos.length)}{job.unit}</span>
-                    <span>{RM(amountFor(jobId, photos.length))}</span>
+            {/* The one photo, shown back centred with when and where it was
+                taken — tap it to see it full screen. */}
+            {photo && !isASH && (() => {
+              const st = stations.find((x) => x.id === stationId) ?? ownStation
+              const dist =
+                photo.coords && st?.latitude != null && st?.longitude != null
+                  ? distanceM(photo.coords.lat, photo.coords.lng, st.latitude, st.longitude)
+                  : null
+              const outside = dist != null && st?.geofence_m != null && dist > st.geofence_m
+              return (
+                <>
+                  <button
+                    type="button"
+                    className="mob-photoone"
+                    onClick={() => setPhotoView(true)}
+                    aria-label="View the photo full screen"
+                  >
+                    <img src={photo.preview} alt="Work record photo" />
+                  </button>
+                  <div className="mob-row">
+                    <span className="mob-field-label">Date</span>
+                    <span>{new Date(photo.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                   </div>
-                )}
-              </>
-            )}
+                  <div className="mob-row">
+                    <span className="mob-field-label">Time</span>
+                    <span>{clockTime(photo.at)}</span>
+                  </div>
+                  <div className="mob-row">
+                    <span className="mob-field-label">Location</span>
+                    <span>
+                      {photo.locating
+                        ? 'Finding…'
+                        : photo.coords
+                          ? `${photo.coords.lat.toFixed(5)}, ${photo.coords.lng.toFixed(5)}`
+                          : '—'}
+                    </span>
+                  </div>
+                  {photo.coords && (
+                    <div className="mob-row">
+                      <span className="mob-field-label">Accuracy</span>
+                      <span className={outside ? 'mob-geo-out' : undefined}>
+                        ±{Math.round(photo.coords.accuracy)} m
+                        {dist != null && st ? ` · ${dist} m from ${st.name}` : ''}
+                        {outside ? ' ⚠' : ''}
+                      </span>
+                    </div>
+                  )}
+                  <button className="mob-linkrow" onClick={retakePhoto}>Retake photo</button>
+                </>
+              )
+            })()}
 
-            <button className="mob-btn ghost" onClick={() => fileRef.current?.click()}>
-              {photos.length > 0 ? '📷 Add photo' : '📷 Take photo'}
-            </button>
+            {/* One photo is the requirement — once it is in, the button
+                gives way to the stamps above. */}
+            {!photo && !isASH && (
+              <button className="mob-btn ghost" onClick={() => fileRef.current?.click()}>
+                📷 Take photo
+              </button>
+            )}
 
             <button
               className="mob-btn"
@@ -3258,11 +3289,7 @@ function RecordTab({
                 submitting ||
                 !stationId ||
                 !jobId ||
-                (isASH
-                  ? !dutyDate || !dutyShift || !pulledQty
-                  : atStationLevel
-                    ? photos.length === 0
-                    : !Number(qty))
+                (isASH ? !dutyDate || !dutyShift || !pulledQty : !photo || photo.locating)
               }
               onClick={submit}
             >
@@ -3272,6 +3299,20 @@ function RecordTab({
         )}
 
       </div>
+
+      {photoView && photo && (
+        <div className="mob-photoview" onClick={() => setPhotoView(false)}>
+          <button
+            type="button"
+            className="mob-photoview-x"
+            onClick={() => setPhotoView(false)}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+          <img src={photo.preview} alt="Work record photo" onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
     </>
   )
 }
