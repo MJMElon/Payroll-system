@@ -1948,15 +1948,8 @@ button.mob-title.spread { cursor: pointer; }
 }
 .mob-hourrow.now { background: #f1f5f9; color: var(--text); font-weight: 700; }
 .mob-hourrow-when { display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
-
-/* Today's earning, tier by tier, inside the highlight card. */
-.mob-earning { display: flex; flex-direction: column; gap: 0.15rem; margin-top: 0.15rem; }
-.mob-earning .mob-breakrow { color: #c8d0d9; }
-.mob-earning .mob-breakrow.total { color: #fff; border-top-color: rgba(255, 255, 255, 0.18); }
-.mob-daynav { display: flex; justify-content: space-between; align-items: center; }
-.mob-thumb {
-  width: 40px; height: 40px; object-fit: cover; border-radius: 8px; display: block;
-}
+/* The hour's sum: how it was worked out, then what it comes to. */
+.mob-hourrow-sum { display: flex; align-items: baseline; gap: 0.5rem; white-space: nowrap; }
 
 /* Stamp card (hexagon stamps like a loyalty card). Undone stamps show a
    faint tick waiting to light up; done stamps and their tick turn gold. */
