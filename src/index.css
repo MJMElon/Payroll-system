@@ -1889,6 +1889,14 @@ button.mob-title.spread { cursor: pointer; }
   font-size: 0.85rem; transform: rotate(8deg);
 }
 .stamp.extra.reward { background: rgba(125, 211, 252, 0.18); color: #bae6fd; }
+/* Badges past the base-rate cap on the "Target per hour" card: blue —
+   work landing there is already earning the second-tier rate. */
+.stamp.tier2 { background: rgba(125, 211, 252, 0.12); color: rgba(186, 230, 253, 0.35); }
+.stamp.tier2.done {
+  background: linear-gradient(150deg, #e0f2fe 5%, #ffffff 45%, #7dd3fc);
+  color: #0369a1;
+  box-shadow: inset 0 0 0 3px rgba(3, 105, 161, 0.22), 0 0 10px rgba(125, 211, 252, 0.8);
+}
 
 /* Hour-zone headers inside the day's record list */
 .mob-hour-head {

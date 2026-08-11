@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { distanceLabel, stationLocationCheck } from '../lib/geo'
 import {
   effectiveCapabilities,
   effectiveModules,
@@ -1462,6 +1463,111 @@ function StationScreen({
 /* Job picker + stamp card + photo capture + hour-grouped records — shared
    between the Performance tab's station drill-in and the Operator's merged
    Record tab. */
+/**
+ * The target dashboards the station's "Show on Add new work record" ticks
+ * switch on (Settings → Station tags → pin action). Draft faces — to be
+ * refined once real use shapes them.
+ *
+ * Per hour: one badge per unit of the hour's target, ticked as YOUR
+ * records land this hour. From the badge past the base-rate cap the
+ * colour changes — that work is already earning the second-tier rate.
+ * Per month: the station's work done this month against its target.
+ */
+function StationTargetCards({
+  station,
+  profileId,
+}: {
+  station: Station
+  profileId: string | null
+}) {
+  const showHour = station.show_hourly_target === true && (station.hourly_target ?? 0) > 0
+  const showMonth = station.show_monthly_target === true && (station.monthly_target ?? 0) > 0
+  const [hourCount, setHourCount] = useState(0)
+  const [monthQty, setMonthQty] = useState(0)
+
+  useEffect(() => {
+    if (!showHour && !showMonth) return
+    let alive = true
+    async function load() {
+      if (showHour && profileId) {
+        const hourStart = new Date()
+        hourStart.setMinutes(0, 0, 0)
+        const { data } = await supabase
+          .from('operation_entries')
+          .select('id')
+          .eq('station_id', station.id)
+          .eq('user_id', profileId)
+          .gte('created_at', hourStart.toISOString())
+        if (alive) setHourCount((data ?? []).length)
+      }
+      if (showMonth) {
+        const monthStart = todayISO().slice(0, 8) + '01'
+        const { data } = await supabase
+          .from('operation_entries')
+          .select('quantity')
+          .eq('station_id', station.id)
+          .gte('work_date', monthStart)
+        if (alive) {
+          setMonthQty((data ?? []).reduce((t, r) => t + Number((r as { quantity: number }).quantity ?? 0), 0))
+        }
+      }
+    }
+    load()
+    const t = setInterval(load, 60_000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [station.id, profileId, showHour, showMonth])
+
+  if (!showHour && !showMonth) return null
+  const hourTarget = station.hourly_target ?? 0
+  const monthTarget = station.monthly_target ?? 0
+  const pct = monthTarget > 0 ? Math.min(100, Math.round((monthQty / monthTarget) * 100)) : 0
+
+  return (
+    <>
+      {showHour && (
+        <div className="mob-card mob-highlight">
+          <div className="mob-card-label">Target per hour</div>
+          <div className="stamp-row">
+            {Array.from({ length: hourTarget }, (_, i) => (
+              <span
+                key={i}
+                className={`stamp ${i >= TIER1_UNIT_CAP ? 'tier2' : ''} ${i < hourCount ? 'done' : ''}`}
+              >
+                ✓
+              </span>
+            ))}
+            {hourCount > hourTarget && (
+              <span className="stamp extra">+{hourCount - hourTarget}</span>
+            )}
+          </div>
+          <div className="mob-sub">
+            {hourCount} of {hourTarget} this hour
+            {hourTarget > TIER1_UNIT_CAP
+              ? ` · blue from no. ${TIER1_UNIT_CAP + 1}: the second-tier rate`
+              : ''}
+          </div>
+        </div>
+      )}
+      {showMonth && (
+        <div className="mob-card">
+          <div className="mob-card-label">Target per month</div>
+          <div className="mob-breakrow">
+            <span>Work done this month</span>
+            <span className="mob-entry-amt">{Number.isInteger(monthQty) ? monthQty : monthQty.toFixed(1)} / {monthTarget}</span>
+          </div>
+          <div className="mob-bartrack">
+            <div style={{ width: `${pct}%` }} />
+          </div>
+          <div className="mob-sub">{pct}% of this month's target</div>
+        </div>
+      )}
+    </>
+  )
+}
+
 function StationWorkPanel({
   station,
   tier,
@@ -1645,6 +1751,8 @@ function StationWorkPanel({
 
   return (
     <>
+        <StationTargetCards station={station} profileId={profileId} />
+
         {/* 1 — status stamp card */}
         <div className="mob-card mob-highlight">
           {station.hourly_count ? (
@@ -1860,13 +1968,14 @@ function spanLabel(fromISO: string, toISO: string) {
 
 function ClockCard({
   profileId,
-  stationId,
+  station,
   onError,
 }: {
   profileId: string | null
-  stationId: string | null
+  station: Station | null
   onError: (m: string | null) => void
 }) {
+  const stationId = station?.id ?? null
   // Every stamp of the last seven days, so today's card and the week
   // strip read from one load.
   const [shifts, setShifts] = useState<Shift[]>([])
@@ -2199,6 +2308,24 @@ function ClockCard({
             <span>±{Math.round(pending.coords.accuracy)} m</span>
           </div>
         )}
+        {/* The stamp against the station's preset coordinate (set in
+            Settings → Station tags). Advisory: an away stamp still lands,
+            marked as away — refusing it only teaches people to switch
+            location off. */}
+        {(() => {
+          const check = stationLocationCheck(station, pending.coords)
+          if (!check) return null
+          return (
+            <div className="mob-row">
+              <span className="mob-field-label">Station check</span>
+              <span style={{ color: check.ok ? '#15803d' : '#b45309', fontWeight: 700 }}>
+                {check.ok
+                  ? `✓ At ${station!.name} (${distanceLabel(check.distance)} away)`
+                  : `⚠ ${distanceLabel(check.distance)} from ${station!.name}`}
+              </span>
+            </div>
+          )
+        })()}
         {pending.locationError && <div className="mob-sub">{pending.locationError}</div>}
         <div className="mob-actions">
           <button className="mob-mini ghost" onClick={discard} disabled={busy}>Retake</button>
@@ -2586,7 +2713,7 @@ function RecordTab({
           {isEntitled(tier, 'clock-in-out', grades) && (
             <ClockCard
               profileId={profileId}
-              stationId={myStation?.id ?? null}
+              station={myStation ?? null}
               onError={onError}
             />
           )}
@@ -2661,10 +2788,14 @@ function RecordTab({
         {isEntitled(tier, 'clock-in-out', grades) && (
           <ClockCard
             profileId={profileId}
-            stationId={ownStation?.id ?? null}
+            station={ownStation ?? null}
             onError={onError}
           />
         )}
+
+        {/* The target dashboards this station's ticks switch on — the
+            plain record form gets them just like the hourly panel. */}
+        {ownStation && <StationTargetCards station={ownStation} profileId={profileId} />}
 
         {!canEntry ? (
           <div className="mob-card">

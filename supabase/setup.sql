@@ -2079,3 +2079,30 @@ as $$
          phone = nullif(btrim(coalesce(phone_no, '')), '')
    where id = auth.uid();
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Station preset coordinate (Settings → Station tags → the pin action).
+--
+-- Each station can hold WHERE it is, so a clock in / clock out stamp —
+-- which already records where the phone stood — can be checked against the
+-- preset. geofence_m is the allowed distance in metres; empty falls back
+-- to the app's default (300 m). The check is advisory: a stamp outside
+-- the fence still lands, marked as away, because refusing it would only
+-- teach people to switch their location off.
+-- ---------------------------------------------------------------------------
+alter table public.shared_stations add column if not exists latitude double precision;
+alter table public.shared_stations add column if not exists longitude double precision;
+alter table public.shared_stations add column if not exists geofence_m integer;
+
+-- ---------------------------------------------------------------------------
+-- Station targets (Settings → Station tags → the pin action).
+--
+-- Two numbers a station can carry — a target per HOUR and a target per
+-- MONTH — and two ticks under "Show on Add new work record" that decide
+-- which target dashboards the mobile Add-work-record screen draws.
+-- hourly_target itself is an older column, shared with the hourly photo
+-- stamp card; these ticks only govern the DISPLAY.
+-- ---------------------------------------------------------------------------
+alter table public.shared_stations add column if not exists monthly_target integer;
+alter table public.shared_stations add column if not exists show_hourly_target boolean not null default false;
+alter table public.shared_stations add column if not exists show_monthly_target boolean not null default false;

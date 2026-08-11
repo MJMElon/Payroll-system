@@ -108,6 +108,17 @@ export interface Station {
   hourly_count?: boolean
   hourly_target?: number
   hourly_min_prev?: number
+  // Preset coordinate (Settings → Station tags) that clock in/out stamps
+  // are checked against. geofence_m is the allowed distance in metres.
+  latitude?: number | null
+  longitude?: number | null
+  geofence_m?: number | null
+  // Targets, and the "Show on Add new work record" ticks that decide
+  // which target dashboards the mobile record screen draws. The hourly
+  // number reuses hourly_target above.
+  monthly_target?: number | null
+  show_hourly_target?: boolean
+  show_monthly_target?: boolean
 }
 
 export interface PhotoRecord {
