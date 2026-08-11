@@ -44,6 +44,9 @@ import {
 
 type Tab = 'performance' | 'mywork' | 'record' | 'team' | 'profile'
 
+// Where the open tab is remembered across refreshes (this browser only).
+const MOB_TAB_KEY = 'mjm-mob-tab'
+
 /**
  * Tier 1 is the super admin — it holds every capability no matter what is
  * ticked (see effectiveCapabilities). That makes it an access level rather
@@ -206,7 +209,18 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
   const [stations, setStations] = useState<Station[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<PieceRate[]>([])
-  const [tab, setTab] = useState<Tab>('performance')
+  // The open tab survives a refresh: reloading the page mid-shift should
+  // land back on the same screen, not walk everyone home to Performance.
+  const [tab, setTab] = useState<Tab>(() => {
+    const saved = localStorage.getItem(MOB_TAB_KEY)
+    return saved === 'performance' || saved === 'mywork' || saved === 'record' ||
+      saved === 'team' || saved === 'profile'
+      ? (saved as Tab)
+      : 'performance'
+  })
+  useEffect(() => {
+    localStorage.setItem(MOB_TAB_KEY, tab)
+  }, [tab])
   // Pressing a tab means "take me to that tab's main page" — including the
   // tab you are already on, which is how you get back out of a screen you
   // drilled into. Bumping this remounts the tab, so every screen it was
