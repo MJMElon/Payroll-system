@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase, type Grade, type Station } from '../lib/supabase'
@@ -811,7 +812,7 @@ function StationCoordModal({
   }
 
   return (
-    <div className="modal-backdrop" {...overlayProps}>
+    <div className="modal-overlay" {...overlayProps}>
       <div className="modal">
         <div className="modal-head">
           <h2>Station setting — {station.name}</h2>
@@ -1079,6 +1080,11 @@ function TierPeople({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // Clicking a name arms its ×; the × asks again in a pop-out before the
+  // person is actually taken off the tier.
+  const [armedId, setArmedId] = useState<string | null>(null)
+  const [removing, setRemoving] = useState<Person | null>(null)
+  const { profile: myProfile } = useAuth()
 
   const canFill = canGiveTier(viewerTier, grade.sort_order)
   const tierOf = (p: Person) => grades.find((g) => g.id === p.grade_id) ?? null
@@ -1205,6 +1211,45 @@ function TierPeople({
     loadPeople()
   }
 
+  /**
+   * Take a person OFF the tier — the same write as dragging them back to
+   * Pending Allocation in Team Manage, so the two doors agree: the tag,
+   * team, stations and chart place all go, and they wait to be placed
+   * again. The account itself is untouched.
+   */
+  async function removePerson(p: Person) {
+    // The same self-rule as the Team Manage chart: nobody takes
+    // themselves off a tier — someone above them has to.
+    if (p.id === myProfile?.id) {
+      setRemoving(null)
+      setArmedId(null)
+      return setError('You cannot remove yourself from a tier — someone above you has to do that.')
+    }
+    setBusy(true)
+    setError(null)
+    const { data, error } = await supabase
+      .from('shared_profiles')
+      .update({
+        grade_id: null,
+        supervisor_id: null,
+        team_id: null,
+        station_ids: [],
+        station_id: null,
+        tags_confirmed: false,
+        chart_pos: null,
+      })
+      .eq('id', p.id)
+      .select('id')
+    setBusy(false)
+    setRemoving(null)
+    setArmedId(null)
+    if (error) return setError(error.message)
+    if (!data || data.length === 0) {
+      return setError(`The database would not let you remove ${label(p)} — that needs a higher tier.`)
+    }
+    loadPeople()
+  }
+
   return (
     <div className="tag-section">
       <div className="tag-section-title">People on this tier ({people.length})</div>
@@ -1215,12 +1260,74 @@ function TierPeople({
         <span className="small muted">Nobody holds this tier yet.</span>
       ) : (
         <div className="tier-people">
-          {people.map((p) => (
-            <span className="tier-person" key={p.id} title={p.email ?? ''}>
-              {label(p)}
-            </span>
-          ))}
+          {people.map((p) =>
+            canFill ? (
+              // Clicking the name arms it: the × appears, and the × asks
+              // once more in a pop-out before anything really happens.
+              <span
+                className={`tier-person clickable ${armedId === p.id ? 'armed' : ''}`}
+                key={p.id}
+                title={p.email ?? ''}
+                role="button"
+                tabIndex={0}
+                onClick={() => setArmedId((cur) => (cur === p.id ? null : p.id))}
+                onKeyDown={(e) =>
+                  (e.key === 'Enter' || e.key === ' ') &&
+                  setArmedId((cur) => (cur === p.id ? null : p.id))
+                }
+              >
+                {label(p)}
+                {armedId === p.id && (
+                  <button
+                    type="button"
+                    className="tier-person-x"
+                    title={`Remove ${label(p)} from ${grade.name}`}
+                    aria-label={`Remove ${label(p)} from ${grade.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setRemoving(p)
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ) : (
+              <span className="tier-person" key={p.id} title={p.email ?? ''}>
+                {label(p)}
+              </span>
+            ),
+          )}
         </div>
+      )}
+
+      {/* The double-check before a person is really taken off the tier.
+          Portalled to the body: the tag modal's own transform would trap
+          a fixed backdrop and pin this to its corner. */}
+      {removing &&
+        createPortal(
+        <div className="modal-overlay" style={{ zIndex: 90 }} onClick={() => setRemoving(null)}>
+          <div className="modal" style={{ maxWidth: '26rem' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Remove from {grade.name}?</h2>
+              <button className="modal-close" onClick={() => setRemoving(null)} aria-label="Close">×</button>
+            </div>
+            <p className="muted small">
+              <strong>{label(removing)}</strong> will be taken off the {grade.name} tier and
+              returned to Pending Allocation in Team Manage — their team, station and place
+              on the chart go with it. Their account and work records stay untouched.
+            </p>
+            <div className="row-form" style={{ justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button className="btn ghost" onClick={() => setRemoving(null)} disabled={busy}>
+                Cancel
+              </button>
+              <button className="btn danger" onClick={() => removePerson(removing)} disabled={busy}>
+                {busy ? 'Removing…' : 'Yes, remove'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       {/* The top tier has nothing above it, so somebody joins it from
