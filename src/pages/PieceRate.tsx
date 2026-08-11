@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import NoAccess from '../components/NoAccess'
 import Select, { MultiSelect, type SelectOption } from '../components/Select'
 import { useAuth } from '../context/AuthContext'
 import { useOverlayClose } from '../lib/useOverlayClose'
@@ -219,14 +220,19 @@ export default function PieceRate() {
               <span className="count-badge static">{openApprovals.length}</span>
             )}
           </button>
-          <button
-            type="button"
-            className={`sidebar-link ${tab === 'history' ? 'active' : ''}`}
-            onClick={() => setTab('history')}
-          >
-            <IconHistory />
-            <span>Piece Rate History</span>
-          </button>
+          {/* The history is the audit view of rate changes, so it goes with
+              the Edit tick on the tag — a tier that may not touch rates has
+              no door into it, rather than an empty page. */}
+          {canEditRate && (
+            <button
+              type="button"
+              className={`sidebar-link ${tab === 'history' ? 'active' : ''}`}
+              onClick={() => setTab('history')}
+            >
+              <IconHistory />
+              <span>Piece Rate History</span>
+            </button>
+          )}
         </nav>
 
         <div className="sidebar-content stack">
@@ -256,7 +262,7 @@ export default function PieceRate() {
                   onError={setError}
                 />
               ) : (
-                <p className="muted">You don't have access to submit or review piece rates.</p>
+                <NoAccess />
               )}
             </>
           ) : tab === 'master' ? (
@@ -269,7 +275,7 @@ export default function PieceRate() {
               canDelete={canDeleteRate}
               onChanged={load}
             />
-          ) : (
+          ) : canEditRate ? (
             <HistoryList
               stations={stations}
               grades={grades}
@@ -280,6 +286,8 @@ export default function PieceRate() {
               canDelete={canDeleteRate}
               onChanged={load}
             />
+          ) : (
+            <NoAccess />
           )}
         </div>
       </div>
