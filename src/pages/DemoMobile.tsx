@@ -4664,6 +4664,9 @@ function MyNumbersSection({
   )
 }
 
+/** Stands in for a grade id in the contract filter: rates tagged to none. */
+const UNTAGGED_KEY = 'untagged'
+
 /* ------------------------------------------------------------------ */
 /* PIECE-RATE CONTRACT: what each job pays, YOUR tier first and then   */
 /* every tier below it, so a leader can see what the people under them */
@@ -4710,6 +4713,25 @@ function ContractSection({
     .filter((x) => x.rows.length > 0 || x.grade.id === tier?.id)
 
   /**
+   * Which rungs are showing. Empty is ALL — not "none" — because that is
+   * what the block does before anybody touches it, and it means the All
+   * chip needs no state of its own: it is simply the empty set.
+   *
+   * Picking is additive, so two rungs can be read side by side. Picking
+   * the last one off falls back to All rather than leaving a blank card.
+   */
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const toggle = (key: string) =>
+    setPicked((cur) => {
+      const next = new Set(cur)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  const showing = (key: string) => picked.size === 0 || picked.has(key)
+  const shownGroups = groups.filter((g) => showing(g.grade.id))
+  const showUntagged = untagged.length > 0 && showing(UNTAGGED_KEY)
+
+  /**
    * One job's terms. A tiered rate is two prices depending on how much is
    * done inside the hour, so it is two lines — but each line is as short
    * as the thing it says: "1st – 4th/hr", not a sentence about it.
@@ -4748,10 +4770,39 @@ function ContractSection({
   return (
     <div className="mob-card">
       <div className="mob-card-label">Piece rate contract</div>
+
+      {/* One chip per rung this contract covers — your own first, then
+          down. Only rungs that are actually here get a chip, so the row
+          never offers a filter that filters to nothing. */}
+      {groups.length + (untagged.length > 0 ? 1 : 0) > 1 && (
+        <div className="mob-chiprow">
+          <button className={picked.size === 0 ? 'on' : ''} onClick={() => setPicked(new Set())}>
+            All
+          </button>
+          {groups.map(({ grade }) => (
+            <button
+              key={grade.id}
+              className={picked.has(grade.id) ? 'on' : ''}
+              onClick={() => toggle(grade.id)}
+            >
+              {grade.name}
+            </button>
+          ))}
+          {untagged.length > 0 && (
+            <button
+              className={picked.has(UNTAGGED_KEY) ? 'on' : ''}
+              onClick={() => toggle(UNTAGGED_KEY)}
+            >
+              Any tier
+            </button>
+          )}
+        </div>
+      )}
+
       {groups.length === 0 && untagged.length === 0 && (
         <div className="mob-sub">No approved piece rate at your station yet.</div>
       )}
-      {groups.map(({ grade, rows }) => (
+      {shownGroups.map(({ grade, rows }) => (
         <div key={grade.id}>
           <div className="mob-contract-tier">
             <span className={`tag-dot dot-${grade.color}`} aria-hidden="true" />
@@ -4765,7 +4816,7 @@ function ContractSection({
           )}
         </div>
       ))}
-      {untagged.length > 0 && (
+      {showUntagged && (
         <div>
           <div className="mob-contract-tier">
             <span className="tag-dot dot-grey" aria-hidden="true" />

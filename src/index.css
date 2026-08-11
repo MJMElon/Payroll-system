@@ -1293,6 +1293,25 @@ button.mob-cardhead {
   white-space: nowrap; text-align: center;
 }
 .mob-queue-chips button.on { background: var(--accent-strong); color: #fff; }
+
+/* A filter row inside a card. Unlike the queue chips these do NOT split
+   the width evenly — a tier's name is as long as it is, and squeezing
+   "Assistant Station Head" into a seventh of the card would leave three
+   letters of it. They keep their size and the row scrolls. */
+.mob-chiprow {
+  display: flex; gap: 0.3rem; overflow-x: auto; padding-bottom: 0.15rem;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.mob-chiprow::-webkit-scrollbar { display: none; }
+.mob-chiprow button {
+  appearance: none; border: 1px solid #e2e8ef; cursor: pointer; flex: none;
+  background: #f2f5f8; color: var(--muted); border-radius: 999px;
+  padding: 0.28rem 0.62rem; font-size: 0.68rem; font-weight: 800;
+  white-space: nowrap;
+}
+.mob-chiprow button.on {
+  background: var(--accent-strong); border-color: var(--accent-strong); color: #fff;
+}
 .mob-btn.approve {
   background: linear-gradient(180deg, #22a755, #15803d);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 5px 14px rgba(21, 128, 61, 0.30);
