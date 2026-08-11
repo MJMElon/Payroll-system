@@ -2519,20 +2519,30 @@ button.mob-title.spread { cursor: pointer; }
 .modal-manage .quiet-input.date { width: auto; font-size: inherit; }
 .modal-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
 
-/* The work reads as a title above everything it prices; its box reads at
-   the title's own length, not a dashed line across the window. */
-.pr-work-title {
-  display: flex; align-items: center; gap: 0.6rem;
-  font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.1rem;
+/* Each section of the window is its own block, so the sheet reads in
+   three clear pieces: what the work is, its functions, its tiers. */
+.pr-block {
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 0.7rem 1rem; background: var(--bg);
 }
-.pr-work-title .quiet-input { width: min(100%, 32ch); font: inherit; }
+/* A block that hugs its content instead of stretching across the window —
+   the modal is a flex column, which stretches children by default. */
+.pr-block-fit { align-self: flex-start; min-width: min(28rem, 100%); }
+.pr-block .view-row:last-child { border-bottom: none; }
+.pr-block .quiet-input { width: min(100%, 32ch); font: inherit; }
 
 /* Function sheet: the function's name on the left, then a tick under
    Show or under No show. */
 .table.pr-func { width: auto; }
-.pr-func th:first-child { min-width: 15rem; }
-.pr-func th.pr-func-tick, .pr-func td.pr-func-tick { width: 6.5rem; text-align: center; }
+.pr-func th:first-child { min-width: 13rem; }
+.pr-func th.pr-func-tick, .pr-func td.pr-func-tick { width: 5.5rem; text-align: center; }
 .pr-func input[type='checkbox'] { width: auto; }
+.pr-func tr:last-child td { border-bottom: none; }
+
+/* The ＋ column at the right end of the tier sheet: click, and it expands
+   into the picker for the next tier's column. */
+.pr-manage th.pr-addcol { vertical-align: middle; }
+.pr-addcol .icon-btn { font-size: 1rem; font-weight: 800; }
 
 /* The read face's rate line — amount with its unit right beside it — and
    the edit face mirroring it: number box, unit picker beside. */

@@ -1460,14 +1460,14 @@ function GroupManageModal({
         // exist, so an un-migrated database does not refuse the insert.
         if (jobs[0] && 'record_job' in jobs[0]) row.record_job = onMobile
         if (jobs[0] && 'show_on_mill' in jobs[0]) row.show_on_mill = onMill
-        const { data, error } = await supabase.from('jobs').insert(row).select().single()
+        const { data, error } = await supabase.from('piece_rate_jobs').insert(row).select().single()
         if (error || !data) throw new Error(saveMessage(error?.message ?? 'could not be saved.'))
         const { error: rateErr } = await supabase.from('piece_rates').upsert(
           { job_id: data.id, rate: rateValue, tier2_rate: tier2Value, effective_from: d.effectiveFrom },
           { onConflict: 'job_id,effective_from' },
         )
         if (rateErr) {
-          await supabase.from('jobs').delete().eq('id', data.id)
+          await supabase.from('piece_rate_jobs').delete().eq('id', data.id)
           throw new Error(`${tier}: ${rateErr.message}`)
         }
       }
@@ -1605,7 +1605,7 @@ function GroupManageModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-manage" onClick={(e) => e.stopPropagation()}>
         <div className="row-form spread">
-          <h2>{stationName}</h2>
+          <h2>Piece Rate Details</h2>
           <div className="row-form manage-tools">
             {/* Reading the history? The eye beside it goes back to the
                 piece rate itself. */}
@@ -1668,171 +1668,186 @@ function GroupManageModal({
           <GroupHistory jobs={jobs} grades={grades} onError={onError} />
         ) : (
           <>
-            {/* The work itself, above everything that hangs off it. */}
-            <div className="pr-work-title">
-              {editing ? (
-                <input
-                  className="quiet-input"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  aria-label="Work description"
-                />
-              ) : (
-                jobs[0]?.name
-              )}
-              {archived && <span className="badge off">archived</span>}
+            {/* WHAT this window is about: the station and the work. */}
+            <div className="pr-block">
+              <div className="view-row">
+                <span className="view-label">Station</span>
+                <span className="view-value">{stationName}</span>
+              </div>
+              <div className="view-row">
+                <span className="view-label">Work description</span>
+                <span className="view-value">
+                  {editing ? (
+                    <input
+                      className="quiet-input"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      aria-label="Work description"
+                    />
+                  ) : (
+                    jobs[0]?.name
+                  )}
+                  {archived && <> <span className="badge off">archived</span></>}
+                </span>
+              </div>
             </div>
 
             {/* Function sheet — one answer per function for the WHOLE work:
                 the record is entered once by the operator and, approved,
                 pays every tier its own rate. Tick Show or No show. */}
-            <table className="table pr-func">
-              <thead>
-                <tr>
-                  <th>Function</th>
-                  <th className="pr-func-tick">Show</th>
-                  <th className="pr-func-tick">No show</th>
-                </tr>
-              </thead>
-              <tbody>
-                <FuncRow
-                  label="Mobile apps work entry"
-                  hint="Offered as a record to submit on the mobile work entry. Untick for an incentive or support rate — paid through payroll, never submitted."
-                  on={editing ? onMobile : groupOnMobile}
-                  editing={editing}
-                  onPick={setOnMobile}
-                />
-                <FuncRow
-                  label="Mill dashboard"
-                  hint="Counted on the mobile Mill output dashboard."
-                  on={editing ? onMill : groupOnMill}
-                  editing={editing}
-                  onPick={setOnMill}
-                />
-              </tbody>
-            </table>
+            <div className="pr-block pr-block-fit">
+              <table className="table pr-func">
+                <thead>
+                  <tr>
+                    <th className="pr-manage-corner">Function</th>
+                    <th className="pr-func-tick">Show</th>
+                    <th className="pr-func-tick">No show</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <FuncRow
+                    label="Mobile apps work entry"
+                    hint="Offered as a record to submit on the mobile work entry. Untick for an incentive or support rate — paid through payroll, never submitted."
+                    on={editing ? onMobile : groupOnMobile}
+                    editing={editing}
+                    onPick={setOnMobile}
+                  />
+                  <FuncRow
+                    label="Mill dashboard"
+                    hint="Counted on the mobile Mill output dashboard."
+                    on={editing ? onMill : groupOnMill}
+                    editing={editing}
+                    onPick={setOnMill}
+                  />
+                </tbody>
+              </table>
+            </div>
 
             {/* Entitled tiers, upper tier first; under each its rate with
                 the unit beside the amount, then its effective date. The
                 unit dropdown is positioned inside its cell, so a scroll
-                container would clip it — only the read-only face gets one. */}
-            <div className={editing ? '' : 'table-scroll'}>
-              <table className="table pr-manage">
-                <thead>
-                  <tr>
-                    <th className="pr-manage-corner">Entitled tier</th>
-                    {jobs.map((j) => (
-                      <th key={j.id}>
-                        <span className={tagClass(gradeColor(j.grade_id))}>{gradeName(j.grade_id)}</span>
-                        {!j.active && <> <span className="badge off">archived</span></>}
-                      </th>
-                    ))}
-                    {editing &&
-                      addedTiers.map((gid) => (
-                        <th key={gid}>
-                          <span className={tagClass(gradeColor(gid))}>{gradeName(gid)}</span>{' '}
-                          <span className="badge warn">new</span>
-                          <button
-                            type="button"
-                            className="pr-newtier-x"
-                            title="Take this new tier back out"
-                            aria-label={`Remove new tier ${gradeName(gid)}`}
-                            onClick={() => dropAddedTier(gid)}
-                          >
-                            ×
-                          </button>
+                container would clip it — only the read-only face gets one.
+                While editing, the ＋ column on the right expands the sheet
+                with a new tier's column. */}
+            <div className="pr-block">
+              <div className={editing ? '' : 'table-scroll'}>
+                <table className="table pr-manage">
+                  <thead>
+                    <tr>
+                      <th className="pr-manage-corner">Entitled tier</th>
+                      {jobs.map((j) => (
+                        <th key={j.id}>
+                          <span className={tagClass(gradeColor(j.grade_id))}>{gradeName(j.grade_id)}</span>
+                          {!j.active && <> <span className="badge off">archived</span></>}
                         </th>
                       ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <th scope="row">Rate</th>
-                    {jobs.map((j) => {
-                      const r = currentRate.get(j.id)
-                      return (
-                        <td key={j.id}>
-                          {editing
-                            ? rateEditCell(j.id, gradeName(j.grade_id), j.unit)
-                            : r ? (
-                              r.tier2_rate != null ? (
-                                <RateCell rate={r} />
+                      {editing &&
+                        addedTiers.map((gid) => (
+                          <th key={gid}>
+                            <span className={tagClass(gradeColor(gid))}>{gradeName(gid)}</span>{' '}
+                            <span className="badge warn">new</span>
+                            <button
+                              type="button"
+                              className="pr-newtier-x"
+                              title="Take this new tier back out"
+                              aria-label={`Remove new tier ${gradeName(gid)}`}
+                              onClick={() => dropAddedTier(gid)}
+                            >
+                              ×
+                            </button>
+                          </th>
+                        ))}
+                      {editing && addableTiers.length > 0 && (
+                        <th className="pr-addcol">
+                          {pickingTier ? (
+                            <Select
+                              value=""
+                              onChange={addTier}
+                              options={addableTiers}
+                              placeholder="Which tier?"
+                              ariaLabel="Add rate to tier"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              title="Add rate to tier"
+                              aria-label="Add rate to tier"
+                              onClick={() => setPickingTier(true)}
+                            >
+                              ＋
+                            </button>
+                          )}
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th scope="row">Rate</th>
+                      {jobs.map((j) => {
+                        const r = currentRate.get(j.id)
+                        return (
+                          <td key={j.id}>
+                            {editing
+                              ? rateEditCell(j.id, gradeName(j.grade_id), j.unit)
+                              : r ? (
+                                r.tier2_rate != null ? (
+                                  <RateCell rate={r} />
+                                ) : (
+                                  <span className="pr-rate-inline">
+                                    <strong>{Number(r.rate).toFixed(2)}</strong>
+                                    <span className="muted small">{j.unit}</span>
+                                  </span>
+                                )
                               ) : (
-                                <span className="pr-rate-inline">
-                                  <strong>{Number(r.rate).toFixed(2)}</strong>
-                                  <span className="muted small">{j.unit}</span>
-                                </span>
-                              )
-                            ) : (
-                              <span className="muted">—</span>
-                            )}
-                        </td>
-                      )
-                    })}
-                    {editing &&
-                      addedTiers.map((gid) => (
-                        <td key={gid}>{rateEditCell(newKey(gid), gradeName(gid), '')}</td>
-                      ))}
-                  </tr>
+                                <span className="muted">—</span>
+                              )}
+                          </td>
+                        )
+                      })}
+                      {editing &&
+                        addedTiers.map((gid) => (
+                          <td key={gid}>{rateEditCell(newKey(gid), gradeName(gid), '')}</td>
+                        ))}
+                      {editing && addableTiers.length > 0 && <td />}
+                    </tr>
 
-                  <tr>
-                    <th scope="row">Effective date</th>
-                    {jobs.map((j) => (
-                      <td key={j.id}>
-                        {editing ? (
-                          dateEditCell(j.id, gradeName(j.grade_id))
-                        ) : (
-                          currentRate.get(j.id)?.effective_from ?? <span className="muted">—</span>
-                        )}
-                      </td>
-                    ))}
-                    {editing &&
-                      addedTiers.map((gid) => (
-                        <td key={gid}>{dateEditCell(newKey(gid), gradeName(gid))}</td>
+                    <tr>
+                      <th scope="row">Effective date</th>
+                      {jobs.map((j) => (
+                        <td key={j.id}>
+                          {editing ? (
+                            dateEditCell(j.id, gradeName(j.grade_id))
+                          ) : (
+                            currentRate.get(j.id)?.effective_from ?? <span className="muted">—</span>
+                          )}
+                        </td>
                       ))}
-                  </tr>
-                </tbody>
-              </table>
+                      {editing &&
+                        addedTiers.map((gid) => (
+                          <td key={gid}>{dateEditCell(newKey(gid), gradeName(gid))}</td>
+                        ))}
+                      {editing && addableTiers.length > 0 && <td />}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </>
         )}
 
         {editing && (
-          <div className="row-form spread">
-            {/* The same work can pay another tier its own rate — add the
-                column here; it is submitted for approval on save. */}
-            <div className="row-form">
-              {addableTiers.length > 0 &&
-                (pickingTier ? (
-                  <Select
-                    value=""
-                    onChange={addTier}
-                    options={addableTiers}
-                    placeholder="Which tier?"
-                    ariaLabel="Add rate to tier"
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="btn ghost sm"
-                    title="Add a rate for another tier on this same work"
-                    onClick={() => setPickingTier(true)}
-                  >
-                    ＋ Add rate to tier
-                  </button>
-                ))}
-            </div>
-            <div className="row-form">
-              <button type="button" className="btn ghost" onClick={cancelEdit}>Cancel</button>
-              <button
-                type="button"
-                className="btn"
-                disabled={changes.length === 0}
-                onClick={() => setConfirm('save')}
-              >
-                Save changes
-              </button>
-            </div>
+          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" className="btn ghost" onClick={cancelEdit}>Cancel</button>
+            <button
+              type="button"
+              className="btn"
+              disabled={changes.length === 0}
+              onClick={() => setConfirm('save')}
+            >
+              Save changes
+            </button>
           </div>
         )}
       </div>
