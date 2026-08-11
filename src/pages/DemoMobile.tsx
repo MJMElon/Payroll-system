@@ -16,10 +16,20 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { distanceLabel, stationLocationCheck } from '../lib/geo'
 import {
+  ALL_ENTITLEMENTS,
+  CAPABILITY_OPTIONS,
+  DEFAULT_MODULES,
+  ENTITLEMENT_OPTIONS,
+  MODULE_GROUP,
+  MODULE_OPTIONS,
+  MODULE_VIEW,
   canViewTier,
+  defaultEntitlements,
   effectiveCapabilities,
+  effectiveEntitlements,
   effectiveModules,
   isEntitled,
+  nextTagColor,
   tagClass,
   viewableTierIds,
 } from '../lib/tags'
@@ -4755,6 +4765,9 @@ function ProfileTab({
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ employee_code: '', phone: '' })
+  // The Settings entry opens a screen INSIDE the phone frame — leaving for
+  // the web /settings page would drop the phone chrome mid-task.
+  const [showSettings, setShowSettings] = useState(false)
   // The Worker ID is the payroll key: retyping it — even your own — takes
   // the "Edit Worker ID" tick on the tier tag. Without it the row stays a
   // plain value while the phone stays editable.
@@ -4822,6 +4835,16 @@ function ProfileTab({
       ? 'All Stations'
       : myStationIds.map((id) => stations.find((s) => s.id === id)?.name ?? '?').join(', ')
 
+  if (showSettings) {
+    return (
+      <SettingsScreen
+        profile={profile}
+        tier={tier}
+        onBack={() => setShowSettings(false)}
+        onError={onError}
+      />
+    )
+  }
 
   return (
     <>
@@ -4917,17 +4940,470 @@ function ProfileTab({
         </div>
 
         {/* 3 — the door into Settings, for the tiers whose tag ticks the
-            Settings Module. It opens the same pages the web gear does. */}
+            Settings Module. It opens a screen inside the phone, not the web
+            page — same reading, phone-sized. */}
         {canSettings && (
-          <Link to="/settings" className="mob-card tapcard block" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <button className="mob-card tapcard block" onClick={() => setShowSettings(true)}>
             <div className="mob-cardhead">
               <span className="mob-card-label">Settings</span>
               <span className="mob-caret" aria-hidden="true">›</span>
             </div>
-            <div className="mob-sub">Tier &amp; station tags, coordinates, targets</div>
-          </Link>
+            <div className="mob-sub">Tier &amp; station tags</div>
+          </button>
         )}
 
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* SETTINGS, inside the phone frame. The web page's TagsTab is a dense  */
+/* sheet — module ticks, per-module functions, view lists — which reads */
+/* fine on a phone but is not worth editing there. So the phone gets    */
+/* the sheet READ-ONLY, plus the few settings that make sense on a      */
+/* phone: reordering tiers, quick-adding a tag, and — per tag — the     */
+/* name and the Entitled Function ticks, which are the settings that    */
+/* govern what the phone itself shows. Each edit is gated on the same   */
+/* capability the web page uses (tag-move, tag-add, tag-edit), so the   */
+/* phone can never grant what the desktop would not; the database       */
+/* policies have the last word either way.                              */
+/* ------------------------------------------------------------------ */
+
+function SettingsScreen({
+  profile,
+  tier,
+  onBack,
+  onError,
+}: {
+  profile: Profile | null
+  tier: Grade | null
+  onBack: () => void
+  onError: (m: string | null) => void
+}) {
+  // Loaded fresh rather than passed down: this screen writes tags, so it
+  // must read its own saves back without waiting on the app to reload.
+  const [grades, setGrades] = useState<Grade[]>([])
+  const [stationTags, setStationTags] = useState<Station[]>([])
+  const [loading, setLoading] = useState(true)
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  // The same three functions the web TagsTab gates on. An untagged admin
+  // account keeps its role's answer, as everywhere else on this view.
+  const caps = effectiveCapabilities(tier)
+  const adminFallback = !tier && profile?.role === 'admin'
+  const canMove = adminFallback || caps.includes('tag-move')
+  const canAdd = adminFallback || caps.includes('tag-add')
+  const canEdit = adminFallback || caps.includes('tag-edit')
+
+  async function load() {
+    const [g, st] = await Promise.all([
+      supabase.from('shared_grades').select('*').order('sort_order'),
+      supabase.from('shared_stations').select('*').order('sort_order'),
+    ])
+    if (g.error || st.error) onError((g.error || st.error)!.message)
+    setGrades(((g.data ?? []) as Grade[]).sort((a, b) => a.sort_order - b.sort_order))
+    setStationTags((st.data ?? []) as Station[])
+    setLoading(false)
+  }
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * Swap a tag with its neighbour, then renumber every tier 1..n — the
+   * same rule as the web page's drag: numbers run top-down with no gaps,
+   * and tier 1 is the pinned super admin nothing may move past.
+   */
+  async function move(g: Grade, dir: -1 | 1) {
+    const i = grades.findIndex((x) => x.id === g.id)
+    const j = i + dir
+    if (i < 1 || j < 1 || j >= grades.length) return
+    const next = [...grades]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    setGrades(next.map((x, k) => ({ ...x, sort_order: k + 1 })))
+    const results = await Promise.all(
+      next.map((x, k) =>
+        x.sort_order === k + 1
+          ? null
+          : supabase.from('shared_grades').update({ sort_order: k + 1 }).eq('id', x.id),
+      ),
+    )
+    const err = results.find((r) => r?.error)?.error
+    if (err) onError(err.message)
+    load()
+  }
+
+  /**
+   * A new tag from just a name — colour issued automatically, next tier
+   * number, and the same defaults the web pop-out opens with. Its module
+   * sheet is then set on the desktop.
+   */
+  async function addTag() {
+    const name = draft.trim()
+    onError(null)
+    if (name === '') return onError('A tier tag needs a name.')
+    if (grades.some((g) => g.name.trim().toLowerCase() === name.toLowerCase())) {
+      return onError(`A tier tag called "${name}" already exists.`)
+    }
+    setBusy(true)
+    const nextTier = Math.max(0, ...grades.map((g) => g.sort_order)) + 1
+    const fields = {
+      name,
+      color: nextTagColor(grades.map((g) => g.color)),
+      sort_order: nextTier,
+      modules: [...DEFAULT_MODULES],
+      capabilities: ['data-entry'],
+    }
+    let { error } = await supabase
+      .from('shared_grades')
+      .insert({ ...fields, entitlements: defaultEntitlements(nextTier, grades) })
+    // An older database without the entitlements column still gets the tag.
+    if (error && /entitlements/i.test(error.message)) {
+      ;({ error } = await supabase.from('shared_grades').insert(fields))
+    }
+    setBusy(false)
+    if (error) {
+      return onError(
+        error.code === '23505' ? `A tier tag called "${name}" already exists.` : error.message,
+      )
+    }
+    setDraft('')
+    setAdding(false)
+    load()
+  }
+
+  const open = openId ? grades.find((g) => g.id === openId) ?? null : null
+  if (open) {
+    return (
+      <TagSheet
+        grade={open}
+        grades={grades}
+        canEdit={canEdit}
+        onSaved={load}
+        onBack={() => setOpenId(null)}
+        onError={onError}
+      />
+    )
+  }
+
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+      </div>
+
+      <div className="mob-body">
+        <MobSubHeader title="Settings" onBack={onBack} />
+
+        {loading ? (
+          <p className="muted small">Loading…</p>
+        ) : (
+          <>
+            <div className="mob-sectionhead">Tier tags</div>
+            <div className="mob-card">
+              {grades.length === 0 && <div className="mob-sub">No tier tags yet.</div>}
+              {grades.map((g, i) => {
+                const isSuper = g.sort_order === 1
+                return (
+                  <div className="mob-disclosure-row" key={g.id}>
+                    <button className="mob-disclosure" onClick={() => setOpenId(g.id)}>
+                      <span className="mob-card-label" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                        <span className={`tag-dot dot-${g.color}`} aria-hidden="true" />
+                        <span>{g.sort_order}. {g.name}</span>
+                      </span>
+                      <span className="mob-caret" aria-hidden="true">›</span>
+                    </button>
+                    {canMove && (isSuper ? (
+                      <span title="Super admin — always tier 1" aria-hidden="true">📌</span>
+                    ) : (
+                      <>
+                        <button
+                          className="mob-icon-btn corner"
+                          onClick={() => move(g, -1)}
+                          disabled={i <= 1}
+                          title="Move up a tier"
+                          aria-label={`Move ${g.name} up a tier`}
+                        >
+                          ▲
+                        </button>
+                        <button
+                          className="mob-icon-btn corner"
+                          onClick={() => move(g, 1)}
+                          disabled={i === grades.length - 1}
+                          title="Move down a tier"
+                          aria-label={`Move ${g.name} down a tier`}
+                        >
+                          ▼
+                        </button>
+                      </>
+                    ))}
+                  </div>
+                )
+              })}
+
+              {canAdd && !adding && (
+                <div className="mob-actions">
+                  <button className="mob-mini" onClick={() => { onError(null); setAdding(true) }}>
+                    + Add tag
+                  </button>
+                </div>
+              )}
+              {adding && (
+                <>
+                  <div className="mob-row">
+                    <span className="mob-field-label">New tag</span>
+                    <input
+                      className="mob-row-input"
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      placeholder="Tag name"
+                      aria-label="New tag name"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="mob-actions">
+                    <button
+                      className="mob-mini ghost"
+                      onClick={() => { setAdding(false); setDraft(''); onError(null) }}
+                    >
+                      Cancel
+                    </button>
+                    <button className="mob-mini go" disabled={busy} onClick={addTag}>
+                      {busy ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                  <div className="mob-sub">
+                    Joins as the bottom tier — set its modules and functions on the desktop.
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="mob-sectionhead">Station tags</div>
+            <div className="mob-card">
+              {stationTags.length === 0 && <div className="mob-sub">No station tags yet.</div>}
+              {stationTags.map((st, i) => (
+                <div className="mob-breakrow" key={st.id}>
+                  <span>{i + 1}. {st.name}</span>
+                  <span className="mob-station-meta">
+                    {st.latitude != null && st.longitude != null ? '📍 ' : ''}
+                    {st.daily_target != null ? `target ${st.daily_target}/day` : ''}
+                  </span>
+                </div>
+              ))}
+              <div className="mob-sub">
+                Coordinates and targets are set on the desktop — Settings → Station tags.
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* One tag's sheet — the web pop-out's reading, phone-sized. Access to  */
+/* Module, its functions and the two view lists are READ-ONLY here;     */
+/* the name and the Entitled Function ticks (which set what the phone   */
+/* itself shows) are editable for a tier holding "Edit tags' settings". */
+/* ------------------------------------------------------------------ */
+
+function TagSheet({
+  grade,
+  grades,
+  canEdit,
+  onSaved,
+  onBack,
+  onError,
+}: {
+  grade: Grade
+  grades: Grade[]
+  canEdit: boolean
+  onSaved: () => void
+  onBack: () => void
+  onError: (m: string | null) => void
+}) {
+  // Tier 1 is the super admin: its module sheet is fixed, but — as on the
+  // web — its name and entitlements stay editable.
+  const isSuper = grade.sort_order === 1
+  const [name, setName] = useState(grade.name)
+  const [entitlements, setEntitlements] = useState<string[]>(() =>
+    effectiveEntitlements(grade, grades),
+  )
+  const [saving, setSaving] = useState(false)
+  const modules = isSuper ? MODULE_OPTIONS.map((m) => m.key) : grade.modules ?? []
+  const capabilities = effectiveCapabilities(grade)
+  const tagById = (id: string) => grades.find((g) => g.id === id)
+
+  const dirty =
+    name.trim() !== grade.name ||
+    [...entitlements].sort().join() !== [...effectiveEntitlements(grade, grades)].sort().join()
+
+  function toggleEnt(key: string) {
+    if (!canEdit) return
+    setEntitlements((e) => (e.includes(key) ? e.filter((k) => k !== key) : [...e, key]))
+  }
+
+  async function save() {
+    const nm = name.trim()
+    onError(null)
+    if (nm === '') return onError('A tier tag needs a name.')
+    if (grades.some((g) => g.id !== grade.id && g.name.trim().toLowerCase() === nm.toLowerCase())) {
+      return onError(`A tier tag called "${nm}" already exists.`)
+    }
+    setSaving(true)
+    // Stored in the standardized order, exactly as the web pop-out saves.
+    const ents = ALL_ENTITLEMENTS.filter((k) => entitlements.includes(k))
+    let { error } = await supabase
+      .from('shared_grades')
+      .update({ name: nm, entitlements: ents })
+      .eq('id', grade.id)
+    // An older database without the entitlements column still gets the name.
+    if (error && /entitlements/i.test(error.message)) {
+      ;({ error } = await supabase.from('shared_grades').update({ name: nm }).eq('id', grade.id))
+      if (!error) {
+        onError('Saved the name — "Entitled Function" needs a database update (run supabase/setup.sql).')
+        setSaving(false)
+        return onSaved()
+      }
+    }
+    setSaving(false)
+    if (error) {
+      return onError(
+        error.code === '23505' ? `A tier tag called "${nm}" already exists.` : error.message,
+      )
+    }
+    onSaved()
+  }
+
+  return (
+    <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+      </div>
+
+      <div className="mob-body">
+        <MobSubHeader title={`Tier ${grade.sort_order} tag`} onBack={onBack} />
+
+        <div className="mob-card">
+          {canEdit ? (
+            <div className="mob-row">
+              <span className="mob-field-label">Tag name</span>
+              <input
+                className="mob-row-input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                aria-label="Tag name"
+              />
+            </div>
+          ) : (
+            <div className="mob-card-label" style={{ textTransform: 'none', letterSpacing: 0 }}>
+              <span className={tagClass(grade.color)}>{grade.name}</span>
+            </div>
+          )}
+        </div>
+
+        {/* What the tier may open and do — the web sheet's reading, ticks
+            and all, but nothing here to press. */}
+        <div className="mob-sectionhead">Access to Module</div>
+        <div className="mob-card">
+          {MODULE_OPTIONS.map((m) => {
+            const on = modules.includes(m.key)
+            const group = MODULE_GROUP[m.key]
+            const inner = group ? CAPABILITY_OPTIONS.filter((c) => c.group === group) : []
+            const view = MODULE_VIEW[m.key]
+            const viewIds = view ? viewableTierIds(grade, grades, view.scope) : []
+            return (
+              <div key={m.key}>
+                <div className="mob-breakrow">
+                  <span className={on ? '' : 'muted'}>{m.label}</span>
+                  <span className="mob-entry-amt">{on ? '✓' : '—'}</span>
+                </div>
+                {on &&
+                  inner.map((c) => (
+                    <div className="mob-breakrow indent" key={c.key}>
+                      <span className={capabilities.includes(c.key) ? '' : 'muted'}>{c.label}</span>
+                      <span className="mob-entry-amt">
+                        {capabilities.includes(c.key) ? '✓' : '—'}
+                      </span>
+                    </div>
+                  ))}
+                {on && view && (
+                  <div className="mob-breakrow indent">
+                    <span className="muted">{view.label}</span>
+                    <span style={{ display: 'flex', flexWrap: 'wrap', gap: '0.2rem', justifyContent: 'flex-end' }}>
+                      {viewIds.length === 0 ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        viewIds.map((id) => {
+                          const t = tagById(id)
+                          return t ? (
+                            <span key={id} className={tagClass(t.color)}>{t.name}</span>
+                          ) : null
+                        })
+                      )}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          <div className="mob-sub">
+            Modules and functions are set on the desktop — Settings → Tier tags.
+          </div>
+        </div>
+
+        {/* What the tier IS. These ticks drive the phone itself — which
+            dashboard the Performance tab draws, the piece rate contract,
+            clock in & out — so they are the settings worth changing here. */}
+        <div className="mob-sectionhead">Entitled Function</div>
+        <div className="mob-card">
+          {ENTITLEMENT_OPTIONS.map((e) => {
+            const on = entitlements.includes(e.key)
+            return canEdit ? (
+              <button
+                type="button"
+                className="mob-breakrow"
+                key={e.key}
+                onClick={() => toggleEnt(e.key)}
+                aria-pressed={on}
+              >
+                <span className={on ? '' : 'muted'}>{e.label}</span>
+                <span className="mob-entry-amt">{on ? '✓' : '—'}</span>
+              </button>
+            ) : (
+              <div className="mob-breakrow" key={e.key}>
+                <span className={on ? '' : 'muted'}>{e.label}</span>
+                <span className="mob-entry-amt">{on ? '✓' : '—'}</span>
+              </div>
+            )
+          })}
+        </div>
+
+        {canEdit && (
+          <div className="mob-actions">
+            <button
+              className="mob-mini ghost"
+              onClick={() => {
+                setName(grade.name)
+                setEntitlements(effectiveEntitlements(grade, grades))
+                onError(null)
+              }}
+              disabled={saving || !dirty}
+            >
+              Reset
+            </button>
+            <button className="mob-mini go" onClick={save} disabled={saving || !dirty}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        )}
       </div>
     </>
   )
