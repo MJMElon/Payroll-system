@@ -1284,6 +1284,26 @@ button.mob-cardhead {
 
 /* Approvals queue chips + action buttons */
 .mob-queue-chips { display: flex; gap: 0.35rem; }
+/* A second or third row of chips (tier, then date window) wraps rather
+   than shrinking every chip until the labels stop being readable. */
+.mob-queue-chips.wrap { flex-wrap: wrap; }
+
+/* One station's fold on My Work Done: its name and how many records sit
+   under it, opening to the records themselves. */
+.mob-stationgroup { display: flex; flex-direction: column; gap: 0.5rem; }
+.mob-stationgroup-head {
+  appearance: none; border: none; cursor: pointer; width: 100%;
+  display: flex; align-items: center; gap: 0.5rem;
+  background: #fff; border-radius: 14px; padding: 0.7rem 0.9rem;
+  box-shadow: 0 1px 2px rgba(10, 40, 28, 0.05);
+  font: inherit; text-align: left;
+}
+.mob-stationgroup-head .mob-entry-name { flex: 1; }
+.mob-stationgroup-head .mob-caret { width: 0.9rem; }
+
+/* From / To, side by side under the date chips. */
+.mob-daterange { display: flex; gap: 0.5rem; }
+.mob-daterange label { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
 /* One row, the three states sharing the width evenly — they are a tally,
    so an even split says none of them is the odd one out. */
 .mob-queue-chips button {
