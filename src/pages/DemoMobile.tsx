@@ -3841,6 +3841,164 @@ function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () =>
 }
 
 /* ------------------------------------------------------------------ */
+/* One waiting record, opened where it lies.                            */
+/*                                                                      */
+/* Reviewing used to mean leaving the list for a detail screen and      */
+/* coming back for the next one — in and out for every record in the    */
+/* queue. The row opens in place instead: the folded face carries when  */
+/* and where, and the fold underneath carries the rest, the photos and  */
+/* the two buttons. A queue of ten is one screen and ten taps, not      */
+/* twenty.                                                              */
+/*                                                                      */
+/* Photos load when the row is opened, not with the list — a queue of   */
+/* ten would otherwise fetch ten sets of photos nobody has asked for.   */
+/* ------------------------------------------------------------------ */
+
+function ReviewRow({
+  entry,
+  who,
+  workerTier,
+  stationLabel,
+  jobName,
+  amount,
+  photos,
+  canVerify,
+  canApprove,
+  busy,
+  onAct,
+}: {
+  entry: ProductionEntry
+  who: string
+  workerTier: Grade | undefined
+  stationLabel: string
+  jobName: string
+  amount: number
+  photos: number
+  canVerify: boolean
+  canApprove: boolean
+  busy: boolean
+  onAct: (next: 'verified' | 'approved' | 'rejected') => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [shots, setShots] = useState<PhotoRecord[] | null>(null)
+
+  useEffect(() => {
+    if (!open || shots) return
+    supabase
+      .from('operation_photos')
+      .select('*')
+      .eq('entry_id', entry.id)
+      .order('taken_at', { ascending: true })
+      .then(({ data }) => setShots((data ?? []) as PhotoRecord[]))
+  }, [open, shots, entry.id])
+
+  const status = entry.approval_status ?? 'pending'
+  // The step this record is AT decides which button is live: verify comes
+  // before approve, and a tag holding both still cannot do them at once.
+  const showVerify = canVerify && status === 'pending'
+  const showApprove = canApprove && status === 'verified'
+  const submitted = new Date(entry.created_at)
+  const url = (path: string | null) =>
+    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
+
+  return (
+    <div className={`mob-review2 ${open ? 'open' : ''}`}>
+      <button type="button" className="mob-review2-head" onClick={() => setOpen((v) => !v)}>
+        {/* When on the left, where it is on the right — the two questions
+            asked of a record before any other. */}
+        <span className="mob-review2-when">
+          <span className="d">
+            {new Date(entry.work_date + 'T00:00:00').toLocaleDateString(undefined, {
+              day: '2-digit', month: 'short',
+            })}
+          </span>
+          <span className="t">
+            {submitted.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        </span>
+        <span className="mob-review2-what">
+          <span className="st">{stationLabel}</span>
+          <span className="jb">{jobName} · {entry.quantity}</span>
+        </span>
+        <span className={`mob-caret ${open ? 'open' : ''}`} aria-hidden="true">⌄</span>
+      </button>
+
+      {open && (
+        <div className="mob-review2-body">
+          <div className="mob-row">
+            <span className="mob-field-label">Work by</span>
+            <span>
+              {who}
+              {workerTier && <span className={tagClass(workerTier.color)}>{workerTier.name}</span>}
+            </span>
+          </div>
+          <div className="mob-row">
+            <span className="mob-field-label">Quantity</span>
+            <span>{entry.quantity}</span>
+          </div>
+          <div className="mob-row">
+            <span className="mob-field-label">Amount</span>
+            <span>{RM(amount)}</span>
+          </div>
+          <div className="mob-row">
+            <span className="mob-field-label">Submitted</span>
+            <span>{submitted.toLocaleString()}</span>
+          </div>
+          <div className="mob-row">
+            <span className="mob-field-label">Status</span>
+            {statusChip(status)}
+          </div>
+
+          <div className="mob-field-label">Photo evidence ({photos})</div>
+          {shots == null ? (
+            <div className="mob-sub">Loading…</div>
+          ) : shots.length === 0 ? (
+            <div className="mob-sub">No photos attached.</div>
+          ) : (
+            <div className="mob-photo-grid">
+              {shots.map((r) => {
+                const u = url(r.photo_path)
+                return u ? (
+                  <a key={r.id} href={u} target="_blank" rel="noreferrer">
+                    <img className="mob-photo" src={u} alt="" />
+                  </a>
+                ) : (
+                  <span key={r.id} className="mob-chip">missing</span>
+                )
+              })}
+            </div>
+          )}
+
+          {showVerify || showApprove ? (
+            <div className="mob-actions">
+              <button className="mob-btn reject" disabled={busy} onClick={() => onAct('rejected')}>
+                Reject
+              </button>
+              {showVerify && (
+                <button className="mob-btn" disabled={busy} onClick={() => onAct('verified')}>
+                  {busy ? 'Saving…' : 'Verify'}
+                </button>
+              )}
+              {showApprove && (
+                <button className="mob-btn approve" disabled={busy} onClick={() => onAct('approved')}>
+                  {busy ? 'Saving…' : 'Approve'}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="mob-sub">
+              {status === 'pending'
+                ? 'Waiting on a tier that verifies — your tag approves the step after.'
+                : 'Waiting on a tier that gives the final approval.'}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* TAB 2 — MY WORK: the SAME screen for every tier — everything this  */
 /* person recorded, split into what is waiting for approval, what was */
 /* approved and what came back rejected. Rejected entries can be      */
@@ -4300,45 +4458,31 @@ function MyWorkTab({
     </>
   )
 
-  /** Somebody else's work, waiting on this person to verify or approve. */
+  /**
+   * Somebody else's work, waiting on this person to verify or approve —
+   * each row opening where it lies rather than on a screen of its own,
+   * so a queue of ten is ten taps instead of twenty.
+   */
   const ReviewQueueCards = ({ list }: { list: ProductionEntry[] }) => (
     <>
-            {list.map((e) => {
-              const who = e.user_id ? submitters.get(e.user_id) : undefined
-              const grade = who?.grade_id ? grades.find((g) => g.id === who.grade_id) : undefined
-              const tags = who
-                ? who.station_ids && who.station_ids.length > 0
-                  ? who.station_ids
-                  : who.station_id
-                    ? [who.station_id]
-                    : []
-                : []
-              return (
-                <button type="button" className="mob-review" key={e.id} onClick={() => setDetail(e)}>
-                  <span className="mob-review-tags">
-                    {tags.length === 0 ? (
-                      <span className="tagbadge tag-grey">All stations</span>
-                    ) : (
-                      tags.map((id) => (
-                        <span className="tagbadge tag-grey" key={id}>{stationName(id)}</span>
-                      ))
-                    )}
-                    {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
-                  </span>
-                  <span className="mob-review-name">{names.get(e.user_id ?? '') ?? 'Unknown'}</span>
-                  <span className="mob-review-line">
-                    <span className="mob-station-meta">
-                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                      {' · '}{jobName(e.job_id)} · {e.quantity}
-                    </span>
-                    {statusChip(e.approval_status)}
-                  </span>
-                  <span className="mob-review-go">
-                    {(e.approval_status ?? 'pending') === 'pending' ? 'To verify' : 'To approve'} ›
-                  </span>
-                </button>
-              )
-            })}
+      {list.map((e) => (
+        <ReviewRow
+          key={e.id}
+          entry={e}
+          who={names.get(e.user_id ?? '') ?? 'Unknown'}
+          workerTier={grades.find(
+            (g) => g.id === submitters.get(e.user_id ?? '')?.grade_id,
+          )}
+          stationLabel={stationName(e.station_id)}
+          jobName={jobName(e.job_id)}
+          amount={amountFor(e.job_id, e.quantity)}
+          photos={photoCount.get(e.id) ?? 0}
+          canVerify={canVerify && reviewable(e)}
+          canApprove={canApprove && reviewable(e)}
+          busy={busy === e.id}
+          onAct={(next) => act(e, next)}
+        />
+      ))}
     </>
   )
 
