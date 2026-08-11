@@ -88,6 +88,22 @@ function displayName(p: Profile | undefined | null): string {
   return local || p.id.slice(0, 8)
 }
 
+/**
+ * Chart order: exactly where the user dragged the block (chart_pos, lower
+ * first). Anyone never hand-ordered queues at the end, by name.
+ */
+function byChartPos(a: Profile, b: Profile): number {
+  const pa = a.chart_pos ?? Number.POSITIVE_INFINITY
+  const pb = b.chart_pos ?? Number.POSITIVE_INFINITY
+  if (pa !== pb) return pa - pb
+  return displayName(a).localeCompare(displayName(b))
+}
+
+/** Pending Allocation order: first signed up, first in line to be placed. */
+function bySignup(a: Profile, b: Profile): number {
+  return (a.created_at ?? '').localeCompare(b.created_at ?? '')
+}
+
 /** First unused "Team A", "Team B", … for a bracket just added. */
 function nextTeamName(taken: string[]): string {
   for (let i = 0; i < 26; i++) {
@@ -120,12 +136,12 @@ export default function WorkerManagement() {
 
   async function load() {
     const [p, g, s, t, j, r] = await Promise.all([
-      supabase.from('access_profiles').select('*').order('full_name'),
-      supabase.from('grades').select('*').order('sort_order'),
-      supabase.from('stations').select('*').order('sort_order'),
-      supabase.from('teams').select('*').order('sort_order'),
+      supabase.from('shared_profiles').select('*').order('full_name'),
+      supabase.from('shared_grades').select('*').order('sort_order'),
+      supabase.from('shared_stations').select('*').order('sort_order'),
+      supabase.from('shared_teams').select('*').order('sort_order'),
       supabase
-        .from('jobs')
+        .from('piece_rate_jobs')
         .select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
       supabase.from('piece_rates').select('id, job_id, rate, effective_from, tier2_rate'),
     ])
@@ -166,6 +182,9 @@ export default function WorkerManagement() {
   const seesAll = isTop || myCaps.includes('user-access')
   // Granted functions. Building your OWN branch is always allowed.
   const canEditProfile = isTop || myCaps.includes('worker-edit')
+  // The Worker ID is the payroll key, so retyping it is not covered by
+  // the general profile grant — it takes its own tick.
+  const canEditWorkerId = isTop || myCaps.includes('worker-id-edit')
   // Pay is its own grant, so a lower tier can keep details tidy without
   // ever seeing what anyone earns.
   const canEditSalary = isTop || myCaps.includes('worker-salary')
@@ -190,8 +209,8 @@ export default function WorkerManagement() {
   const stationInScope = (id: string | null) =>
     id === null || seesAll || myStationIds.length === 0 || myStationIds.includes(id)
 
-  const confirmed = profiles.filter((p) => p.tags_confirmed)
-  const pending = profiles.filter((p) => !p.tags_confirmed)
+  const confirmed = profiles.filter((p) => p.tags_confirmed).sort(byChartPos)
+  const pending = profiles.filter((p) => !p.tags_confirmed).sort(bySignup)
 
   // My branch: me + everyone whose reporting chain reaches me.
   const inMyBranch = (p: Profile): boolean => {
@@ -240,6 +259,19 @@ export default function WorkerManagement() {
   const canPlaceOnTier = (g: Grade) => belowMe(g.sort_order)
 
   /**
+   * Which row/cell a block stands in: the tier, the team and the station
+   * together. Two people with the same key are side by side on the chart,
+   * so dropping one on the other REORDERS instead of re-placing.
+   */
+  const slotKey = (p: Profile) =>
+    `${p.grade_id ?? ''}|${p.team_id ?? ''}|${stationsOf(p).slice().sort().join(',')}`
+
+  // Does the database have the chart_pos column yet? select('*') returns it
+  // on every row once setup.sql has been re-run; until then placements must
+  // not mention it or every drag would fail outright.
+  const hasChartPos = profiles.length > 0 && 'chart_pos' in profiles[0]
+
+  /**
    * The first tier that belongs to ONE station. Everything from here down
    * carries station tags and a basic salary; the tiers above it run the
    * whole mill, so they sit on every station and are not paid per station.
@@ -282,9 +314,7 @@ export default function WorkerManagement() {
         .filter((g) => g.sort_order !== 1)
         .map((g) => ({
         grade: g,
-        people: visible
-          .filter((p) => p.grade_id === g.id)
-          .sort((a, b) => displayName(a).localeCompare(displayName(b))),
+        people: visible.filter((p) => p.grade_id === g.id).sort(byChartPos),
       })),
     [grades, visible],
   )
@@ -311,7 +341,7 @@ export default function WorkerManagement() {
     const name = nextTeamName(siblings.map((t) => t.name))
     setError(null)
     const { data, error } = await supabase
-      .from('teams')
+      .from('shared_teams')
       .insert({
         name,
         grade_id: headGrade.id,
@@ -354,7 +384,7 @@ export default function WorkerManagement() {
       return setError(`This station already has a team called "${name}".`)
     }
     setRenamingId(null)
-    const { error } = await supabase.from('teams').update({ name }).eq('id', team.id)
+    const { error } = await supabase.from('shared_teams').update({ name }).eq('id', team.id)
     if (error) return setError(error.message)
     setError(null)
     load()
@@ -366,7 +396,7 @@ export default function WorkerManagement() {
         ? `Remove ${team.name}? Its ${members} member${members === 1 ? '' : 's'} stay in the chain, out of a team.`
         : `Remove ${team.name}?`
     if (!window.confirm(warn)) return
-    const { error } = await supabase.from('teams').delete().eq('id', team.id)
+    const { error } = await supabase.from('shared_teams').delete().eq('id', team.id)
     if (error) return setError(error.message)
     setError(null)
     load()
@@ -425,6 +455,8 @@ export default function WorkerManagement() {
       team_id: team?.id ?? null,
       tags_confirmed: true,
     }
+    // A fresh placement queues at the end of its new row/cell.
+    if (hasChartPos) patch.chart_pos = null
     if (nextGrade) patch.grade_id = nextGrade.id
     const leaderStations = stationsOf(leader)
     if (!worksAtAStation(landing)) {
@@ -442,7 +474,7 @@ export default function WorkerManagement() {
     if (person.role !== 'admin') patch.role = roleForTier(landedTier, landedName)
 
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -501,7 +533,7 @@ export default function WorkerManagement() {
     }
     setError(null)
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -559,9 +591,10 @@ export default function WorkerManagement() {
       station_id: null,
       tags_confirmed: false,
     }
+    if (hasChartPos) patch.chart_pos = null
     if (person.role !== 'admin') patch.role = 'operator'
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -596,6 +629,7 @@ export default function WorkerManagement() {
     }
     setError(null)
     const patch: Record<string, unknown> = { grade_id: grade.id, tags_confirmed: true }
+    if (hasChartPos) patch.chart_pos = null
     if (person.role !== 'admin') patch.role = roleForTier(grade.sort_order, grade.name)
     if (!worksAtAStation(grade.sort_order)) {
       // A tier above the station tier belongs to every station.
@@ -614,7 +648,7 @@ export default function WorkerManagement() {
       patch.team_id = null
     }
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -669,13 +703,14 @@ export default function WorkerManagement() {
       supervisor_id: leader?.id ?? null,
       tags_confirmed: true,
     }
+    if (hasChartPos) patch.chart_pos = null
     if (person.role !== 'admin') patch.role = roleForTier(grade.sort_order, grade.name)
     if (station) {
       patch.station_ids = [station.id]
       patch.station_id = station.id
     }
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -684,6 +719,55 @@ export default function WorkerManagement() {
       return setError(
         `The database would not let you place ${displayName(person)} — that needs a higher ` +
           'tier, or the "Change other users\' settings" function.',
+      )
+    }
+    load()
+  }
+
+  /**
+   * Drop a block on a TEAMMATE in the same row/cell: the two names SWAP —
+   * the dragged name takes the target's spot and the target moves to where
+   * the dragged name stood. Nobody else in the row shifts. The whole slot
+   * is renumbered 0,1,2… so the order the user put stays put.
+   */
+  async function swapBlocks(person: Profile, target: Profile) {
+    if (person.id === target.id) return
+    if (person.id === profile?.id) {
+      return setError('You cannot move yourself on the chart — someone above you has to do that.')
+    }
+    if (!canMove(person)) {
+      return setError(
+        `You can only move someone who reports up to you, and ${displayName(person)} does not.`,
+      )
+    }
+    setError(null)
+    const order = visible.filter((p) => slotKey(p) === slotKey(target)).sort(byChartPos)
+    const i = order.findIndex((p) => p.id === person.id)
+    const j = order.findIndex((p) => p.id === target.id)
+    if (i < 0 || j < 0) return
+    ;[order[i], order[j]] = [order[j], order[i]]
+    // Show the new order at once; the writes then make it stick.
+    const pos = new Map(order.map((p, i) => [p.id, i]))
+    setProfiles((cur) => cur.map((p) => (pos.has(p.id) ? { ...p, chart_pos: pos.get(p.id)! } : p)))
+    const updates = order
+      .map((p, i) => ({ p, i }))
+      .filter(({ p, i }) => (p.chart_pos ?? null) !== i)
+    const results = await Promise.all(
+      updates.map(({ p, i }) =>
+        supabase.from('shared_profiles').update({ chart_pos: i }).eq('id', p.id).select('id'),
+      ),
+    )
+    const err = results.find((r) => r.error)?.error
+    if (err) {
+      setError(
+        /chart_pos/i.test(err.message)
+          ? 'The database is missing the chart_pos column — run the latest supabase/setup.sql ' +
+            '(or just: alter table public.shared_profiles add column chart_pos int;).'
+          : err.message,
+      )
+    } else if (results.length > 0 && results.every((r) => !r.data || r.data.length === 0)) {
+      setError(
+        `The database would not let you swap ${displayName(person)} — that needs a higher tier.`,
       )
     }
     load()
@@ -708,7 +792,13 @@ export default function WorkerManagement() {
     const dragged = profiles.find((p) => p.id === (carried || dragId))
     setDragId(null)
     setDropKey(null)
-    if (dragged) placeUnder(dragged, leader, team)
+    if (!dragged || dragged.id === leader.id) return
+    // Same row/cell: the two names swap places.
+    if (dragged.tags_confirmed && slotKey(dragged) === slotKey(leader)) {
+      void swapBlocks(dragged, leader)
+      return
+    }
+    placeUnder(dragged, leader, team)
   }
 
   /** Nothing to gain from dragging what cannot be dropped anywhere. */
@@ -747,6 +837,11 @@ export default function WorkerManagement() {
 
   if (loading) return <p className="muted">Loading…</p>
 
+  /** The head count beside a tier label — faint, and silent at zero. */
+  function countChip(n: number) {
+    return n > 0 ? <span className="wm-srow-count">{n}</span> : null
+  }
+
   /** The dashed slot that says a name may be dropped here. */
   function addSlot(canDrop: boolean) {
     if (!canDrop) return null
@@ -764,7 +859,13 @@ export default function WorkerManagement() {
     const tier = tierOf(p)
     const isMe = p.id === profile?.id
     const key = `block:${p.id}`
-    const allowed = canPlaceUnder(p)
+    // A drop is welcome to place someone UNDER this block, or — when the
+    // dragged name already stands in the same row/cell — to SWAP with it.
+    const dragged = dragId ? profiles.find((x) => x.id === dragId) : null
+    const swapping = Boolean(
+      dragged && dragged.id !== p.id && dragged.tags_confirmed && slotKey(dragged) === slotKey(p),
+    )
+    const allowed = swapping ? canMove(dragged!) : canPlaceUnder(p)
     // The station line only means something on the floor: the tiers above
     // run the whole mill, so their block is just a name.
     const onTheFloor = worksAtAStation(tier)
@@ -773,6 +874,7 @@ export default function WorkerManagement() {
         key={p.id}
         className={[
           'wm-block',
+          `fill-${grade?.color ?? 'grey'}`,
           mini ? 'mini' : '',
           selectedId === p.id ? 'selected' : '',
           dragId === p.id ? 'dragging' : '',
@@ -784,6 +886,11 @@ export default function WorkerManagement() {
         {...dropProps(key, p, team, allowed)}
       >
         <span className={`wm-block-bar dot-${grade?.color ?? 'grey'}`} aria-hidden="true" />
+        {/* Hovering a teammate while dragging: the ⇄ says "these two will
+            swap places", so the drop is never a guess. */}
+        {swapping && dropKey === key && (
+          <span className="wm-swap-mark" aria-hidden="true">⇄</span>
+        )}
         <span className="wm-block-name" title={displayName(p)}>
           {displayName(p)}
           {isMe && <span className="you-chip">you</span>}
@@ -884,7 +991,7 @@ export default function WorkerManagement() {
 
         {/* The station head runs every team here, so they sit above the grid. */}
         <div className="wm-srow">
-          <span className="wm-srow-label">{headGrade.name} :</span>
+          <span className="wm-srow-label">{headGrade.name} :{countChip(heads.length)}</span>
           <div
             className={`wm-srow-body ${dropKey === headRowKey ? 'over' : ''}`}
             onDragOver={(e) => {
@@ -1001,7 +1108,9 @@ export default function WorkerManagement() {
             {/* One row per tier below the head. */}
             {lowerGrades.map((g) => (
               <Fragment key={g.id}>
-                <span className="wm-srow-label">{g.name} :</span>
+                <span className="wm-srow-label">
+                  {g.name} :{countChip(below.filter((p) => p.grade_id === g.id).length)}
+                </span>
                 {columns.map((t, col) => {
                   const cellKey = `cell:${key}:${g.id}:${t?.id ?? 'none'}`
                   const people = below.filter(
@@ -1062,7 +1171,9 @@ export default function WorkerManagement() {
     const canDropHere = Boolean(grade) && canPlaceOnTier(grade as Grade)
     return (
       <div className="wm-srow" key={grade?.id ?? 'untagged'}>
-        <span className="wm-srow-label">{grade?.name ?? 'No tier tag'} :</span>
+        <span className="wm-srow-label">
+          {grade?.name ?? 'No tier tag'} :{countChip(people.length)}
+        </span>
         <div
           className={`wm-srow-body ${dropKey === rowKey ? 'over' : ''}`}
           onDragOver={(e) => {
@@ -1197,6 +1308,7 @@ export default function WorkerManagement() {
               jobs={jobs}
               rates={rates}
               canEditProfile={canEditProfile}
+              canEditWorkerId={canEditWorkerId}
               canEditSalary={canEditSalary && worksAtAStation(tierOf(selected))}
               onSave={(patch) => saveProfile(selected, patch)}
               onClose={() => setSelectedId(null)}
@@ -1273,6 +1385,7 @@ function WorkerPanel({
   jobs,
   rates,
   canEditProfile,
+  canEditWorkerId,
   canEditSalary,
   onSave,
   onClose,
@@ -1284,6 +1397,7 @@ function WorkerPanel({
   jobs: Job[]
   rates: PieceRate[]
   canEditProfile: boolean
+  canEditWorkerId: boolean
   canEditSalary: boolean
   onSave: (patch: Record<string, unknown>) => Promise<boolean>
   onClose: () => void
@@ -1312,9 +1426,9 @@ function WorkerPanel({
     const patch: Record<string, unknown> = {}
     if (canEditProfile) {
       patch.full_name = form.full_name.trim() || null
-      patch.employee_code = form.employee_code.trim() || null
       patch.phone = form.phone.trim() || null
     }
+    if (canEditWorkerId) patch.employee_code = form.employee_code.trim() || null
     if (canEditSalary) {
       const v = form.basic_salary.trim()
       patch.basic_salary = v === '' ? null : Number(v)
@@ -1351,7 +1465,7 @@ function WorkerPanel({
     .filter((j) => j.grade_id === null || j.grade_id === person.grade_id)
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  const canEdit = canEditProfile || canEditSalary
+  const canEdit = canEditProfile || canEditWorkerId || canEditSalary
   const tierChip = grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : null
 
   return (
@@ -1373,8 +1487,12 @@ function WorkerPanel({
           {canEditProfile ? (
             <>
               <Row label="Tier" value={tierChip} />
-              <EditRow label="Name" value={form.full_name} onChange={set('full_name')} placeholder="Full name" />
-              <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} placeholder="EMP001" />
+              <EditRow label="Name" value={form.full_name} onChange={set('full_name')} />
+              {canEditWorkerId ? (
+                <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} />
+              ) : (
+                <Row label="Staff no." value={person.employee_code} />
+              )}
               <Row label="Station" value={stationText} />
               <Row label="Team" value={team?.name} />
               <Row label="Email" value={person.email} />
@@ -1384,6 +1502,9 @@ function WorkerPanel({
             <>
               <Row label="Tier" value={tierChip} />
               <Row label="Name" value={displayName(person)} />
+              {canEditWorkerId && (
+                <EditRow label="Staff no." value={form.employee_code} onChange={set('employee_code')} />
+              )}
               <Row label="Station" value={stationText} />
             </>
           )}

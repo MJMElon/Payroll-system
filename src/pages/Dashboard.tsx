@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase, type Station } from '../lib/supabase'
-import { ALWAYS_MODULES, DEFAULT_MODULES } from '../lib/tags'
+import { supabase, type Grade, type Station } from '../lib/supabase'
+import { ALWAYS_MODULES, DEFAULT_MODULES, tagClass } from '../lib/tags'
 
 const DAY_START_HOUR = 7 // The mill day runs 07:00 → 07:00.
 
@@ -113,7 +113,7 @@ export default function Dashboard() {
         )
       }
       const { data } = await supabase
-        .from('grades')
+        .from('shared_grades')
         .select('modules, sort_order')
         .eq('id', profile.grade_id)
         .maybeSingle()
@@ -165,6 +165,7 @@ export default function Dashboard() {
       <h1>Mill Performance</h1>
 
       {canSee('station-status') && <StationBoard />}
+      {canSee('station-status') && <OnShiftBoard />}
 
       <div className="module-grid">
         {tiles.map((m) => (
@@ -207,16 +208,32 @@ function IconGrip() {
 }
 
 /* ------------------------------------------------------------------ */
-/* 24-hour station status board. One row per station, one column per  */
-/* hour of the mill day (07:00 → 07:00). Each cell is the quantity    */
-/* recorded for that station during that hour. Click a station to     */
-/* open its detail records.                                           */
+/* All station performance. Three reads of the same records:          */
+/*   Hourly — one column per hour of the mill day (07:00 → 07:00).    */
+/*   This week / This month — one column per mill day, the chevron    */
+/*   beside the title walking between the two.                        */
+/* Click a station to open its detail records.                        */
 /* ------------------------------------------------------------------ */
+
+/** The mill day a timestamp belongs to, as a local YYYY-MM-DD key —
+ *  work at 02:00 still counts to the day that started at 07:00 before. */
+function millDayKey(t: string | Date): string {
+  const d = new Date(t)
+  d.setHours(d.getHours() - DAY_START_HOUR)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function keyOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 function StationBoard() {
   const navigate = useNavigate()
   const [stations, setStations] = useState<Station[]>([])
   const [sums, setSums] = useState<Map<string, number[]>>(new Map())
+  // station id -> mill-day key -> total, feeding the week and month reads.
+  const [daySums, setDaySums] = useState<Map<string, Map<string, number>>>(new Map())
+  const [range, setRange] = useState<'week' | 'month'>('week')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -224,22 +241,63 @@ function StationBoard() {
   const nowSlot = Math.floor((Date.now() - dayStart.getTime()) / 3_600_000)
   const hours = Array.from({ length: 24 }, (_, i) => (DAY_START_HOUR + i) % 24)
 
+  // The week is Monday-first and holds the current mill day; the month is
+  // the calendar month that day falls in.
+  const todayKey = keyOf(dayStart)
+  const weekDays = (() => {
+    const monday = new Date(dayStart)
+    monday.setHours(0, 0, 0, 0)
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday)
+      d.setDate(monday.getDate() + i)
+      return d
+    })
+  })()
+  const monthDays = (() => {
+    const first = new Date(dayStart.getFullYear(), dayStart.getMonth(), 1)
+    const count = new Date(dayStart.getFullYear(), dayStart.getMonth() + 1, 0).getDate()
+    return Array.from({ length: count }, (_, i) => {
+      const d = new Date(first)
+      d.setDate(i + 1)
+      return d
+    })
+  })()
+
   useEffect(() => {
     async function load() {
       const start = currentDayStart()
       const end = new Date(start.getTime() + 24 * 3_600_000)
-      const [s, e] = await Promise.all([
-        supabase.from('stations').select('id, name, sort_order').order('sort_order'),
+
+      // One fetch covers the week and the month: from the earlier of the
+      // two starts to the later of the two ends, at mill-day boundaries.
+      const monday = new Date(start)
+      monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
+      const monthFirst = new Date(start.getFullYear(), start.getMonth(), 1, DAY_START_HOUR)
+      const spanStart = monday < monthFirst ? monday : monthFirst
+      const weekEnd = new Date(monday.getTime() + 7 * 24 * 3_600_000)
+      const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 1, DAY_START_HOUR)
+      const spanEnd = weekEnd > monthEnd ? weekEnd : monthEnd
+
+      const [s, e, span] = await Promise.all([
+        supabase.from('shared_stations').select('id, name, sort_order').order('sort_order'),
         supabase
-          .from('production_entries')
+          .from('operation_entries')
           .select('station_id, quantity, created_at, approval_status')
           .gte('created_at', start.toISOString())
           .lt('created_at', end.toISOString())
           .neq('approval_status', 'rejected'),
+        supabase
+          .from('operation_entries')
+          .select('station_id, quantity, created_at, approval_status')
+          .gte('created_at', spanStart.toISOString())
+          .lt('created_at', spanEnd.toISOString())
+          .neq('approval_status', 'rejected'),
       ])
-      const err = s.error || e.error
+      const err = s.error || e.error || span.error
       if (err) setError(err.message)
       setStations(s.data ?? [])
+
       const m = new Map<string, number[]>()
       for (const row of e.data ?? []) {
         const slot = Math.floor((new Date(row.created_at).getTime() - start.getTime()) / 3_600_000)
@@ -248,6 +306,15 @@ function StationBoard() {
         m.get(row.station_id)![slot] += Number(row.quantity)
       }
       setSums(m)
+
+      const days = new Map<string, Map<string, number>>()
+      for (const row of span.data ?? []) {
+        const key = millDayKey(row.created_at)
+        if (!days.has(row.station_id)) days.set(row.station_id, new Map())
+        const perDay = days.get(row.station_id)!
+        perDay.set(key, (perDay.get(key) ?? 0) + Number(row.quantity))
+      }
+      setDaySums(days)
       setLoading(false)
     }
     load()
@@ -260,10 +327,73 @@ function StationBoard() {
     weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
   })
 
+  const rangeDays = range === 'week' ? weekDays : monthDays
+  const rangeTitle =
+    range === 'week'
+      ? 'This week'
+      : `This month — ${dayStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}`
+
+  function dayBoard() {
+    return (
+      <div className="board-scroll">
+        <table className="board">
+          <thead>
+            <tr>
+              <th className="board-station">Station</th>
+              {rangeDays.map((d) => {
+                const k = keyOf(d)
+                return (
+                  <th key={k} className={k === todayKey ? 'now' : k > todayKey ? 'future' : ''}>
+                    {range === 'week'
+                      ? d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
+                      : d.getDate()}
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {stations.map((s) => {
+              const perDay = daySums.get(s.id)
+              return (
+                <tr
+                  key={s.id}
+                  className="board-row"
+                  onClick={() => navigate(`/station/${s.id}`)}
+                  title={`Open ${s.name} records`}
+                >
+                  <td className="board-station">
+                    <Link to={`/station/${s.id}`} onClick={(e) => e.stopPropagation()}>
+                      {s.name}
+                    </Link>
+                  </td>
+                  {rangeDays.map((d) => {
+                    const k = keyOf(d)
+                    const v = perDay?.get(k) ?? 0
+                    const cls = [
+                      v > 0 ? 'filled' : '',
+                      k === todayKey ? 'now' : '',
+                      k > todayKey ? 'future' : '',
+                    ].join(' ')
+                    return (
+                      <td key={k} className={cls}>
+                        {v > 0 ? fmt(v) : ''}
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
   return (
-    <div className="card">
+    <div className="card stack">
       <div className="row-form spread">
-        <h3>Station status — {dateLabel}</h3>
+        <h3>All station performance</h3>
         <span className="muted small">day runs 07:00 → 07:00 · auto-refreshes</span>
       </div>
 
@@ -271,46 +401,206 @@ function StationBoard() {
       {loading ? (
         <p className="muted">Loading…</p>
       ) : (
-        <div className="board-scroll">
-          <table className="board">
+        <>
+          <div className="board-sub">
+            <h4>Hourly — {dateLabel}</h4>
+          </div>
+          <div className="board-scroll">
+            <table className="board">
+              <thead>
+                <tr>
+                  <th className="board-station">Station</th>
+                  {hours.map((h, i) => (
+                    <th key={i} className={i === nowSlot ? 'now' : i > nowSlot ? 'future' : ''}>
+                      {String(h).padStart(2, '0')}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {stations.map((s) => {
+                  const row = sums.get(s.id)
+                  return (
+                    <tr
+                      key={s.id}
+                      className="board-row"
+                      onClick={() => navigate(`/station/${s.id}`)}
+                      title={`Open ${s.name} records`}
+                    >
+                      <td className="board-station">
+                        <Link to={`/station/${s.id}`} onClick={(e) => e.stopPropagation()}>
+                          {s.name}
+                        </Link>
+                      </td>
+                      {hours.map((_, i) => {
+                        const v = row?.[i] ?? 0
+                        const cls = [
+                          v > 0 ? 'filled' : '',
+                          i === nowSlot ? 'now' : '',
+                          i > nowSlot ? 'future' : '',
+                        ].join(' ')
+                        return (
+                          <td key={i} className={cls}>
+                            {v > 0 ? fmt(v) : ''}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="board-sub">
+            <h4>{rangeTitle}</h4>
+            <span className="board-range-nav">
+              <button
+                type="button"
+                className="icon-btn"
+                disabled={range === 'week'}
+                title="Back to this week"
+                aria-label="Show this week"
+                onClick={() => setRange('week')}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m14 6-6 6 6 6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                disabled={range === 'month'}
+                title="Show this month"
+                aria-label="Show this month"
+                onClick={() => setRange('month')}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m10 6 6 6-6 6" />
+                </svg>
+              </button>
+            </span>
+          </div>
+          {dayBoard()}
+        </>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Who is on shift now: per station, the person behind the most       */
+/* recent record of the current mill day — their name, tier tag and   */
+/* team — so a glance says which crew is at each station.             */
+/* ------------------------------------------------------------------ */
+
+interface ShiftRow {
+  station: Station
+  name: string | null
+  gradeId: string | null
+  teamName: string | null
+  at: string | null
+}
+
+function OnShiftBoard() {
+  const [rows, setRows] = useState<ShiftRow[]>([])
+  const [grades, setGrades] = useState<Grade[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      const start = currentDayStart()
+      const [s, g, e] = await Promise.all([
+        supabase.from('shared_stations').select('id, name, sort_order').order('sort_order'),
+        supabase.from('shared_grades').select('*').order('sort_order'),
+        supabase
+          .from('operation_entries')
+          .select('station_id, user_id, created_by, created_at')
+          .gte('created_at', start.toISOString())
+          .order('created_at', { ascending: false }),
+      ])
+      setGrades((g.data as Grade[]) ?? [])
+
+      // Newest entry per station; the person is whoever the record is for,
+      // falling back to whoever keyed it in.
+      const latest = new Map<string, { who: string | null; at: string }>()
+      for (const row of e.data ?? []) {
+        if (!latest.has(row.station_id)) {
+          latest.set(row.station_id, { who: row.user_id ?? row.created_by, at: row.created_at })
+        }
+      }
+
+      const ids = [...new Set([...latest.values()].map((l) => l.who).filter(Boolean))] as string[]
+      const profiles = ids.length
+        ? (await supabase.from('shared_profiles').select('id, full_name, email, grade_id, team_id').in('id', ids)).data ?? []
+        : []
+      const teamIds = [...new Set(profiles.map((p) => p.team_id).filter(Boolean))] as string[]
+      const teams = teamIds.length
+        ? (await supabase.from('shared_teams').select('id, name').in('id', teamIds)).data ?? []
+        : []
+
+      setRows(
+        ((s.data as Station[]) ?? []).map((station) => {
+          const l = latest.get(station.id)
+          const p = l?.who ? profiles.find((x) => x.id === l.who) : undefined
+          return {
+            station,
+            name: p ? p.full_name ?? p.email ?? null : null,
+            gradeId: p?.grade_id ?? null,
+            teamName: p?.team_id ? teams.find((t) => t.id === p.team_id)?.name ?? null : null,
+            at: l?.at ?? null,
+          }
+        }),
+      )
+      setLoading(false)
+    }
+    load()
+    const timer = setInterval(load, 60_000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const tierOf = (id: string | null) => (id ? grades.find((g) => g.id === id) : undefined)
+  const timeOf = (iso: string) =>
+    new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+
+  return (
+    <div className="card stack">
+      <div className="row-form spread">
+        <h3>On shift now</h3>
+        <span className="muted small">latest record per station since 07:00</span>
+      </div>
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : (
+        <div className="table-scroll">
+          <table className="table">
             <thead>
               <tr>
-                <th className="board-station">Station</th>
-                {hours.map((h, i) => (
-                  <th key={i} className={i === nowSlot ? 'now' : i > nowSlot ? 'future' : ''}>
-                    {String(h).padStart(2, '0')}
-                  </th>
-                ))}
+                <th>Station</th>
+                <th>Latest person</th>
+                <th>Tier</th>
+                <th>Team</th>
+                <th className="right">Last record</th>
               </tr>
             </thead>
             <tbody>
-              {stations.map((s) => {
-                const row = sums.get(s.id)
+              {rows.map((r) => {
+                const tier = tierOf(r.gradeId)
                 return (
-                  <tr
-                    key={s.id}
-                    className="board-row"
-                    onClick={() => navigate(`/station/${s.id}`)}
-                    title={`Open ${s.name} records`}
-                  >
-                    <td className="board-station">
-                      <Link to={`/station/${s.id}`} onClick={(e) => e.stopPropagation()}>
-                        {s.name}
-                      </Link>
+                  <tr key={r.station.id}>
+                    <td>{r.station.name}</td>
+                    <td>{r.name ?? <span className="muted">No record yet today</span>}</td>
+                    <td>
+                      {tier ? (
+                        <span className={tagClass(tier.color)}>{tier.name}</span>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
-                    {hours.map((_, i) => {
-                      const v = row?.[i] ?? 0
-                      const cls = [
-                        v > 0 ? 'filled' : '',
-                        i === nowSlot ? 'now' : '',
-                        i > nowSlot ? 'future' : '',
-                      ].join(' ')
-                      return (
-                        <td key={i} className={cls}>
-                          {v > 0 ? fmt(v) : ''}
-                        </td>
-                      )
-                    })}
+                    <td>{r.teamName ?? <span className="muted">—</span>}</td>
+                    <td className="right muted">{r.at ? timeOf(r.at) : '—'}</td>
                   </tr>
                 )
               })}

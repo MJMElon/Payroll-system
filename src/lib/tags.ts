@@ -30,6 +30,11 @@ export const MODULE_OPTIONS = [
   { key: 'worker-management', label: 'Team Manage Module' },
   { key: 'report', label: 'Report Module' },
   { key: 'demo-mobile', label: 'Demo Mobile View Module' },
+  // The Settings pages themselves. Ticked, the tier gets the gear on the
+  // web top bar AND the Settings entry on the mobile Profile tab; what
+  // they may change inside is still governed per function by the ticks
+  // above and the database policies.
+  { key: 'settings', label: 'Settings Module' },
 ] as const
 
 /** Open to every tier, with or without a tick. */
@@ -74,9 +79,148 @@ export const CAPABILITY_OPTIONS: { key: string; label: string; group: string }[]
   { key: 'team-assign', label: 'Claim Sign Ups & Set Tier', group: 'Team manage setting' },
   { key: 'team-create', label: 'Add New Team', group: 'Team manage setting' },
   { key: 'worker-edit', label: 'Edit Profile Details', group: 'Team manage setting' },
+  // The staff number is the payroll key, so changing it is NOT part of
+  // "Edit Profile Details": it is its own grant, and it also decides
+  // whether a person may retype their OWN Worker ID on the mobile
+  // Profile tab. Unticked, the ID is read-only everywhere but tier 1.
+  { key: 'worker-id-edit', label: 'Edit Worker ID (Staff no.)', group: 'Team manage setting' },
   { key: 'worker-salary', label: 'Edit Basic Salary', group: 'Team manage setting' },
   { key: 'station-create', label: 'Create & edit stations', group: 'Station setting' },
 ]
+
+/**
+ * What a tier is ENTITLED to — a separate question from what it may do.
+ *
+ * "Can do" is about the buttons a person gets. An entitlement is about what
+ * the tier IS: a Station Head does piece work and so a piece rate may be
+ * written for that tag, while Management runs the mill and never earns one.
+ * That is why these are not lumped in with the capabilities, and why tier 1
+ * does NOT get them all automatically the way it gets every ability.
+ */
+export const ENTITLEMENT_OPTIONS: { key: string; label: string }[] = [
+  // The mobile Performance tab is drawn from these two, so they lead. Both
+  // may be on — the mill reads first, the tier's own numbers follow
+  // underneath.
+  { key: 'mill-dashboard', label: 'Mill output dashboard on the Mobile Performance tab' },
+  { key: 'kpi-dashboard', label: 'KPI dashboard on the Mobile Performance tab' },
+  // Unticking this takes the tag out of the picker when a new piece rate
+  // is created.
+  { key: 'piece-rate', label: 'Entitled for piece rate contract' },
+  // The attendance card on the mobile Work Record tab. Deliberately NOT in
+  // any tier's default: a tier clocks in and out only once this is ticked.
+  { key: 'clock-in-out', label: 'Clock in & out on the Mobile Work Record tab' },
+]
+
+export const ALL_ENTITLEMENTS: string[] = ENTITLEMENT_OPTIONS.map((e) => e.key)
+
+/**
+ * What a tag that has never been asked is entitled to.
+ *
+ * Before this setting existed, both answers were worked out from the tag
+ * NAMES: the station tier and everything below it does the piece work and
+ * reads its own KPIs, while the tiers above run the whole mill and read the
+ * mill dashboard. Tags saved before the setting arrived keep exactly that,
+ * so switching this on changes nothing until somebody unticks a box.
+ */
+export function defaultEntitlements(
+  sortOrder: number,
+  allGrades: { name: string; sort_order: number }[],
+): string[] {
+  const floor = stationTierOf(allGrades)
+  // Same order as ENTITLEMENT_OPTIONS, so a defaulted tag and a saved one
+  // read alike.
+  return [
+    ...(runsWholeMill(sortOrder, floor) ? ['mill-dashboard'] : ['kpi-dashboard']),
+    ...(floor === null || sortOrder >= floor ? ['piece-rate'] : []),
+  ]
+}
+
+/** What this tier is entitled to, falling back to the name-based default. */
+export function effectiveEntitlements(
+  grade: { sort_order: number; entitlements?: string[] | null } | null | undefined,
+  allGrades: { name: string; sort_order: number }[],
+): string[] {
+  if (!grade) return []
+  // Null is "never asked", which is not the same as "entitled to nothing".
+  if (grade.entitlements == null) return defaultEntitlements(grade.sort_order, allGrades)
+  return ALL_ENTITLEMENTS.filter((k) => grade.entitlements!.includes(k))
+}
+
+export function isEntitled(
+  grade: { sort_order: number; entitlements?: string[] | null } | null | undefined,
+  key: string,
+  allGrades: { name: string; sort_order: number }[],
+): boolean {
+  return effectiveEntitlements(grade, allGrades).includes(key)
+}
+
+/**
+ * Whose piece rate contracts / work records a tier may VIEW.
+ *
+ * This is a reach question, not an ability one: two tiers can both hold
+ * "Verify" and still be meant to see different people's work. It is set per
+ * tag under the module it governs — Piece Rate for contracts, Operation for
+ * work records — as a tick per tier, so adding or removing a tier changes
+ * the list on its own.
+ */
+export type ViewScope = 'rate' | 'entry'
+
+export const VIEW_SCOPES: { scope: ViewScope; module: string; label: string }[] = [
+  { scope: 'rate', module: 'piece-rate', label: 'View piece rate contract of' },
+  { scope: 'entry', module: 'operation', label: 'View work record of' },
+]
+
+/** The module a view list hangs off, so the tag editor knows where to draw it. */
+export const MODULE_VIEW = Object.fromEntries(
+  VIEW_SCOPES.map((v) => [v.module, v]),
+) as Record<string, { scope: ViewScope; module: string; label: string } | undefined>
+
+/**
+ * What a tag that has never been asked may view: its own rank and every
+ * rank below it, never upward — the rule the whole system ran on before
+ * this was settable, so switching it on changes nothing until a box moves.
+ */
+export function defaultViewTiers(
+  sortOrder: number,
+  allGrades: { id: string; sort_order: number }[],
+): string[] {
+  return allGrades.filter((g) => g.sort_order >= sortOrder).map((g) => g.id)
+}
+
+/** The tier ids this tag may view, falling back to the rank-based default. */
+export function viewableTierIds(
+  grade:
+    | { sort_order: number; view_rate_tiers?: string[] | null; view_entry_tiers?: string[] | null }
+    | null
+    | undefined,
+  allGrades: { id: string; sort_order: number }[],
+  scope: ViewScope,
+): string[] {
+  if (!grade) return []
+  const stored = scope === 'rate' ? grade.view_rate_tiers : grade.view_entry_tiers
+  // Null is "never asked", which is not the same as "may view nothing".
+  if (stored == null) return defaultViewTiers(grade.sort_order, allGrades)
+  // Read through the live tier list, so an id left behind by a deleted tag
+  // simply drops out rather than lingering as a stale grant.
+  return allGrades.filter((g) => stored.includes(g.id)).map((g) => g.id)
+}
+
+/**
+ * May this tag see something carrying `targetGradeId`? Work with no tier
+ * tag belongs to no rung and is open to everyone, here as everywhere.
+ */
+export function canViewTier(
+  grade:
+    | { sort_order: number; view_rate_tiers?: string[] | null; view_entry_tiers?: string[] | null }
+    | null
+    | undefined,
+  allGrades: { id: string; sort_order: number }[],
+  scope: ViewScope,
+  targetGradeId: string | null | undefined,
+): boolean {
+  if (!targetGradeId) return true
+  return viewableTierIds(grade, allGrades, scope).includes(targetGradeId)
+}
 
 export const ALL_CAPABILITIES: string[] = CAPABILITY_OPTIONS.map((c) => c.key)
 export const CAPABILITY_GROUPS: string[] = Array.from(new Set(CAPABILITY_OPTIONS.map((c) => c.group)))

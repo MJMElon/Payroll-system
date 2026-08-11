@@ -12,6 +12,9 @@ import { useAuth } from '../../context/AuthContext'
 import {
   profileName,
   supabase,
+  hourLadder,
+  ladderAmount,
+  ladderBreakdownFrom,
   todayISO,
   type Grade,
   type Job,
@@ -60,15 +63,15 @@ export default function AddJobRecord() {
   useEffect(() => {
     async function load() {
       const [s, j, g, u] = await Promise.all([
-        supabase.from('stations').select('id, name, sort_order').order('sort_order'),
+        supabase.from('shared_stations').select('id, name, sort_order').order('sort_order'),
         supabase
-          .from('jobs')
+          .from('piece_rate_jobs')
           .select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by')
           .eq('active', true)
           .eq('approval_status', 'approved')
           .order('name'),
-        supabase.from('grades').select('*').order('sort_order'),
-        supabase.from('access_profiles').select('*').order('full_name'),
+        supabase.from('shared_grades').select('*').order('sort_order'),
+        supabase.from('shared_profiles').select('*').order('full_name'),
       ])
       setStations(s.data ?? [])
       setJobs(j.data ?? [])
@@ -135,7 +138,7 @@ export default function AddJobRecord() {
       if (!jobId) return setRate(null)
       const { data } = await supabase
         .from('piece_rates')
-        .select('id, job_id, rate, effective_from, tier2_rate')
+        .select('*')
         .eq('job_id', jobId)
         .order('effective_from', { ascending: false })
       const today = todayISO()
@@ -146,13 +149,13 @@ export default function AddJobRecord() {
 
   // A tiered rate (e.g. cage tipping) pays Tier 1 for the first 4 units done
   // in an hour and Tier 2 for the 5th unit onward — same rule as the mobile
-  // hourly photo flow (see TIER1_UNIT_CAP in DemoMobile.tsx).
+  // hourly photo flow — the crossover is the rate's own tier_threshold.
   const qtyNum = Number(quantity) || 0
   const amount = !rate
     ? 0
     : rate.tier2_rate == null
       ? Number(rate.rate) * qtyNum
-      : Math.min(qtyNum, 4) * Number(rate.rate) + Math.max(0, qtyNum - 4) * Number(rate.tier2_rate)
+      : ladderAmount(rate, qtyNum)
 
   function resetForm() {
     setWorkDate(todayISO())
@@ -209,7 +212,7 @@ export default function AddJobRecord() {
         workNotes.trim() && `Work notes: ${workNotes.trim()}`,
       ].filter(Boolean)
       const { data, error: insErr } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .insert({
           work_date: workDate,
           station_id: stationId,
@@ -238,7 +241,7 @@ export default function AddJobRecord() {
           .upload(path, body, { contentType: photo.type || 'image/jpeg' })
         if (upErr) throw new Error(`Record saved, but the attachment failed to upload: ${upErr.message}`)
         const { error: prErr } = await supabase
-          .from('photo_records')
+          .from('operation_photos')
           .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
         if (prErr) throw new Error(`Record saved, but the attachment couldn't be linked: ${prErr.message}`)
       }
@@ -422,7 +425,7 @@ export default function AddJobRecord() {
                 <label className="field grow">
                   <span>Breakdown</span>
                   <input
-                    value={`min(${qtyNum}, 4) × ${Number(rate.rate).toFixed(2)} + max(0, ${qtyNum} − 4) × ${Number(rate.tier2_rate).toFixed(2)}`}
+                    value={ladderBreakdownFrom(hourLadder(rate), qtyNum).map((s) => `${s.units} × ${s.rate.toFixed(2)}`).join(' + ')}
                     readOnly
                   />
                 </label>

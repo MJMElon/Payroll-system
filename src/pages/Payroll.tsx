@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  ladderAmount,
   supabase,
   todayISO,
   profileName,
@@ -11,6 +12,7 @@ import {
   type Profile,
   type Worker,
 } from '../lib/supabase'
+import { makePayExpander } from '../lib/payFlow'
 import SummaryReport, { type SummaryReportHandle } from './payroll/SummaryReport'
 import HourlyProduction from './payroll/HourlyProduction'
 import MonthReport from './payroll/MonthReport'
@@ -178,7 +180,7 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
       // 1. Production in the period — APPROVED entries only. Pending,
       // waiting-approval and rejected work is left out of the pay run.
       const { data: entries, error: entErr } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('worker_id, user_id, job_id, quantity, approval_status')
         .gte('work_date', start)
         .lte('work_date', end)
@@ -188,52 +190,81 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
         throw new Error('No APPROVED production entries in that period — nothing to pay.')
       }
 
+      // 1.5 Reference data for the multi-tier pay rule: one approved entry
+      // pays its submitter AND every higher tier priced on the same work,
+      // resolved through the submitter's reporting line (Team Manage).
+      const [jobsQ, profQ, gradeQ] = await Promise.all([
+        supabase.from('piece_rate_jobs').select('id, station_id, grade_id, name'),
+        supabase.from('shared_profiles').select('id, grade_id, supervisor_id'),
+        supabase.from('shared_grades').select('id, sort_order'),
+      ])
+      const refErr = jobsQ.error || profQ.error || gradeQ.error
+      if (refErr) throw new Error(refErr.message)
+      const allJobs = jobsQ.data ?? []
+
       // 2. Rate per job: newest rate effective on or before the period end.
-      const jobIds = [...new Set(entries.map((e) => e.job_id))]
+      // Rates are loaded for the WHOLE work group of every entry's job, so
+      // the upper tiers' pricing of the same work rides along.
+      const entryJobIds = new Set(entries.map((e) => e.job_id))
+      const groupKey = (j: { station_id: string; name: string }) =>
+        `${j.station_id}|${j.name.trim().toLowerCase()}`
+      const wantedGroups = new Set(
+        allJobs.filter((j) => entryJobIds.has(j.id)).map(groupKey),
+      )
+      const jobIds = [
+        ...new Set([
+          ...allJobs.filter((j) => wantedGroups.has(groupKey(j))).map((j) => j.id),
+          ...entryJobIds,
+        ]),
+      ]
       const { data: rates, error: rateErr } = await supabase
         .from('piece_rates')
-        .select('job_id, rate, effective_from, tier2_rate')
+        // select('*') so tier_threshold rides along once its migration ran.
+        .select('*')
         .in('job_id', jobIds)
         .lte('effective_from', end)
         .order('effective_from', { ascending: false })
       if (rateErr) throw new Error(rateErr.message)
-      const rateByJob = new Map<string, { rate: number; tier2: number | null }>()
+      const rateByJob = new Map<string, (typeof rates extends (infer T)[] | null ? T : never)>()
       for (const r of rates ?? []) {
-        if (!rateByJob.has(r.job_id)) {
-          rateByJob.set(r.job_id, {
-            rate: Number(r.rate),
-            tier2: r.tier2_rate == null ? null : Number(r.tier2_rate),
-          })
-        }
+        if (!rateByJob.has(r.job_id)) rateByJob.set(r.job_id, r)
       }
-      // Tiered rates pay tier 1 for the first 4 units of an entry and tier 2
-      // beyond — same rule as the Operation screen and the mobile entry flow.
-      const TIER1_CAP = 4
+      // A tiered rate pays each unit its price-ladder row (the count
+      // resetting hourly is already baked into per-entry quantities) —
+      // the same ladderAmount rule as the Operation screen and mobile.
       const amountOf = (jobId: string, qty: number) => {
         const r = rateByJob.get(jobId)
         if (!r) return 0
-        if (r.tier2 == null) return qty * r.rate
-        return Math.min(qty, TIER1_CAP) * r.rate + Math.max(0, qty - TIER1_CAP) * r.tier2
+        return ladderAmount(r, qty)
       }
 
-      // 3. Sum quantities AND per-entry amounts per person + job (amounts are
-      // computed entry by entry so tiered rates come out right).
+      // 3. Expand each entry into its pay lines (submitter + priced upper
+      // tiers), then sum quantities AND per-entry amounts per person + job
+      // (amounts computed entry by entry so tiered rates come out right).
+      const payLinesOf = makePayExpander({
+        jobs: allJobs,
+        profiles: profQ.data ?? [],
+        grades: gradeQ.data ?? [],
+        hasRate: (jobId) => rateByJob.has(jobId),
+      })
       const sums = new Map<
         string,
         { user_id: string | null; worker_id: string | null; job_id: string; quantity: number; amount: number }
       >()
       for (const en of entries) {
-        const key = `${en.user_id ?? 'w:' + en.worker_id}|${en.job_id}`
-        const cur = sums.get(key) ?? {
-          user_id: en.user_id ?? null,
-          worker_id: en.user_id ? null : en.worker_id ?? null,
-          job_id: en.job_id,
-          quantity: 0,
-          amount: 0,
+        for (const line of payLinesOf(en)) {
+          const key = `${line.userId ?? 'w:' + line.workerId}|${line.jobId}`
+          const cur = sums.get(key) ?? {
+            user_id: line.userId,
+            worker_id: line.workerId,
+            job_id: line.jobId,
+            quantity: 0,
+            amount: 0,
+          }
+          cur.quantity += Number(en.quantity)
+          cur.amount += amountOf(line.jobId, Number(en.quantity))
+          sums.set(key, cur)
         }
-        cur.quantity += Number(en.quantity)
-        cur.amount += amountOf(en.job_id, Number(en.quantity))
-        sums.set(key, cur)
       }
 
       // 4. Create the run, then its lines (rate snapshotted; 0 if job has no rate).
@@ -308,9 +339,9 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
       supabase.from('payroll_adjustments')
         .select('id, run_id, worker_id, user_id, amount, reason')
         .eq('run_id', run.id),
-      supabase.from('access_profiles').select('*').order('email'),
-      supabase.from('workers').select('id, full_name, station_id, grade_id, can_approve_rates, active'),
-      supabase.from('jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
+      supabase.from('shared_profiles').select('*').order('email'),
+      supabase.from('shared_workers').select('id, full_name, station_id, grade_id, can_approve_rates, active'),
+      supabase.from('piece_rate_jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
     ])
     const err = l.error || a.error || u.error || w.error || j.error
     if (err) setError(err.message)

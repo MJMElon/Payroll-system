@@ -51,20 +51,20 @@ export default function StationDetail() {
   useEffect(() => {
     async function loadMaster() {
       const [s, j, w, u, g] = await Promise.all([
-        supabase.from('stations').select('id, name, sort_order').eq('id', stationId).single(),
+        supabase.from('shared_stations').select('id, name, sort_order').eq('id', stationId).single(),
         supabase
-          .from('jobs')
+          .from('piece_rate_jobs')
           .select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by')
           .eq('station_id', stationId)
           .eq('active', true)
           .eq('approval_status', 'approved')
           .order('name'),
         supabase
-          .from('workers')
+          .from('shared_workers')
           .select('id, full_name, station_id, grade_id, can_approve_rates, active')
           .order('full_name'),
-        supabase.from('access_profiles').select('*').order('email'),
-        supabase.from('grades').select('*').order('sort_order'),
+        supabase.from('shared_profiles').select('*').order('email'),
+        supabase.from('shared_grades').select('*').order('sort_order'),
       ])
       if (s.error) setError(s.error.message)
       else setStation(s.data)
@@ -79,7 +79,7 @@ export default function StationDetail() {
 
   async function loadEntries() {
     const { data, error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('id, work_date, station_id, job_id, worker_id, user_id, quantity, notes, shift, created_by, created_at')
       .eq('work_date', workDate)
       .eq('station_id', stationId)
@@ -120,7 +120,7 @@ export default function StationDetail() {
     const qty = Number(quantity)
     if (Number.isNaN(qty) || qty <= 0) return setError('Quantity must be a positive number.')
     setSaving(true)
-    const { error } = await supabase.from('production_entries').insert({
+    const { error } = await supabase.from('operation_entries').insert({
       work_date: workDate,
       station_id: stationId,
       job_id: jobId,
@@ -137,7 +137,7 @@ export default function StationDetail() {
 
   async function removeEntry(entry: ProductionEntry) {
     if (!window.confirm('Delete this entry?')) return
-    const { error } = await supabase.from('production_entries').delete().eq('id', entry.id)
+    const { error } = await supabase.from('operation_entries').delete().eq('id', entry.id)
     if (error) setError(error.message)
     else loadEntries()
   }
