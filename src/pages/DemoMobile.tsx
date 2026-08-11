@@ -1811,10 +1811,17 @@ function StationWorkPanel({
         {/* 1 — the day and the hour in one block: what has been recorded
                today, then the hour being worked right now. */}
         <div className="mob-card mob-highlight">
-          <div className="mob-card-label">
-            {ticksHourly(station) ? 'Work done this hour' : 'Work done today'}
-          </div>
-          <WorkDoneCard bare profileId={profileId} station={station} reloadKey={records.length} />
+          {/* An hourly photo station draws its own run of stamps just
+              below — the work-done row on top of it read as a duplicate,
+              so this card carries ONE stamp row: theirs. */}
+          {!station.hourly_count && (
+            <>
+              <div className="mob-card-label">
+                {ticksHourly(station) ? 'Work done this hour' : 'Work done today'}
+              </div>
+              <WorkDoneCard bare profileId={profileId} station={station} reloadKey={records.length} />
+            </>
+          )}
           {station.hourly_count ? (
             <>
               {!jobColumnReady && (
@@ -1865,7 +1872,10 @@ function StationWorkPanel({
               ) : (
                 <>
                   <div className="stamp-row">
-                    {Array.from({ length: target }, (_, i) => (
+                    {/* Records past the target keep stamping — one more
+                        stamp each, right beside the row, so the stamps
+                        always count what was actually done. */}
+                    {Array.from({ length: Math.max(target, stampsThisHour) }, (_, i) => (
                       <span
                         key={i}
                         className={`stamp ${i < stampsThisHour ? (rewardActive ? 'done reward' : 'done') : ''}`}
@@ -1873,14 +1883,9 @@ function StationWorkPanel({
                         ✓
                       </span>
                     ))}
-                    {stampsThisHour > target && (
-                      <span className={`stamp extra ${rewardActive ? 'reward' : ''}`}>
-                        +{stampsThisHour - target}
-                      </span>
-                    )}
                   </div>
                   <div className="mob-sub">
-                    {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
+                    {stampsThisHour} of {target} stamped · {minutesLeft} min left this hour
                     {rewardActive && ' · bonus hour ✨'}
                   </div>
                 </>
@@ -2665,10 +2670,12 @@ function WorkDoneCard({
         <div className="mob-stat">{done}</div>
       ) : target <= TICK_LIMIT ? (
         <div className="stamp-row light">
-          {Array.from({ length: target }, (_, i) => (
+          {/* Records past the target keep stamping — one more stamp each,
+              right beside the row, so the stamps always count what was
+              actually done. */}
+          {Array.from({ length: Math.max(target, done) }, (_, i) => (
             <span className={`stamp ${i < done ? 'done' : ''}`} key={i}>✓</span>
           ))}
-          {done > target && <span className="stamp extra">+{done - target}</span>}
         </div>
       ) : (
         /* Forty ticks is a wall, not a count — the same number said as a
