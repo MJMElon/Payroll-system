@@ -140,6 +140,11 @@ export interface Grade {
   // Null on a tag saved before the setting existed — read it through
   // effectiveEntitlements(), which fills in the old name-based answer.
   entitlements?: string[] | null
+  // Whose piece rate contracts / work records this tier may view, as grade
+  // ids. Null on a tag saved before the setting existed — read them through
+  // viewableTierIds(), which fills in the old own-rank-and-below answer.
+  view_rate_tiers?: string[] | null
+  view_entry_tiers?: string[] | null
 }
 
 export interface Job {

@@ -21,7 +21,7 @@ import Select, { MultiSelect, type SelectOption } from '../components/Select'
 import { useAuth } from '../context/AuthContext'
 import { useOverlayClose } from '../lib/useOverlayClose'
 import { useWideShell } from '../lib/useWideShell'
-import { effectiveCapabilities, isEntitled, tagClass } from '../lib/tags'
+import { canViewTier, effectiveCapabilities, isEntitled, tagClass } from '../lib/tags'
 import {
   profileName,
   supabase,
@@ -83,7 +83,6 @@ export default function PieceRate() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<Rate[]>([])
-  const [myTier, setMyTier] = useState<number | null>(null)
   const canManage = profile?.role === 'admin' || profile?.role === 'manager'
   const isAdmin = profile?.role === 'admin'
   const [modal, setModal] = useState<'closed' | 'create'>('closed')
@@ -135,15 +134,6 @@ export default function PieceRate() {
   const canFinal = isAdmin || myCaps.includes('rate-approve')
   const isApprover = isAdmin || canVerify || canFinal
 
-  // Tier comes from the signed-in account's grade tag.
-  useEffect(() => {
-    if (profile?.grade_id) {
-      const g = grades.find((x) => x.id === profile.grade_id)
-      setMyTier(g ? g.sort_order : null)
-    } else {
-      setMyTier(null)
-    }
-  }, [profile, grades])
 
   const currentRate = useMemo(() => {
     const m = new Map<string, Rate>()
@@ -174,10 +164,11 @@ export default function PieceRate() {
 
   // Managers/admins see every contract. Others are scoped two ways:
   // 1. Station — a user with station tags only sees those stations.
-  // 2. Tier — tier 1 is highest; a user sees their tier and every tier
-  //    below it (larger tier numbers). Untagged rates are visible to all.
-  const tierOf = (gradeId: string | null) =>
-    gradeId ? grades.find((g) => g.id === gradeId)?.sort_order ?? 0 : null
+  // 2. Tier — the tags ticked under "View piece rate contract of" on their
+  //    own tier tag (Settings → Tier Tag Access Manage → Piece Rate
+  //    Module). A tag nobody has set falls back to its own rank and every
+  //    rank below. Untagged rates belong to no rung and are open to all.
+  const myGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
   const myStations =
     profile?.station_ids && profile.station_ids.length > 0
       ? profile.station_ids
@@ -187,9 +178,7 @@ export default function PieceRate() {
   const visibleTo = (j: Job) => {
     if (canManage) return true
     if (myStations.length > 0 && !myStations.includes(j.station_id)) return false
-    const t = tierOf(j.grade_id)
-    if (t === null) return true
-    return myTier !== null && t >= myTier
+    return canViewTier(myGrade, grades, 'rate', j.grade_id)
   }
 
   return (

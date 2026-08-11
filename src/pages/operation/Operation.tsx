@@ -26,7 +26,7 @@ import Select from '../../components/Select'
 import { useAuth } from '../../context/AuthContext'
 import { useOverlayClose } from '../../lib/useOverlayClose'
 import { useWideShell } from '../../lib/useWideShell'
-import { effectiveCapabilities, tagClass } from '../../lib/tags'
+import { canViewTier, effectiveCapabilities, tagClass } from '../../lib/tags'
 import {
   profileName,
   supabase,
@@ -382,7 +382,17 @@ export default function Operation() {
     const hay = `${personName(e)} ${jobName(e.job_id)} ${stationName(e.station_id)}`.toLowerCase()
     return hay.includes(needle)
   }
-  const inScope = entries.filter(matchesSearch)
+  /**
+   * Whose work records this account may read at all, set per tier tag under
+   * Settings → Tier Tag Access Manage → Operation Module ("View work record
+   * of"). A tag nobody has set falls back to its own rank and every rank
+   * below. A record by somebody with no tier tag belongs to no rung and is
+   * open to everyone, the same as untagged work everywhere else.
+   */
+  const inReach = (e: ProductionEntry) =>
+    canViewTier(myGrade, grades, 'entry', personOf(e)?.grade_id ?? null)
+
+  const inScope = entries.filter(matchesSearch).filter(inReach)
   const visible = inScope.filter(inTab)
 
   /** Fold entries into one row per worker + job + day, submissions kept in

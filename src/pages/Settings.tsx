@@ -13,6 +13,8 @@ import {
   MANAGEMENT_ONLY_GROUPS,
   MODULE_GROUP,
   MODULE_OPTIONS,
+  MODULE_VIEW,
+  VIEW_SCOPES,
   canGiveTier,
   defaultEntitlements,
   effectiveEntitlements,
@@ -22,6 +24,8 @@ import {
   stationTierOf,
   sortCapabilities,
   tagClass,
+  viewableTierIds,
+  type ViewScope,
 } from '../lib/tags'
 import { useOverlayClose } from '../lib/useOverlayClose'
 import { useWideShell } from '../lib/useWideShell'
@@ -627,16 +631,25 @@ function TagsTab() {
 function ModuleTable({
   modules,
   capabilities,
+  allGrades,
+  viewTiers,
   locked,
   onToggleModule,
   onToggleCapability,
+  onToggleViewTier,
 }: {
   modules: string[]
   capabilities: string[]
+  /** Every tier, so the view lists are drawn from the live tier list —
+   *  add or remove a tier and the ticks follow without a code change. */
+  allGrades: Grade[]
+  /** Tier ids this tag may view, per scope. */
+  viewTiers: Record<ViewScope, string[]>
   /** Read-only: the view face, and the Management tag which is fixed. */
   locked: boolean
   onToggleModule: (key: string) => void
   onToggleCapability: (key: string) => void
+  onToggleViewTier: (scope: ViewScope, gradeId: string) => void
 }) {
   return (
     <div className="module-table">
@@ -644,6 +657,10 @@ function ModuleTable({
         const on = modules.includes(m.key)
         const group = MODULE_GROUP[m.key]
         const inner = group ? CAPABILITY_OPTIONS.filter((c) => c.group === group) : []
+        // Piece Rate and Operation each carry a "whose work may this tier
+        // see" list, drawn under the module it governs.
+        const view = MODULE_VIEW[m.key]
+        const chosen = view ? viewTiers[view.scope] : []
         return (
           <div className={`module-row ${on ? 'on' : ''}`} key={m.key}>
             <label className="checkbox module-head">
@@ -671,6 +688,25 @@ function ModuleTable({
                       onChange={() => onToggleCapability(c.key)}
                     />{' '}
                     {c.label}
+                  </label>
+                ))}
+              </div>
+            )}
+            {on && view && (
+              <div className="module-caps">
+                <div className="module-subhead">
+                  {view.label}
+                  <span className="module-count">{chosen.length}/{allGrades.length}</span>
+                </div>
+                {allGrades.map((g) => (
+                  <label key={g.id} className="checkbox small" style={{ margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={chosen.includes(g.id)}
+                      disabled={locked}
+                      onChange={() => onToggleViewTier(view.scope, g.id)}
+                    />{' '}
+                    <span className={tagClass(g.color)}>{g.name}</span>
                   </label>
                 ))}
               </div>
@@ -1007,6 +1043,20 @@ function TagModal({
   const [capabilities, setCapabilities] = useState<string[]>(
     isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade?.capabilities ?? ['data-entry']),
   )
+  // Whose contracts / work records this tag may view. Drawn under the
+  // module each one governs, so the setting sits with what it governs.
+  const [viewTiers, setViewTiers] = useState<Record<ViewScope, string[]>>(() =>
+    Object.fromEntries(
+      VIEW_SCOPES.map((v) => [
+        v.scope,
+        grade
+          ? viewableTierIds(grade, allGrades, v.scope)
+          : // A tag being created sits at the bottom, so it starts with
+            // itself alone — and it has no id yet, hence nothing ticked.
+            [],
+      ]),
+    ) as Record<ViewScope, string[]>,
+  )
   // Entitlements are set on every tag, tier 1 included — see EntitlementTable.
   const [entitlements, setEntitlements] = useState<string[]>(
     grade
@@ -1020,6 +1070,15 @@ function TagModal({
   function toggleCapability(key: string) {
     if (isSuper) return
     setCapabilities((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]))
+  }
+
+  function toggleViewTier(scope: ViewScope, gradeId: string) {
+    setViewTiers((v) => ({
+      ...v,
+      [scope]: v[scope].includes(gradeId)
+        ? v[scope].filter((id) => id !== gradeId)
+        : [...v[scope], gradeId],
+    }))
   }
 
   function toggleEntitlement(key: string) {
@@ -1054,17 +1113,26 @@ function TagModal({
       : MODULE_OPTIONS.map((m) => m.key).filter((k) => modules.includes(k))
     const fields = { name: name.trim(), color, modules: mods, capabilities: caps, ability: ability || null }
     const ents = ALL_ENTITLEMENTS.filter((k) => entitlements.includes(k))
+    // Stored in tier order, and only ids that still exist — a tag deleted
+    // while this window was open must not leave a grant behind.
+    const inTierOrder = (ids: string[]) =>
+      allGrades.filter((g) => ids.includes(g.id)).map((g) => g.id)
     const write = (f: Record<string, unknown>) =>
       grade
         ? supabase.from('shared_grades').update(f).eq('id', grade.id)
         : supabase.from('shared_grades').insert({ ...f, sort_order: nextTier })
 
-    const first = await write({ ...fields, entitlements: ents })
+    const first = await write({
+      ...fields,
+      entitlements: ents,
+      view_rate_tiers: inTierOrder(viewTiers.rate),
+      view_entry_tiers: inTierOrder(viewTiers.entry),
+    })
     // "Entitled Function" needs a column that arrived after the first
     // release. On a database that has not had supabase/setup.sql re-run,
     // save everything else rather than losing the whole edit, and say
     // plainly what is missing instead of showing a Postgres error.
-    if (first.error && /entitlements/i.test(first.error.message)) {
+    if (first.error && /entitlements|view_rate_tiers|view_entry_tiers/i.test(first.error.message)) {
       const { error } = await write(fields)
       setSaving(false)
       if (error) return setError(saveError(error, 'tier tag', name))
@@ -1110,6 +1178,11 @@ function TagModal({
       isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade.capabilities ?? ['data-entry']),
     )
     setEntitlements(effectiveEntitlements(grade, allGrades))
+    setViewTiers(
+      Object.fromEntries(
+        VIEW_SCOPES.map((v) => [v.scope, viewableTierIds(grade, allGrades, v.scope)]),
+      ) as Record<ViewScope, string[]>,
+    )
     setError(null)
     onMode('view')
   }
@@ -1138,9 +1211,12 @@ function TagModal({
             <ModuleTable
               modules={modules}
               capabilities={capabilities}
+              allGrades={allGrades}
+              viewTiers={viewTiers}
               locked
               onToggleModule={() => {}}
               onToggleCapability={() => {}}
+              onToggleViewTier={() => {}}
             />
           </div>
 
@@ -1206,9 +1282,12 @@ function TagModal({
           <ModuleTable
             modules={modules}
             capabilities={capabilities}
+            allGrades={allGrades}
+            viewTiers={viewTiers}
             locked={isSuper}
             onToggleModule={toggleModule}
             onToggleCapability={toggleCapability}
+            onToggleViewTier={toggleViewTier}
           />
         </div>
 
