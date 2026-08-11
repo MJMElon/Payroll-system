@@ -599,47 +599,100 @@ function FilterMenu({
 }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement | null>(null)
-  // Where the list was scrolled to when the tick was made, and the box it
-  // was scrolled in.
+  // The box the list scrolls in, and what it looked like when the menu
+  // was opened: how far it was scrolled, its natural bottom padding, and
+  // how tall it was.
   const box = useRef<HTMLElement | null>(null)
   const keep = useRef<number | null>(null)
+  const basePad = useRef(0)
+  const reserve = useRef<number | null>(null)
+  const extraPad = useRef(0)
   const narrowed = picked.size > 0
 
-  /**
-   * Ticking a tier makes the list longer or shorter, and the scroll box
-   * settles somewhere else — so the filter you are still tapping slides
-   * out from under your thumb. Hold the scroll position across the change
-   * instead: note it before, put it back after the list has re-rendered
-   * but before the browser paints, so nothing is ever seen to move.
-   */
-  function hold(change: () => void) {
+  function scrollBox(): HTMLElement | null {
     let node: HTMLElement | null = root.current?.parentElement ?? null
     while (node) {
       const oy = getComputedStyle(node).overflowY
-      if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight) break
+      if (oy === 'auto' || oy === 'scroll') return node
       node = node.parentElement
     }
-    box.current = node
-    keep.current = node ? node.scrollTop : null
+    return null
+  }
+
+  /**
+   * Hold the list still while it is being filtered.
+   *
+   * Two things move it. Ticking a tier re-renders the list, and the scroll
+   * box settles somewhere else. Unticking makes the list SHORTER, and if
+   * you were near the bottom there is no longer anywhere to be scrolled
+   * to — the browser clamps, and the block you are working slides.
+   *
+   * So while the menu is open the box keeps the height it had when the
+   * menu opened, held there by padding underneath the list. Nothing can
+   * clamp, so nothing moves; the block grows and shrinks above padding
+   * that gives way in step with it. Closing the menu hands the space
+   * back.
+   */
+  function hold(change: () => void) {
+    box.current = scrollBox()
+    keep.current = box.current ? box.current.scrollTop : null
     change()
+  }
+
+  function openMenu() {
+    const node = scrollBox()
+    box.current = node
+    if (node) {
+      basePad.current = parseFloat(getComputedStyle(node).paddingBottom) || 0
+      extraPad.current = 0
+      reserve.current = node.scrollHeight
+      keep.current = node.scrollTop
+    }
+    setOpen(true)
+  }
+
+  function closeMenu() {
+    const node = box.current
+    if (node) {
+      node.style.paddingBottom = ''
+      const top = Math.min(node.scrollTop, Math.max(0, node.scrollHeight - node.clientHeight))
+      node.scrollTop = top
+    }
+    reserve.current = null
+    extraPad.current = 0
+    keep.current = null
+    setOpen(false)
   }
 
   useLayoutEffect(() => {
     const node = box.current
+    if (!node) return
+    if (open && reserve.current != null) {
+      // What the list would measure with the reserved space taken out.
+      const natural = node.scrollHeight - extraPad.current
+      const extra = Math.max(0, reserve.current - natural)
+      extraPad.current = extra
+      node.style.paddingBottom = `${basePad.current + extra}px`
+    }
     const top = keep.current
     keep.current = null
-    if (!node || top == null) return
-    // The list may now be shorter than where we were, so never ask for a
-    // position that no longer exists.
-    node.scrollTop = Math.min(top, Math.max(0, node.scrollHeight - node.clientHeight))
+    if (top != null) {
+      node.scrollTop = Math.min(top, Math.max(0, node.scrollHeight - node.clientHeight))
+    }
   })
+
+  // Leaving the tab with the menu still open must not leave the reserved
+  // space behind on a box the next screen will use.
+  useEffect(() => () => {
+    if (box.current) box.current.style.paddingBottom = ''
+  }, [])
 
   return (
     <div className="mob-filter" ref={root}>
       <button
         type="button"
         className={`mob-filter-btn ${narrowed ? 'on' : ''}`}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? closeMenu() : openMenu())}
         aria-label={title}
         aria-expanded={open}
       >
@@ -654,7 +707,7 @@ function FilterMenu({
         <>
           {/* Anywhere else closes it — a filter should not need its own
               close button to get out of the way. */}
-          <button type="button" className="mob-filter-scrim" aria-label="Close filter" onClick={() => setOpen(false)} />
+          <button type="button" className="mob-filter-scrim" aria-label="Close filter" onClick={closeMenu} />
           <div className="mob-filter-menu" role="menu">
             <div className="mob-filter-title">{title}</div>
             <button
