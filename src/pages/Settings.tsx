@@ -753,8 +753,8 @@ function TagsTab() {
 /**
  * One station's own settings: the preset coordinate every clock in / out
  * stamp is checked against ("Use my current location" fills it from the
- * device standing at the station), and the two targets with their "Show
- * on Add new work record" ticks.
+ * device standing at the station), and the monthly target with its "Show
+ * on Add new work record" tick.
  */
 function StationCoordModal({
   station,
@@ -768,12 +768,10 @@ function StationCoordModal({
   const [lat, setLat] = useState(station.latitude != null ? String(station.latitude) : '')
   const [lng, setLng] = useState(station.longitude != null ? String(station.longitude) : '')
   const [fence, setFence] = useState(station.geofence_m != null ? String(station.geofence_m) : '')
-  // The "Show on Add new work record" block: two targets, each with its
-  // own tick deciding whether its dashboard is drawn on the record screen.
-  const [showHourly, setShowHourly] = useState(station.show_hourly_target === true)
-  const [hourTarget, setHourTarget] = useState(
-    station.hourly_target != null ? String(station.hourly_target) : '',
-  )
+  // The "Show on Add new work record" block: the monthly target with the
+  // tick deciding whether its dashboard is drawn on the record screen.
+  // The hourly target lives as its own column in the stations table now —
+  // the record screen's single stamp row reads it from there.
   const [showMonthly, setShowMonthly] = useState(station.show_monthly_target === true)
   const [monthTarget, setMonthTarget] = useState(
     station.monthly_target != null ? String(station.monthly_target) : '',
@@ -818,13 +816,6 @@ function StationCoordModal({
     if (f != null && (!Number.isFinite(f) || f <= 0)) {
       return setError('The allowed distance must be a positive number of metres.')
     }
-    const hr = hourTarget.trim() === '' ? null : Math.round(Number(hourTarget))
-    if (hr != null && (!Number.isFinite(hr) || hr <= 0)) {
-      return setError('The target per hour must be a positive number.')
-    }
-    if (showHourly && hr == null) {
-      return setError('Ticking "Target per hour" needs the hourly number filled in.')
-    }
     const mo = monthTarget.trim() === '' ? null : Math.round(Number(monthTarget))
     if (mo != null && (!Number.isFinite(mo) || mo <= 0)) {
       return setError('The target per month must be a positive number.')
@@ -839,9 +830,7 @@ function StationCoordModal({
         latitude: clearing ? null : la,
         longitude: clearing ? null : ln,
         geofence_m: clearing ? null : f,
-        hourly_target: hr,
         monthly_target: mo,
-        show_hourly_target: showHourly,
         show_monthly_target: showMonthly,
       })
       .eq('id', station.id)
@@ -902,29 +891,11 @@ function StationCoordModal({
 
         <h3 style={{ marginTop: '1.1rem' }}>Show on Add new work record</h3>
         <p className="muted small">
-          Each tick draws that target's dashboard on the mobile Add-work-record screen
-          for this station.
+          The tick draws the monthly dashboard on the mobile Add-work-record screen
+          for this station. Hourly and daily targets are set in the station list —
+          the record screen's stamps show whichever of those is filled.
         </p>
         <div className="stack" style={{ gap: '0.5rem' }}>
-          <div className="row-form" style={{ alignItems: 'center', gap: '0.6rem' }}>
-            <label className="checkbox" style={{ margin: 0, flex: '1' }}>
-              <input
-                type="checkbox"
-                checked={showHourly}
-                onChange={(e) => setShowHourly(e.target.checked)}
-              />
-              <span>Target per hour</span>
-            </label>
-            <input
-              className="row-input"
-              style={{ maxWidth: '7rem' }}
-              value={hourTarget}
-              onChange={(e) => setHourTarget(e.target.value)}
-              placeholder="e.g. 6"
-              inputMode="numeric"
-              aria-label="Target per hour"
-            />
-          </div>
           <div className="row-form" style={{ alignItems: 'center', gap: '0.6rem' }}>
             <label className="checkbox" style={{ margin: 0, flex: '1' }}>
               <input

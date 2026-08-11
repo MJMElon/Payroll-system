@@ -43,7 +43,6 @@ import {
   ladderAmount,
   ladderBreakdownFrom,
   ladderStepsFrom,
-  tier1Cap,
   type PhotoRecord,
   type PieceRate,
   type ProductionEntry,
@@ -1544,55 +1543,30 @@ function StationScreen({
    between the Performance tab's station drill-in and the Operator's merged
    Record tab. */
 /**
- * The target dashboards the station's "Show on Add new work record" ticks
- * switch on (Settings → Station tags → pin action). Draft faces — to be
- * refined once real use shapes them.
+ * The monthly target dashboard the station's "Show on Add new work record"
+ * tick switches on (Settings → Station tags → pin action): the station's
+ * work done this month against its target.
  *
- * Per hour: one badge per unit of the hour's target, ticked as YOUR
- * records land this hour. From the badge past the base-rate cap the
- * colour changes — that work is already earning the second-tier rate.
- * Per month: the station's work done this month against its target.
+ * The hour target draws no card here any more — the record screen's single
+ * run of stamps (WorkDoneCard) shows whichever target is filled, and a
+ * second row of stamps above it only read as a duplicate.
  */
-function StationTargetCards({
-  station,
-  profileId,
-}: {
-  station: Station
-  profileId: string | null
-}) {
-  // The rate's own tier threshold decides where the badges turn blue; a
-  // station without a tiered rate keeps the default cap.
-  const capBadge = tier1Cap(null)
-  const showHour = station.show_hourly_target === true && (station.hourly_target ?? 0) > 0
+function StationTargetCards({ station }: { station: Station }) {
   const showMonth = station.show_monthly_target === true && (station.monthly_target ?? 0) > 0
-  const [hourCount, setHourCount] = useState(0)
   const [monthQty, setMonthQty] = useState(0)
 
   useEffect(() => {
-    if (!showHour && !showMonth) return
+    if (!showMonth) return
     let alive = true
     async function load() {
-      if (showHour && profileId) {
-        const hourStart = new Date()
-        hourStart.setMinutes(0, 0, 0)
-        const { data } = await supabase
-          .from('operation_entries')
-          .select('id')
-          .eq('station_id', station.id)
-          .eq('user_id', profileId)
-          .gte('created_at', hourStart.toISOString())
-        if (alive) setHourCount((data ?? []).length)
-      }
-      if (showMonth) {
-        const monthStart = todayISO().slice(0, 8) + '01'
-        const { data } = await supabase
-          .from('operation_entries')
-          .select('quantity')
-          .eq('station_id', station.id)
-          .gte('work_date', monthStart)
-        if (alive) {
-          setMonthQty((data ?? []).reduce((t, r) => t + Number((r as { quantity: number }).quantity ?? 0), 0))
-        }
+      const monthStart = todayISO().slice(0, 8) + '01'
+      const { data } = await supabase
+        .from('operation_entries')
+        .select('quantity')
+        .eq('station_id', station.id)
+        .gte('work_date', monthStart)
+      if (alive) {
+        setMonthQty((data ?? []).reduce((t, r) => t + Number((r as { quantity: number }).quantity ?? 0), 0))
       }
     }
     load()
@@ -1601,39 +1575,14 @@ function StationTargetCards({
       alive = false
       clearInterval(t)
     }
-  }, [station.id, profileId, showHour, showMonth])
+  }, [station.id, showMonth])
 
-  if (!showHour && !showMonth) return null
-  const hourTarget = station.hourly_target ?? 0
+  if (!showMonth) return null
   const monthTarget = station.monthly_target ?? 0
   const pct = monthTarget > 0 ? Math.min(100, Math.round((monthQty / monthTarget) * 100)) : 0
 
   return (
     <>
-      {showHour && (
-        <div className="mob-card mob-highlight">
-          <div className="mob-card-label">Target per hour</div>
-          <div className="stamp-row">
-            {Array.from({ length: hourTarget }, (_, i) => (
-              <span
-                key={i}
-                className={`stamp ${i >= capBadge ? 'tier2' : ''} ${i < hourCount ? 'done' : ''}`}
-              >
-                ✓
-              </span>
-            ))}
-            {hourCount > hourTarget && (
-              <span className="stamp extra">+{hourCount - hourTarget}</span>
-            )}
-          </div>
-          <div className="mob-sub">
-            {hourCount} of {hourTarget} this hour
-            {hourTarget > capBadge
-              ? ` · blue from no. ${capBadge + 1}: the second-tier rate`
-              : ''}
-          </div>
-        </div>
-      )}
       {showMonth && (
         <div className="mob-card">
           <div className="mob-card-label">Target per month</div>
@@ -1857,7 +1806,7 @@ function StationWorkPanel({
 
   return (
     <>
-        <StationTargetCards station={station} profileId={profileId} />
+        <StationTargetCards station={station} />
 
         {/* 1 — the day and the hour in one block: what has been recorded
                today, then the hour being worked right now. */}
@@ -3181,7 +3130,7 @@ function RecordTab({
 
 {/* The target dashboards this station's ticks switch on — the
             plain record form gets them just like the hourly panel. */}
-        {ownStation && <StationTargetCards station={ownStation} profileId={profileId} />}
+        {ownStation && <StationTargetCards station={ownStation} />}
 
         <WorkDoneCard
           profileId={profileId}
