@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import type { Session } from '@supabase/supabase-js'
+import type { Session, User } from '@supabase/supabase-js'
 import { supabase, type Profile } from '../lib/supabase'
 import { authLink } from '../lib/authLink'
 
@@ -34,14 +34,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [passwordRecovery, setPasswordRecovery] = useState(false)
   const [linkError, setLinkError] = useState<string | null>(authLink?.error ?? null)
 
-  // Load the access_profiles row (role, station, worker link) for a user id.
-  async function loadProfile(userId: string) {
+  // Load the access_profiles row (role, station, worker link) for a user.
+  async function loadProfile(user: User) {
     // select('*') keeps login working even when the database is one
     // migration behind the frontend (missing columns come back undefined).
     const { data, error } = await supabase
       .from('shared_profiles')
       .select('*')
-      .eq('id', userId)
+      .eq('id', user.id)
       .maybeSingle()
     if (data) {
       setProfile(data as Profile)
@@ -50,13 +50,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) console.error('Failed to load profile:', error.message)
     // Self-heal: the signup trigger may not have created the row (e.g. the
     // database was mid-migration). Create it, then reload.
-    const { data: session } = await supabase.auth.getSession()
-    const email = session.session?.user.email ?? null
+    const email = user.email ?? null
     // The name they typed at signup, if it is still on the auth user. Never
     // fall back to the email: an email is not a name, and the team chart
     // then has no way to tell an unnamed account from a named one.
     const signupName =
-      (session.session?.user.user_metadata?.full_name as string | undefined)?.trim() || null
+      (user.user_metadata?.full_name as string | undefined)?.trim() || null
     const { data: opGrade } = await supabase
       .from('shared_grades')
       .select('id')
@@ -64,7 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .maybeSingle()
     const { data: created, error: insErr } = await supabase
       .from('shared_profiles')
-      .insert({ id: userId, full_name: signupName, email, role: 'operator', grade_id: opGrade?.id ?? null })
+      .insert({ id: user.id, full_name: signupName, email, role: 'operator', grade_id: opGrade?.id ?? null })
       .select()
       .single()
     if (insErr) {
@@ -90,19 +89,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const { data } = await supabase.auth.getSession()
       setSession(data.session)
-      if (data.session) await loadProfile(data.session.user.id)
+      if (data.session) await loadProfile(data.session.user)
       setLoading(false)
     })()
 
-    // React to sign in / sign out.
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, next) => {
+    // React to sign in / sign out. The callback must NOT await Supabase
+    // calls: supabase-js fires it while holding its internal auth lock, and
+    // any query made here waits for that same lock — a deadlock that froze
+    // the first page load whenever the stored token needed a refresh (the
+    // "blank until you reload once" bug). Deferring with setTimeout lets the
+    // callback return, the lock release, and only then hits the database.
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       if (_event === 'PASSWORD_RECOVERY') setPasswordRecovery(true)
       setSession(next)
-      if (next) {
-        await loadProfile(next.user.id)
-      } else {
-        setProfile(null)
-      }
+      setTimeout(() => {
+        if (next) void loadProfile(next.user)
+        else setProfile(null)
+      }, 0)
     })
 
     return () => sub.subscription.unsubscribe()
