@@ -42,8 +42,13 @@ export function MultiSelect({
   block?: boolean
   ariaLabel?: string
   invalid?: boolean
-  /** Show a "Select All" row above the options — one tick for the lot.
-   *  The label given is what the trigger reads when everything is on. */
+  /** Show a "Select All" row above the options — a SHORTCUT that ticks
+   *  every row in one press (pressed with everything on, it clears them).
+   *  It is an action, never a state: what is stored is always the exact
+   *  rows ticked, so it does not light up when every row happens to be
+   *  on, and the trigger names the rows rather than saying "all" — a
+   *  list that says "all" reads as covering whatever is added later,
+   *  which a saved tick list does not. */
   selectAllLabel?: string
 }) {
   // Where the panel sits on the screen. It is placed against the window
@@ -91,8 +96,9 @@ export function MultiSelect({
 
   const chosen = options.filter((o) => values.includes(o.value))
   const allOn = options.length > 0 && chosen.length === options.length
-  const label =
-    allOn && selectAllLabel ? selectAllLabel : chosen.map((o) => o.label).join(', ')
+  // Always the names themselves — never collapsed to the "all" label.
+  // Ticking the only station means THAT station, and reads as it.
+  const label = chosen.map((o) => o.label).join(', ')
 
   function toggle(value: string) {
     onChange(values.includes(value) ? values.filter((v) => v !== value) : [...values, value])
@@ -133,8 +139,6 @@ export function MultiSelect({
           {selectAllLabel && options.length > 0 && (
             <button
               type="button"
-              role="option"
-              aria-selected={allOn}
               className="ui-select-option select-all"
               onClick={() => onChange(allOn ? [] : options.map((o) => o.value))}
             >
@@ -144,7 +148,9 @@ export function MultiSelect({
                   <path d="m5 12 5 5 9-9" />
                 </svg>
               </span>
-              <span className="ui-select-option-label">{selectAllLabel}</span>
+              <span className="ui-select-option-label">
+                {allOn ? 'Untick all' : selectAllLabel}
+              </span>
             </button>
           )}
           {options.map((o) => (

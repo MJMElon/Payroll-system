@@ -124,16 +124,22 @@ export default function PieceRate() {
 
   // Piece-rate rights follow the tag's standardized capabilities (Settings
   // → Tags management): rate-create / rate-verify / rate-approve. Tier 1 is
-  // the super admin and has all of them; admins can do everything too.
-  const myCaps = effectiveCapabilities(
-    profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) : null,
-  )
-  const canCreate = canManage || myCaps.includes('rate-create')
-  const canEditRate = canManage || myCaps.includes('rate-edit')
-  const canDeleteRate = canManage || myCaps.includes('rate-delete')
-  const canVerify = isAdmin || myCaps.includes('rate-verify')
-  const canFinal = isAdmin || myCaps.includes('rate-approve')
-  const isApprover = isAdmin || canVerify || canFinal
+  // the super admin and holds all of them through its tag.
+  //
+  // An account WITH a tier tag answers to that tag alone — the account's
+  // role used to override it, which put Verify and Approve in front of an
+  // admin standing on the Operator tier, buttons the tag's own settings
+  // said no to. The role now speaks only for accounts no tag has claimed
+  // yet (the bootstrap admin), the same rule the mobile Profile tab uses.
+  const myTag = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
+  const myCaps = effectiveCapabilities(myTag)
+  const untagged = myTag == null
+  const canCreate = (untagged && canManage) || myCaps.includes('rate-create')
+  const canEditRate = (untagged && canManage) || myCaps.includes('rate-edit')
+  const canDeleteRate = (untagged && canManage) || myCaps.includes('rate-delete')
+  const canVerify = (untagged && isAdmin) || myCaps.includes('rate-verify')
+  const canFinal = (untagged && isAdmin) || myCaps.includes('rate-approve')
+  const isApprover = canVerify || canFinal
 
 
   const currentRate = useMemo(() => {
@@ -242,7 +248,7 @@ export default function PieceRate() {
                   jobs={notYetApproved.filter(visibleTo)}
                   currentRate={latestRate}
                   pendingCount={openApprovals.length}
-                  canResubmit={canManage || canCreate || isApprover}
+                  canResubmit={canCreate || isApprover}
                   canVerify={canVerify}
                   canFinal={canFinal}
                   myEmail={profile?.email ?? 'unknown'}
