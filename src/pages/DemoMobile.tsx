@@ -72,15 +72,6 @@ function ordinal(n: number) {
 }
 
 // "RM 3.20/cage" for a flat job, "RM 3.20 → 5.00/cage" for a tiered one.
-function rateLabelFor(
-  rateFor: (jobId: string) => number,
-  tier2RateFor: (jobId: string) => number | null,
-  jobId: string,
-) {
-  const tier2 = tier2RateFor(jobId)
-  return tier2 == null ? RM(rateFor(jobId)) : `${RM(rateFor(jobId))} → ${tier2.toFixed(2)}`
-}
-
 // "3 × RM3.20" for a flat job or a tiered one still within its first tier;
 // "4 × RM3.20 + 2 × RM5.00" once the count crosses into the second tier.
 // The crossover is the rate's own first-of-the-hour count (tierCapFor).
@@ -1797,6 +1788,8 @@ function StationWorkPanel({
   const [records, setRecords] = useState<PhotoRecord[]>([])
   const [stationEntries, setStationEntries] = useState<ProductionEntry[]>([])
   const [uploading, setUploading] = useState(false)
+  // Today's hours, behind the "i" beside the hour being worked.
+  const [showHours, setShowHours] = useState(false)
   const [jobId, setJobId] = useState('')
   const [, forceTick] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -1946,15 +1939,52 @@ function StationWorkPanel({
   const photoUrl = (path: string | null) =>
     path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
 
-  const rateLabel = (jobId: string) => rateLabelFor(rateFor, tier2RateFor, jobId)
-  const hourBreakdown = (jobId: string, count: number) => breakdownFor(rateFor, tier2RateFor, tierCapFor, jobId, count)
+  // What the station asks for each hour. Null means it asks for nothing in
+  // particular, so there is no row of stamps to draw against.
+  const hourlyTarget = station.hourly_target ?? null
+
+  /**
+   * Today's earning for the chosen job, tier by tier.
+   *
+   * Priced on the DAY's records, not the hour's: a tiered rate steps up
+   * once somebody has done enough, and "enough" is a day's work. Reading
+   * it per hour reset the step every hour and understated the pay. The
+   * crossover is the rate's own threshold, so a station tiering at 6 is
+   * read at 6 rather than at a number written into this screen.
+   */
+  const todayCount = isToday ? records.filter((r) => !jobId || r.job_id === jobId).length : 0
+  const todayTiers = (() => {
+    if (!jobId) return [] as { label: string; count: number; rate: number; amount: number }[]
+    const rate = rateFor(jobId)
+    const tier2 = tier2RateFor(jobId)
+    if (tier2 == null) {
+      return [{ label: 'Every unit', count: todayCount, rate, amount: todayCount * rate }]
+    }
+    const cap = tierCapFor(jobId)
+    const first = Math.min(todayCount, cap)
+    const rest = Math.max(0, todayCount - cap)
+    const rows = [{ label: `1st – ${ordinal(cap)}`, count: first, rate, amount: first * rate }]
+    if (rest > 0) {
+      rows.push({
+        label: `${ordinal(cap + 1)} onward`,
+        count: rest,
+        rate: tier2,
+        amount: rest * tier2,
+      })
+    }
+    return rows
+  })()
+  const todayEarned = todayTiers.reduce((n, t) => n + t.amount, 0)
 
   return (
     <>
         <StationTargetCards station={station} profileId={profileId} />
 
-        {/* 1 — status stamp card */}
+        {/* 1 — the day and the hour in one block: what has been recorded
+               today, then the hour being worked right now. */}
         <div className="mob-card mob-highlight">
+          <div className="mob-card-label">Work done today</div>
+          <WorkDoneCard bare profileId={profileId} station={station} reloadKey={records.length} />
           {station.hourly_count ? (
             <>
               {!jobColumnReady && (
@@ -1970,11 +2000,7 @@ function StationWorkPanel({
                       ? `No approved piece rate for the ${tier.name} tier at this station yet.`
                       : 'No approved piece rate at this station yet.'}
                   </div>
-                ) : approvedJobs.length === 1 ? (
-                  <div className="mob-field-label">
-                    Job: {approvedJobs[0].name} · {rateLabel(approvedJobs[0].id)}{approvedJobs[0].unit}
-                  </div>
-                ) : (
+                ) : approvedJobs.length === 1 ? null : (
                   <>
                     <div className="mob-field-label">Job</div>
                     <select className="mob-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
@@ -1986,26 +2012,49 @@ function StationWorkPanel({
                   </>
                 )
               )}
-              <div className="mob-title mob-zone-title">{hourZone}</div>
-              <div className="stamp-row">
-                {Array.from({ length: target }, (_, i) => (
-                  <span
-                    key={i}
-                    className={`stamp ${i < stampsThisHour ? (rewardActive ? 'done reward' : 'done') : ''}`}
-                  >
-                    ✓
-                  </span>
-                ))}
-                {stampsThisHour > target && (
-                  <span className={`stamp extra ${rewardActive ? 'reward' : ''}`}>
-                    +{stampsThisHour - target}
-                  </span>
-                )}
+              <div className="mob-zone-row">
+                <span className="mob-title mob-zone-title">{hourZone}</span>
+                <button
+                  type="button"
+                  className="mob-info-btn"
+                  onClick={() => setShowHours(true)}
+                  aria-label="Today's hours"
+                  title="Today's hours"
+                >
+                  i
+                </button>
               </div>
-              <div className="mob-sub">
-                {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
-                {rewardActive && ' · bonus hour ✨'}
-              </div>
+              {/* One stamp per unit the station asks for this hour, filled
+                  as records come in. A station with no hourly target has
+                  nothing to draw a row of stamps against, so it counts. */}
+              {hourlyTarget == null ? (
+                <div className="mob-sub">
+                  {stampsThisHour} recorded this hour · {minutesLeft} min left
+                  {rewardActive && ' · bonus hour ✨'}
+                </div>
+              ) : (
+                <>
+                  <div className="stamp-row">
+                    {Array.from({ length: target }, (_, i) => (
+                      <span
+                        key={i}
+                        className={`stamp ${i < stampsThisHour ? (rewardActive ? 'done reward' : 'done') : ''}`}
+                      >
+                        ✓
+                      </span>
+                    ))}
+                    {stampsThisHour > target && (
+                      <span className={`stamp extra ${rewardActive ? 'reward' : ''}`}>
+                        +{stampsThisHour - target}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mob-sub">
+                    {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
+                    {rewardActive && ' · bonus hour ✨'}
+                  </div>
+                </>
+              )}
               {minPrev > 0 && (
                 <div className="mob-sub">
                   {nextHourBonus
@@ -2014,9 +2063,18 @@ function StationWorkPanel({
                 </div>
               )}
               {hourlyPieceWork && jobId && (
-                <div className="mob-sub">
-                  {hourBreakdown(jobId, stampsThisHour)} ={' '}
-                  <strong>{RM(amountFor(jobId, stampsThisHour))}</strong> so far this hour · pending approval
+                <div className="mob-earning">
+                  <div className="mob-field-label">Today earning</div>
+                  {todayTiers.map((t) => (
+                    <div className="mob-breakrow" key={t.label}>
+                      <span>{t.label}</span>
+                      <span className="mob-entry-amt">{t.count} × {RM(t.rate)} = {RM(t.amount)}</span>
+                    </div>
+                  ))}
+                  <div className="mob-breakrow total">
+                    <span>{todayCount} recorded today</span>
+                    <span className="mob-entry-amt">{RM(todayEarned)}</span>
+                  </div>
                 </div>
               )}
             </>
@@ -2058,6 +2116,43 @@ function StationWorkPanel({
             </button>
           )}
         </div>
+
+        {showHours && (
+          <div className="mob-modal-wrap" role="dialog" aria-modal="true">
+            <div className="mob-modal">
+              <div className="mob-card-label">
+                <span>Today's hours</span>
+                <button className="mob-icon-btn corner" onClick={() => setShowHours(false)} aria-label="Close">×</button>
+              </div>
+              {/* Midnight to midnight, every hour listed whether or not
+                  anything was recorded in it — a blank hour is an answer. */}
+              <div className="mob-hourlist">
+                {Array.from({ length: 24 }, (_, h) => {
+                  const rows = records.filter((r) => new Date(r.taken_at).getHours() === h)
+                  const current = isToday && h === now.getHours()
+                  return (
+                    <div className={`mob-hourrow ${current ? 'now' : ''}`} key={h}>
+                      <span className="mob-hourrow-when">
+                        {hourLabel(h)} – {hourLabel(h + 1)}
+                        {current && <span className="mob-chip">now</span>}
+                      </span>
+                      {hourlyTarget == null ? (
+                        <span className="mob-entry-amt">{rows.length || '·'}</span>
+                      ) : (
+                        <span className="stamp-row light">
+                          {Array.from({ length: target }, (_, i) => (
+                            <span className={`stamp ${i < rows.length ? 'done' : ''}`} key={i}>✓</span>
+                          ))}
+                          {rows.length > target && <span className="stamp extra">+{rows.length - target}</span>}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 3 — records with day navigation */}
         <div className="mob-card">
@@ -2677,10 +2772,13 @@ function ClockCard({
 const TICK_LIMIT = 12
 
 function WorkDoneCard({
+  bare = false,
   profileId,
   station,
   reloadKey,
 }: {
+  /** Render the figures alone, to sit inside another card. */
+  bare?: boolean
   profileId: string | null
   station: Station | null
   reloadKey: number
@@ -2717,10 +2815,8 @@ function WorkDoneCard({
   const pct = target ? Math.min(100, (done / target) * 100) : 0
   const met = target != null && done >= target
 
-  return (
-    <div className="mob-card">
-      <div className="mob-card-label">Work done today</div>
-
+  const body = (
+    <>
       {target == null ? (
         <div className="mob-stat">{done}</div>
       ) : target <= TICK_LIMIT ? (
@@ -2745,6 +2841,14 @@ function WorkDoneCard({
             ? `${done} of ${target} — target met ✨`
             : `${done} of ${target} recorded today`}
       </div>
+    </>
+  )
+
+  if (bare) return body
+  return (
+    <div className="mob-card">
+      <div className="mob-card-label">Work done today</div>
+      {body}
     </div>
   )
 }
@@ -3015,7 +3119,11 @@ function RecordTab({
             />
           )}
 
-          <WorkDoneCard profileId={profileId} station={myStation} reloadKey={recorded} />
+          {/* "Work done today" now heads the work panel itself, so it is
+              only drawn here when there is no panel to head. */}
+          {(!canEntry || myStations.length === 0) && (
+            <WorkDoneCard profileId={profileId} station={myStation} reloadKey={recorded} />
+          )}
 
           {!canEntry ? (
             <div className="mob-card">

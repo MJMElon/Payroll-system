@@ -1930,6 +1930,29 @@ button.mob-title.spread { cursor: pointer; }
   animation: metal-shine 5s linear infinite;
 }
 .mob-zone-title { font-size: 1.02rem; letter-spacing: 0.03em; }
+/* The hour being worked, with the way into the whole day beside it. */
+.mob-zone-row { display: flex; align-items: center; justify-content: center; gap: 0.45rem; }
+.mob-info-btn {
+  appearance: none; cursor: pointer; width: 20px; height: 20px; flex: none;
+  border-radius: 50%; border: 1px solid currentColor; background: none;
+  color: inherit; opacity: 0.75; font-size: 0.72rem; font-weight: 800;
+  font-family: Georgia, 'Times New Roman', serif; line-height: 1;
+}
+.mob-info-btn:hover { opacity: 1; }
+
+/* Midnight to midnight, one row an hour. */
+.mob-hourlist { display: flex; flex-direction: column; gap: 0.1rem; max-height: 60vh; overflow-y: auto; }
+.mob-hourrow {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.3rem 0.4rem; border-radius: 8px; font-size: 0.76rem; color: var(--muted);
+}
+.mob-hourrow.now { background: #f1f5f9; color: var(--text); font-weight: 700; }
+.mob-hourrow-when { display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+
+/* Today's earning, tier by tier, inside the highlight card. */
+.mob-earning { display: flex; flex-direction: column; gap: 0.15rem; margin-top: 0.15rem; }
+.mob-earning .mob-breakrow { color: #c8d0d9; }
+.mob-earning .mob-breakrow.total { color: #fff; border-top-color: rgba(255, 255, 255, 0.18); }
 .mob-daynav { display: flex; justify-content: space-between; align-items: center; }
 .mob-thumb {
   width: 40px; height: 40px; object-fit: cover; border-radius: 8px; display: block;
