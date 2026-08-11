@@ -222,14 +222,18 @@ export default function WorkerManagement() {
     return false
   }
   // A leader sees their own branch, their team, and the lower tiers at their
-  // stations — the people they can actually place.
+  // stations — the people they can actually place. Everyone ALSO sees the
+  // tiers above them: the head at their own station, and the mill-wide
+  // tiers that cover every station. A chart that hides who you report to
+  // reads upside down — what may be CHANGED stays settled action by
+  // action, by tier, so showing a leader hands out nothing.
   const visible = seesAll
     ? confirmed
     : confirmed.filter((p) => {
         if (inMyBranch(p)) return true
         if (p.team_id && p.team_id === profile?.team_id) return true
         const t = tierOf(p)
-        if (t !== null && myTier !== null && t > myTier) {
+        if (t !== null && myTier !== null && t !== myTier) {
           const ids = stationsOf(p)
           return ids.length === 0 || ids.some((id) => stationInScope(id))
         }
