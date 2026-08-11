@@ -1512,6 +1512,29 @@ button.mob-cardhead {
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* The month list behind the history button: a small window under the
+   icon — pick the month, read that month. */
+.mob-histwrap { position: relative; flex: none; }
+.mob-monthpop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30;
+  min-width: 180px; background: #fff; border: 1px solid var(--border);
+  border-radius: 13px; padding: 0.4rem;
+  box-shadow: 0 14px 30px rgba(15, 25, 40, 0.2);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.mob-monthpop-title {
+  padding: 0.25rem 0.55rem 0.35rem;
+  font-size: 0.6rem; font-weight: 800; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--border); margin-bottom: 0.2rem;
+}
+.mob-monthpop button {
+  appearance: none; border: none; background: none; cursor: pointer;
+  text-align: left; padding: 0.45rem 0.55rem; border-radius: 9px;
+  font-size: 0.82rem; font-weight: 700; color: var(--text); font-family: inherit;
+}
+.mob-monthpop button:hover { background: var(--accent-soft); }
+
 /* The work record's one photo: centred, and a button — tapping it opens
    the full-screen look back. */
 .mob-photoone {

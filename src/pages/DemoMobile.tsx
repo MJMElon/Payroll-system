@@ -1262,7 +1262,7 @@ function PerformanceTab({
               {/* The same head as the KPI dashboard's cards: the label
                   small and grey, the caret on the right. */}
               <div className="mob-cardhead">
-                <span className="mob-card-label">{shortMonth} Work recorded</span>
+                <span className="mob-card-label">{shortMonth} Work Done</span>
                 <span className="mob-caret" aria-hidden="true">›</span>
               </div>
               {outputRecord.length === 0 ? (
@@ -1449,7 +1449,7 @@ function OutputRecordScreen({
       </div>
 
       <div className="mob-body">
-        <MobSubHeader title="Work recorded history" onBack={onBack} />
+        <MobSubHeader title="Work Done History" onBack={onBack} />
         <div className="mob-queue-chips">
           {DAY_RANGES.map((r) => (
             <button key={r.key} className={range === r.key ? 'on' : ''} onClick={() => setRange(r.key)}>
@@ -2783,6 +2783,10 @@ function RecordTab({
   // The screen behind the clock button: everything already submitted,
   // by range. The form itself stays clean.
   const [view, setView] = useState<'form' | 'history'>('form')
+  // The history button opens a small month list first; the picked month
+  // becomes the history screen's window and its title.
+  const [showMonths, setShowMonths] = useState(false)
+  const [histRange, setHistRange] = useState<HistoryRange>('month')
   const [stationId, setStationId] = useState('')
   const [jobId, setJobId] = useState('')
   // ONE photo per work record — the evidence, stamped with when and where
@@ -2976,6 +2980,18 @@ function RecordTab({
     )
   }
 
+  // This month leads the history list, the three before follow.
+  const historyMonths = useMemo(() => {
+    const now = new Date()
+    return [
+      {
+        key: 'month' as HistoryRange,
+        label: now.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
+      },
+      ...recentMonths(),
+    ]
+  }, [])
+
   // Operators record work by taking photos at their own station, merged
   // directly into this tab — no manual station/job/quantity form.
   const isOperator = tier?.name === 'Operator'
@@ -2990,6 +3006,7 @@ function RecordTab({
         amountFor={amountFor}
         canEdit={effectiveCapabilities(tier).includes('edit-entry')}
         myStations={myStations}
+        initialRange={histRange}
         onOpen={setDetail}
         onBack={() => setView('form')}
       />
@@ -3009,14 +3026,34 @@ function RecordTab({
               <div className="mob-role">New Work Record</div>
               {myStation && <div className="mob-sub">{myStation.name}</div>}
             </div>
-            <button
-              className="mob-icon-btn"
-              onClick={() => setView('history')}
-              title="Work record history"
-              aria-label="Work record history"
-            >
-              <IconHistory />
-            </button>
+            <div className="mob-histwrap">
+              <button
+                className={`mob-icon-btn ${showMonths ? 'on' : ''}`}
+                onClick={() => setShowMonths((v) => !v)}
+                title="Work record history"
+                aria-label="Work record history"
+                aria-expanded={showMonths}
+              >
+                <IconHistory />
+              </button>
+              {showMonths && (
+                <div className="mob-monthpop">
+                  <div className="mob-monthpop-title">History — pick a month</div>
+                  {historyMonths.map((m) => (
+                    <button
+                      key={m.key}
+                      onClick={() => {
+                        setHistRange(m.key)
+                        setShowMonths(false)
+                        setView('history')
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {isEntitled(tier, 'clock-in-out', grades) && (
@@ -3090,14 +3127,34 @@ function RecordTab({
       <div className="mob-body">
         <div className="mob-rolebar">
           <div className="mob-role">New Work Record</div>
-          <button
-            className="mob-icon-btn"
-            onClick={() => setView('history')}
-            title="Work record history"
-            aria-label="Work record history"
-          >
-            <IconHistory />
-          </button>
+          <div className="mob-histwrap">
+            <button
+              className={`mob-icon-btn ${showMonths ? 'on' : ''}`}
+              onClick={() => setShowMonths((v) => !v)}
+              title="Work record history"
+              aria-label="Work record history"
+              aria-expanded={showMonths}
+            >
+              <IconHistory />
+            </button>
+            {showMonths && (
+              <div className="mob-monthpop">
+                <div className="mob-monthpop-title">History — pick a month</div>
+                {historyMonths.map((m) => (
+                  <button
+                    key={m.key}
+                    onClick={() => {
+                      setHistRange(m.key)
+                      setShowMonths(false)
+                      setView('history')
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {isEntitled(tier, 'clock-in-out', grades) && (
@@ -3289,12 +3346,30 @@ function RecordTab({
                 submitting ||
                 !stationId ||
                 !jobId ||
-                (isASH ? !dutyDate || !dutyShift || !pulledQty : !photo || photo.locating)
+                (isASH ? !dutyDate || !dutyShift || !pulledQty : !photo)
               }
               onClick={submit}
             >
               {submitting ? 'Submitting…' : 'Submit for approval'}
             </button>
+            {/* A grey button with no reason reads as broken — say what is
+                still missing. */}
+            {!submitting && (isASH
+              ? (!stationId || !jobId || !dutyDate || !dutyShift || !pulledQty) && (
+                  <div className="mob-sub" style={{ textAlign: 'center' }}>
+                    {!stationId ? 'Pick a station to submit.'
+                      : !jobId ? 'Choose the job to submit.'
+                      : !dutyDate || !dutyShift ? 'Pick the date and shift to submit.'
+                      : 'No cages pulled for that shift yet.'}
+                  </div>
+                )
+              : (!stationId || !jobId || !photo) && (
+                  <div className="mob-sub" style={{ textAlign: 'center' }}>
+                    {!stationId ? 'Pick a station to submit.'
+                      : !jobId ? 'Choose the job to submit.'
+                      : 'Take the photo to submit.'}
+                  </div>
+                ))}
           </div>
         )}
 
@@ -3360,12 +3435,12 @@ function RecordHistory({
    * landing on "Today" throws the question away and makes the numbers
    * look wrong.
    */
-  initialRange?: DayRange
+  initialRange?: HistoryRange
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
   const [rangeKey, setRangeKey] = useState<HistoryRange>(
-    RANGE_FROM_OUTPUT[initialRange] ?? 'today',
+    RANGE_FROM_OUTPUT[initialRange as DayRange] ?? initialRange ?? 'today',
   )
   // The earlier-months list, folded away behind the history icon.
   const [showMonths, setShowMonths] = useState(false)
@@ -3472,7 +3547,18 @@ function RecordHistory({
       </div>
 
       <div className="mob-body">
-        <MobSubHeader title="Work Record History" onBack={onBack} />
+        {/* The month IS the title — "Aug 2026" over its records reads in
+            one glance; the generic name keeps the day/week windows. */}
+        <MobSubHeader
+          title={
+            pickedMonth
+              ? pickedMonth.label
+              : rangeKey === 'month'
+                ? new Date().toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+                : 'Work Record History'
+          }
+          onBack={onBack}
+        />
         {/* The station, with the way back through earlier months beside
             it — three columns, so the name stays centred on the screen
             rather than on the space left over next to the button. */}
@@ -3511,7 +3597,7 @@ function RecordHistory({
         {/* Opened by the icon, or held open by the month being read — a
             picked month with its own list folded away would leave the
             three chips all dark and nothing saying why. */}
-        {(showMonths || pickedMonth) && (
+        {showMonths && (
           <div className="mob-queue-chips">
             {months.map((m) => (
               <button
