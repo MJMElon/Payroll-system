@@ -220,19 +220,19 @@ export default function PieceRate() {
               <span className="count-badge static">{openApprovals.length}</span>
             )}
           </button>
-          {/* The history is the audit view of rate changes, so it goes with
-              the Edit tick on the tag — a tier that may not touch rates has
-              no door into it, rather than an empty page. */}
-          {canEditRate && (
-            <button
-              type="button"
-              className={`sidebar-link ${tab === 'history' ? 'active' : ''}`}
-              onClick={() => setTab('history')}
-            >
-              <IconHistory />
-              <span>Piece Rate History</span>
-            </button>
-          )}
+          {/* Every tab stays on the sidebar for every tier — the module's
+              shape does not change with access. The history is the audit
+              view of rate changes, so it goes with the Edit tick on the
+              tag: without it the tab itself answers with the standard
+              refusal instead. */}
+          <button
+            type="button"
+            className={`sidebar-link ${tab === 'history' ? 'active' : ''}`}
+            onClick={() => setTab('history')}
+          >
+            <IconHistory />
+            <span>Piece Rate History</span>
+          </button>
         </nav>
 
         <div className="sidebar-content stack">
