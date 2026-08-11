@@ -12,7 +12,9 @@ import { useAuth } from '../../context/AuthContext'
 import {
   profileName,
   supabase,
-  tier1Cap,
+  hourLadder,
+  ladderAmount,
+  ladderBreakdownFrom,
   todayISO,
   type Grade,
   type Job,
@@ -153,7 +155,7 @@ export default function AddJobRecord() {
     ? 0
     : rate.tier2_rate == null
       ? Number(rate.rate) * qtyNum
-      : Math.min(qtyNum, tier1Cap(rate)) * Number(rate.rate) + Math.max(0, qtyNum - tier1Cap(rate)) * Number(rate.tier2_rate)
+      : ladderAmount(rate, qtyNum)
 
   function resetForm() {
     setWorkDate(todayISO())
@@ -423,7 +425,7 @@ export default function AddJobRecord() {
                 <label className="field grow">
                   <span>Breakdown</span>
                   <input
-                    value={`min(${qtyNum}, ${tier1Cap(rate)}) × ${Number(rate.rate).toFixed(2)} + max(0, ${qtyNum} − ${tier1Cap(rate)}) × ${Number(rate.tier2_rate).toFixed(2)}`}
+                    value={ladderBreakdownFrom(hourLadder(rate), qtyNum).map((s) => `${s.units} × ${s.rate.toFixed(2)}`).join(' + ')}
                     readOnly
                   />
                 </label>

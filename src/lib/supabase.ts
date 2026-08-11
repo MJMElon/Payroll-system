@@ -197,12 +197,81 @@ export interface PieceRate {
   // database without the column) means the original 4 — read it through
   // tier1Cap(), never directly.
   tier_threshold?: number | null
+  // The full price ladder: element i pays the (i+1)th record of the hour,
+  // the last element every record after. Authoritative when present; the
+  // legacy fields above are kept in sync for older readers. Read it
+  // through hourLadder(), never directly.
+  hour_rates?: number[] | null
 }
 
 /** How many records of each hour pay a tiered rate's first tier. */
 export function tier1Cap(r: { tier_threshold?: number | null } | null | undefined): number {
   const n = r?.tier_threshold
   return n && n > 0 ? n : 4
+}
+
+type LadderSource = {
+  rate?: number | string
+  tier2_rate?: number | string | null
+  tier_threshold?: number | null
+  hour_rates?: (number | string)[] | null
+} | null | undefined
+
+/**
+ * A tiered rate as its PRICE LADDER: element i is what the (i+1)th record
+ * of the hour pays, and the LAST element extends to every record after it.
+ * Reads hour_rates when the row carries it, else rebuilds the ladder from
+ * the legacy two-step fields (rate × threshold, then tier2). A flat rate
+ * is a one-rung ladder.
+ */
+export function hourLadder(r: LadderSource): number[] {
+  const arr = r?.hour_rates
+  if (Array.isArray(arr) && arr.length > 0) return arr.map(Number)
+  const first = Number(r?.rate ?? 0)
+  if (r?.tier2_rate == null) return [first]
+  const cap = tier1Cap(r)
+  return [...Array<number>(cap).fill(first), Number(r.tier2_rate)]
+}
+
+/** The ladder folded into steps: 1st–4th @ a, 5th+ @ b (to=null = open). */
+export function ladderStepsFrom(L: number[]): { from: number; to: number | null; rate: number }[] {
+  const steps: { from: number; to: number | null; rate: number }[] = []
+  for (let i = 0; i < L.length; i++) {
+    const last = steps[steps.length - 1]
+    if (last && last.rate === L[i]) last.to = i + 1
+    else steps.push({ from: i + 1, to: i + 1, rate: L[i] })
+  }
+  if (steps.length > 0) steps[steps.length - 1].to = null
+  return steps
+}
+
+export function ladderSteps(r: LadderSource) {
+  return ladderStepsFrom(hourLadder(r))
+}
+
+/** How a quantity splits across the ladder: units paid at each rate, in
+ *  order. Fractional quantities land in the rung they reach. */
+export function ladderBreakdownFrom(L: number[], qty: number): { rate: number; units: number }[] {
+  const out: { rate: number; units: number }[] = []
+  const push = (rate: number, units: number) => {
+    const last = out[out.length - 1]
+    if (last && last.rate === rate) last.units += units
+    else out.push({ rate, units })
+  }
+  let used = 0
+  for (let i = 0; i < L.length - 1 && used < qty; i++) {
+    const take = Math.min(1, qty - used)
+    push(L[i], take)
+    used += take
+  }
+  if (used < qty) push(L[L.length - 1], qty - used)
+  return out
+}
+
+/** What a quantity earns on a rate's ladder — THE pay formula for every
+ *  screen and every payroll calculation. */
+export function ladderAmount(r: LadderSource, qty: number): number {
+  return ladderBreakdownFrom(hourLadder(r), qty).reduce((n, s) => n + s.rate * s.units, 0)
 }
 
 export interface ProductionEntry {

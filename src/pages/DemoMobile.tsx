@@ -30,6 +30,10 @@ import {
   type Grade,
   type Job,
   type PayrollAdjustment,
+  hourLadder,
+  ladderAmount,
+  ladderBreakdownFrom,
+  ladderStepsFrom,
   tier1Cap,
   type PayrollLine,
   type PayrollRun,
@@ -71,22 +75,20 @@ function ordinal(n: number) {
   return `${n}${suffix}`
 }
 
-// "RM 3.20/cage" for a flat job, "RM 3.20 → 5.00/cage" for a tiered one.
-// "3 × RM3.20" for a flat job or a tiered one still within its first tier;
-// "4 × RM3.20 + 2 × RM5.00" once the count crosses into the second tier.
-// The crossover is the rate's own first-of-the-hour count (tierCapFor).
+// "3 × RM3.20" for a flat job or a tiered one still on its first rung;
+// "4 × RM3.20 + 2 × RM5.00" once the count climbs the price ladder.
 function breakdownFor(
   rateFor: (jobId: string) => number,
   tier2RateFor: (jobId: string) => number | null,
-  tierCapFor: (jobId: string) => number,
+  ladderFor: (jobId: string) => number[],
   jobId: string,
   count: number,
 ) {
-  const tier2 = tier2RateFor(jobId)
-  const rate = rateFor(jobId)
-  const cap = tierCapFor(jobId)
-  if (tier2 == null || count <= cap) return `${count} × ${RM(rate)}`
-  return `${cap} × ${RM(rate)} + ${count - cap} × ${RM(tier2)}`
+  void rateFor
+  void tier2RateFor
+  return ladderBreakdownFrom(ladderFor(jobId), count)
+    .map((s) => `${Number.isInteger(s.units) ? s.units : s.units.toFixed(1)} × ${RM(s.rate)}`)
+    .join(' + ')
 }
 
 // Once an hour has fully elapsed, that hour's photos (taken by this user at
@@ -288,20 +290,15 @@ export default function DemoMobile() {
     () => (jobId: string) => bestRate.get(jobId)?.tier2_rate ?? null,
     [bestRate],
   )
-  // How many units of the hour pay tier 1 — the rate's own setting.
-  const tierCapFor = useMemo(
-    () => (jobId: string) => tier1Cap(bestRate.get(jobId)),
+  // The rate's full price ladder — element i pays the (i+1)th record of
+  // the hour, the last element every record after.
+  const ladderFor = useMemo(
+    () => (jobId: string) => hourLadder(bestRate.get(jobId)),
     [bestRate],
   )
   const amountFor = useMemo(
-    () => (jobId: string, quantity: number) => {
-      const tier2 = tier2RateFor(jobId)
-      const rate = rateFor(jobId)
-      if (tier2 == null) return rate * quantity
-      const cap = tierCapFor(jobId)
-      return Math.min(quantity, cap) * rate + Math.max(0, quantity - cap) * tier2
-    },
-    [rateFor, tier2RateFor, tierCapFor],
+    () => (jobId: string, quantity: number) => ladderAmount(bestRate.get(jobId), quantity),
+    [bestRate],
   )
 
   // The preview obeys the SELECTED tier's capabilities — only tiers with
@@ -421,7 +418,7 @@ export default function DemoMobile() {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+                  ladderFor={ladderFor}
                     profile={profile}
                     profileId={profile?.id ?? null}
                     myStationIds={myStationIds}
@@ -440,7 +437,7 @@ export default function DemoMobile() {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+                  ladderFor={ladderFor}
                     myEmail={profile?.email ?? 'unknown'}
                     initialFilter={workFilter}
                     onError={setError}
@@ -464,7 +461,7 @@ export default function DemoMobile() {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+                  ladderFor={ladderFor}
                     canEntry={canEntry}
                     jobColumnReady={jobColumnReady}
                     onError={setError}
@@ -959,7 +956,7 @@ function PerformanceTab({
   rateFor,
   amountFor,
   tier2RateFor,
-  tierCapFor,
+  ladderFor,
   profile,
   profileId,
   myStationIds,
@@ -974,7 +971,7 @@ function PerformanceTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
-  tierCapFor: (jobId: string) => number
+  ladderFor: (jobId: string) => number[]
   profile: Profile | null
   profileId: string | null
   myStationIds: string[]
@@ -1130,8 +1127,7 @@ function PerformanceTab({
         jobs={jobs}
         rateFor={rateFor}
         amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+        ladderFor={ladderFor}
         profileId={profileId}
         jobColumnReady={jobColumnReady}
         canEntry={canEntry}
@@ -1152,7 +1148,7 @@ function PerformanceTab({
         rateFor={rateFor}
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+                  ladderFor={ladderFor}
         onBack={() => setDetail(null)}
       />
     )
@@ -1426,7 +1422,7 @@ function PerformanceTab({
               myStationIds={myStationIds}
               rateFor={rateFor}
               tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+                  ladderFor={ladderFor}
             />
           </>
         )}
@@ -1590,8 +1586,7 @@ function StationScreen({
   jobs,
   rateFor,
   amountFor,
-  tier2RateFor,
-  tierCapFor,
+  ladderFor,
   profileId,
   jobColumnReady,
   canEntry,
@@ -1604,8 +1599,7 @@ function StationScreen({
   jobs: Job[]
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
-  tierCapFor: (jobId: string) => number
+  ladderFor: (jobId: string) => number[]
   profileId: string | null
   jobColumnReady: boolean
   canEntry: boolean
@@ -1633,8 +1627,7 @@ function StationScreen({
             jobs={jobs}
             rateFor={rateFor}
             amountFor={amountFor}
-            tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+            ladderFor={ladderFor}
             profileId={profileId}
             jobColumnReady={jobColumnReady}
             canEntry={canEntry}
@@ -1764,8 +1757,7 @@ function StationWorkPanel({
   jobs,
   rateFor,
   amountFor,
-  tier2RateFor,
-  tierCapFor,
+  ladderFor,
   profileId,
   jobColumnReady,
   canEntry,
@@ -1777,8 +1769,7 @@ function StationWorkPanel({
   jobs: Job[]
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
-  tierCapFor: (jobId: string) => number
+  ladderFor: (jobId: string) => number[]
   profileId: string | null
   jobColumnReady: boolean
   canEntry: boolean
@@ -1944,35 +1935,39 @@ function StationWorkPanel({
   const hourlyTarget = station.hourly_target ?? null
 
   /**
-   * Today's earning for the chosen job, tier by tier.
+   * Today's earning for the chosen job, rung by rung of its price ladder.
    *
    * Priced on the DAY's records, not the hour's: a tiered rate steps up
    * once somebody has done enough, and "enough" is a day's work. Reading
    * it per hour reset the step every hour and understated the pay. The
-   * crossover is the rate's own threshold, so a station tiering at 6 is
-   * read at 6 rather than at a number written into this screen.
+   * steps are the rate's own ladder, so a station tiering at 6 — or in
+   * three steps — is read exactly as it was keyed.
    */
   const todayCount = isToday ? records.filter((r) => !jobId || r.job_id === jobId).length : 0
   const todayTiers = (() => {
     if (!jobId) return [] as { label: string; count: number; rate: number; amount: number }[]
-    const rate = rateFor(jobId)
-    const tier2 = tier2RateFor(jobId)
-    if (tier2 == null) {
+    const L = ladderFor(jobId)
+    if (L.length < 2) {
+      const rate = L[0] ?? rateFor(jobId)
       return [{ label: 'Every unit', count: todayCount, rate, amount: todayCount * rate }]
     }
-    const cap = tierCapFor(jobId)
-    const first = Math.min(todayCount, cap)
-    const rest = Math.max(0, todayCount - cap)
-    const rows = [{ label: `1st – ${ordinal(cap)}`, count: first, rate, amount: first * rate }]
-    if (rest > 0) {
-      rows.push({
-        label: `${ordinal(cap + 1)} onward`,
-        count: rest,
-        rate: tier2,
-        amount: rest * tier2,
+    return ladderStepsFrom(L)
+      .map((step) => {
+        const upTo = step.to ?? Number.POSITIVE_INFINITY
+        const count = Math.max(0, Math.min(todayCount, upTo) - (step.from - 1))
+        return {
+          label:
+            step.to == null
+              ? `${ordinal(step.from)} onward`
+              : step.from === step.to
+                ? ordinal(step.from)
+                : `${ordinal(step.from)} – ${ordinal(step.to)}`,
+          count,
+          rate: step.rate,
+          amount: count * step.rate,
+        }
       })
-    }
-    return rows
+      .filter((row) => row.count > 0)
   })()
   const todayEarned = todayTiers.reduce((n, t) => n + t.amount, 0)
 
@@ -2868,7 +2863,7 @@ function RecordTab({
   rateFor,
   amountFor,
   tier2RateFor,
-  tierCapFor,
+  ladderFor,
   canEntry,
   jobColumnReady,
   onError,
@@ -2883,7 +2878,7 @@ function RecordTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
-  tierCapFor: (jobId: string) => number
+  ladderFor: (jobId: string) => number[]
   canEntry: boolean
   jobColumnReady: boolean
   onError: (m: string | null) => void
@@ -3062,7 +3057,7 @@ function RecordTab({
         rateFor={rateFor}
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+                  ladderFor={ladderFor}
         onBack={() => setDetail(null)}
       />
     )
@@ -3159,8 +3154,7 @@ function RecordTab({
                   jobs={jobs}
                   rateFor={rateFor}
                   amountFor={amountFor}
-                  tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+                  ladderFor={ladderFor}
                   profileId={profileId}
                   jobColumnReady={jobColumnReady}
                   canEntry={canEntry}
@@ -3292,7 +3286,7 @@ function RecordTab({
                     <span>
                       {tier2Rate == null
                         ? `${pulledQty} × ${RM(rate)}${job.unit}`
-                        : breakdownFor(rateFor, tier2RateFor, tierCapFor, jobId, pulledQty)}
+                        : breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, pulledQty)}
                     </span>
                     <span>{RM(ashAmount)}</span>
                   </div>
@@ -3317,7 +3311,7 @@ function RecordTab({
                       <span>
                         {tier2Rate == null
                           ? `${qty} × ${RM(rate)}${job.unit}`
-                          : breakdownFor(rateFor, tier2RateFor, tierCapFor, jobId, Number(qty))}
+                          : breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, Number(qty))}
                       </span>
                       <span>{RM(amount)}</span>
                     </div>
@@ -3364,7 +3358,7 @@ function RecordTab({
                 </div>
                 {atStationLevel && job && (
                   <div className="mob-breakrow total">
-                    <span>{breakdownFor(rateFor, tier2RateFor, tierCapFor, jobId, photos.length)}{job.unit}</span>
+                    <span>{breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, photos.length)}{job.unit}</span>
                     <span>{RM(amountFor(jobId, photos.length))}</span>
                   </div>
                 )}
@@ -3670,7 +3664,7 @@ function EntryDetail({
   rateFor,
   amountFor,
   tier2RateFor,
-  tierCapFor,
+  ladderFor,
   onBack,
   workerTier,
   decide,
@@ -3683,7 +3677,7 @@ function EntryDetail({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
-  tierCapFor: (jobId: string) => number
+  ladderFor: (jobId: string) => number[]
   onBack: () => void
   /** The tier tag of whoever submitted it — the viewer's own by default. */
   workerTier?: Grade | null
@@ -3714,13 +3708,13 @@ function EntryDetail({
   const hhmm = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const rate1 = rateFor(entry.job_id)
   const rate2 = tier2RateFor(entry.job_id)
-  const cap = tierCapFor(entry.job_id)
+  const L = ladderFor(entry.job_id)
 
   // One row per photo where the work was stamped hour by hour, otherwise
   // the entry is the single row. The rate on a row is the tier that unit
   // actually earned.
   const rateAt = (index: number) =>
-    rate2 != null && index >= cap ? rate2 : rate1
+    rate2 != null ? L[Math.min(index, L.length - 1)] : rate1
   const rows =
     photos.length > 0
       ? photos
@@ -3744,15 +3738,12 @@ function EntryDetail({
   // The sum, said the way it was worked out: each rate against the units
   // that earned it.
   const calcLines =
-    rate2 == null || entry.quantity <= cap
+    rate2 == null
       ? [{ label: `${fmtQty(entry.quantity)} × ${RM(rate1)}`, value: entry.quantity * rate1 }]
-      : [
-          { label: `${cap} × ${RM(rate1)}`, value: cap * rate1 },
-          {
-            label: `${fmtQty(entry.quantity - cap)} × ${RM(rate2)}`,
-            value: (entry.quantity - cap) * rate2,
-          },
-        ]
+      : ladderBreakdownFrom(L, entry.quantity).map((s) => ({
+          label: `${fmtQty(s.units)} × ${RM(s.rate)}`,
+          value: s.units * s.rate,
+        }))
 
   return (
     <>
@@ -4086,7 +4077,7 @@ function MyWorkTab({
   rateFor,
   amountFor,
   tier2RateFor,
-  tierCapFor,
+  ladderFor,
   myEmail,
   initialFilter = 'pending',
   onError,
@@ -4100,7 +4091,7 @@ function MyWorkTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
-  tierCapFor: (jobId: string) => number
+  ladderFor: (jobId: string) => number[]
   myEmail: string
   /** The bucket to open on, when the Performance tab named one. */
   initialFilter?: WorkFilter
@@ -4476,7 +4467,7 @@ function MyWorkTab({
         rateFor={rateFor}
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
-                    tierCapFor={tierCapFor}
+                  ladderFor={ladderFor}
         onBack={() => setDetail(null)}
         // The submitter's OWN tag, always — showing the previewed tier
         // here made a record look as though it came from the rung doing
@@ -5081,7 +5072,7 @@ function ContractSection({
   myStationIds,
   rateFor,
   tier2RateFor,
-  tierCapFor,
+  ladderFor,
 }: {
   tier: Grade | null
   grades: Grade[]
@@ -5090,7 +5081,7 @@ function ContractSection({
   myStationIds: string[]
   rateFor: (jobId: string) => number
   tier2RateFor: (jobId: string) => number | null
-  tierCapFor: (jobId: string) => number
+  ladderFor: (jobId: string) => number[]
 }) {
   const scoped =
     myStationIds.length === 0 ? jobs : jobs.filter((j) => myStationIds.includes(j.station_id))
@@ -5141,28 +5132,32 @@ function ContractSection({
   const JobRow = ({ job }: { job: Job }) => {
     const unit = job.unit.replace('/', '')
     const tier2 = tier2RateFor(job.id)
-    const cap = tierCapFor(job.id)
+    const steps = ladderStepsFrom(ladderFor(job.id))
     return (
       <div className="mob-contract-job">
         <div className="mob-contract-name">
           <span className="mob-person-name">{job.name}</span>
           {manyStations && <span className="mob-station-meta">{stationName(job.station_id)}</span>}
         </div>
-        {tier2 == null ? (
+        {tier2 == null && steps.length < 2 ? (
           <div className="mob-contract-term">
             <span>Every {unit}</span>
             <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
           </div>
         ) : (
           <>
-            <div className="mob-contract-term">
-              <span>1st – {ordinal(cap)}/hr</span>
-              <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
-            </div>
-            <div className="mob-contract-term">
-              <span>{ordinal(cap + 1)} onward/hr</span>
-              <span className="mob-entry-amt">{RM(tier2)}{job.unit}</span>
-            </div>
+            {steps.map((step) => (
+              <div className="mob-contract-term" key={step.from}>
+                <span>
+                  {step.to == null
+                    ? `${ordinal(step.from)} onward/hr`
+                    : step.from === step.to
+                      ? `${ordinal(step.from)}/hr`
+                      : `${ordinal(step.from)} – ${ordinal(step.to)}/hr`}
+                </span>
+                <span className="mob-entry-amt">{RM(step.rate)}{job.unit}</span>
+              </div>
+            ))}
             <div className="mob-contract-note">Resets every hour.</div>
           </>
         )}

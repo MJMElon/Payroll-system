@@ -11,7 +11,7 @@ import {
   profileName,
   type Grade,
   type Job,
-  tier1Cap,
+  ladderAmount,
   type PieceRate,
   type ProductionEntry,
   type Profile,
@@ -81,11 +81,8 @@ export default function MonthReport() {
   const amountOf = (jobId: string, qty: number) => {
     const r = bestRate.get(jobId)
     if (!r) return 0
-    const t1 = Number(r.rate)
-    if (r.tier2_rate == null) return qty * t1
-    // The first N units pay tier 1 — N is the rate's own threshold.
-    const cap = tier1Cap(r)
-    return Math.min(qty, cap) * t1 + Math.max(0, qty - cap) * Number(r.tier2_rate)
+    // Each unit pays its row on the rate's price ladder.
+    return ladderAmount(r, qty)
   }
 
   const gradeName = (id: string | null) =>

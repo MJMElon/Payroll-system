@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  ladderAmount,
   supabase,
-  tier1Cap,
   todayISO,
   profileName,
   type Job,
@@ -199,24 +199,17 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
         .lte('effective_from', end)
         .order('effective_from', { ascending: false })
       if (rateErr) throw new Error(rateErr.message)
-      const rateByJob = new Map<string, { rate: number; tier2: number | null; cap: number }>()
+      const rateByJob = new Map<string, (typeof rates extends (infer T)[] | null ? T : never)>()
       for (const r of rates ?? []) {
-        if (!rateByJob.has(r.job_id)) {
-          rateByJob.set(r.job_id, {
-            rate: Number(r.rate),
-            tier2: r.tier2_rate == null ? null : Number(r.tier2_rate),
-            cap: tier1Cap(r),
-          })
-        }
+        if (!rateByJob.has(r.job_id)) rateByJob.set(r.job_id, r)
       }
-      // Tiered rates pay tier 1 for the first N units of an entry (the
-      // rate's own tier_threshold; 4 when unset) and tier 2 beyond — same
-      // rule as the Operation screen and the mobile entry flow.
+      // A tiered rate pays each unit its price-ladder row (the count
+      // resetting hourly is already baked into per-entry quantities) —
+      // the same ladderAmount rule as the Operation screen and mobile.
       const amountOf = (jobId: string, qty: number) => {
         const r = rateByJob.get(jobId)
         if (!r) return 0
-        if (r.tier2 == null) return qty * r.rate
-        return Math.min(qty, r.cap) * r.rate + Math.max(0, qty - r.cap) * r.tier2
+        return ladderAmount(r, qty)
       }
 
       // 3. Sum quantities AND per-entry amounts per person + job (amounts are
