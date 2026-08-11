@@ -800,6 +800,9 @@ function PerformanceTab({
   // The screens this tab drills into: the work record behind "My work
   // done", and the two queues behind the cards under it.
   const [sub, setSub] = useState<null | 'history' | 'pending' | 'rejected' | 'output'>(null)
+  // Set by the › beside a station on the Output record: the history that
+  // opens is that station's, and Back returns to the Output record.
+  const [historyStation, setHistoryStation] = useState<Station | null>(null)
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const tierCaps = effectiveCapabilities(tier)
@@ -971,8 +974,14 @@ function PerformanceTab({
         jobs={jobs}
         amountFor={amountFor}
         canEdit={tierCaps.includes('edit-entry')}
+        station={historyStation}
         onOpen={setDetail}
-        onBack={() => setSub(null)}
+        onBack={() => {
+          // A station's history was entered from the Output record, so
+          // Back returns there; your own history goes back to the tab.
+          setSub(historyStation ? 'output' : null)
+          setHistoryStation(null)
+        }}
       />
     )
   }
@@ -984,8 +993,8 @@ function PerformanceTab({
         jobs={jobs}
         entries={entries}
         onStation={(st) => {
-          setSub(null)
-          setStation(st)
+          setHistoryStation(st)
+          setSub('history')
         }}
         onBack={() => setSub(null)}
       />
@@ -2863,6 +2872,7 @@ function RecordHistory({
   jobs,
   amountFor,
   canEdit,
+  station = null,
   onOpen,
   onBack,
 }: {
@@ -2872,6 +2882,13 @@ function RecordHistory({
   amountFor: (jobId: string, quantity: number) => number
   /** The tier's Edit tick (Work entry setting) — without it, no pencil. */
   canEdit: boolean
+  /**
+   * Whose history this is. Without a station it is YOUR records, reached
+   * from "My work done". With one — the › beside a station on the Output
+   * record — it is everything recorded AT that station, whoever did it,
+   * and the screen is headed with the station's name.
+   */
+  station?: Station | null
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
@@ -2926,24 +2943,22 @@ function RecordHistory({
   }
 
   useEffect(() => {
-    if (!profileId) return
+    if (!station && !profileId) return
     const range = DAY_RANGES.find((r) => r.key === rangeKey)!
     const d = new Date()
     d.setDate(d.getDate() - range.days)
     const since = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
     setLoading(true)
-    supabase
-      .from('operation_entries')
-      .select('*')
-      .eq('user_id', profileId)
-      .gte('work_date', since)
-      .order('created_at', { ascending: false })
+    let q = supabase.from('operation_entries').select('*').gte('work_date', since)
+    // Station mode reads the whole station; personal mode reads your rows.
+    q = station ? q.eq('station_id', station.id) : q.eq('user_id', profileId!)
+    q.order('created_at', { ascending: false })
       .limit(200)
       .then(({ data }) => {
         setRows(data ?? [])
         setLoading(false)
       })
-  }, [profileId, rangeKey])
+  }, [profileId, rangeKey, station])
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
@@ -2956,6 +2971,7 @@ function RecordHistory({
 
       <div className="mob-body">
         <MobSubHeader title="Work Record History" onBack={onBack} />
+        {station && <div className="mob-card-label centred">{station.name}</div>}
 
         <div className="mob-seg" role="tablist">
           {DAY_RANGES.map((r) => (
@@ -3424,9 +3440,11 @@ function ReviewSections({
 
   return (
     <>
+      {/* Block titles wear the KPI dashboard's card label — small, grey,
+          tracked out — so the two tabs read as one family. */}
       {stationPct.length > 0 && (
         <div className="mob-card">
-          <div className="mob-title">Approval completion by station</div>
+          <div className="mob-card-label">Approval completion by station</div>
           <div className="mob-bars">
             {stationPct.map((s) => (
               <div className="mob-barrow" key={s.id}>
@@ -3442,7 +3460,7 @@ function ReviewSections({
       )}
 
       <div className="mob-card">
-        <div className="mob-title">Exception flags</div>
+        <div className="mob-card-label">Exception flags</div>
         {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
         {flags.map((f, i) => (
           <div className={`mob-flag ${f.kind}`} key={i}>
@@ -3453,7 +3471,7 @@ function ReviewSections({
       </div>
 
       <div className="mob-card">
-        <div className="mob-title">My work done</div>
+        <div className="mob-card-label">My work done</div>
         <div className="mob-sub">Target 100% approved</div>
         <ScoreMeter label="Today" score={myToday} />
         <ScoreMeter label="This week" score={myThisWeek} />
@@ -3750,9 +3768,9 @@ function MyWorkTab({
       </div>
 
       <div className="mob-body">
+        {/* Same head as the KPI dashboard: the title alone, no strapline. */}
         <div className="mob-pagehead">
           <div className="mob-role">My work</div>
-          <div className="mob-sub">Everything you recorded and where it stands</div>
         </div>
 
         {showMill && (
