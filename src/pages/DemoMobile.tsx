@@ -428,6 +428,8 @@ export default function DemoMobile({ real = false }: { real?: boolean }) {
                   <RecordTab
                     profileId={profile?.id ?? null}
                     myName={profileName(profile)}
+                    teamId={profile?.team_id ?? null}
+                    teamName={profile?.team_name ?? null}
                     tier={tier}
                     grades={grades}
                     stations={stations}
@@ -2713,6 +2715,8 @@ function WorkDoneCard({
 function RecordTab({
   profileId,
   myName,
+  teamId,
+  teamName,
   tier,
   grades,
   stations,
@@ -2728,6 +2732,10 @@ function RecordTab({
 }: {
   profileId: string | null
   myName: string
+  // The team this person stands in on the Worker Management board, and the
+  // one they lead — between them, whose shift this is.
+  teamId: string | null
+  teamName: string | null
   tier: Grade | null
   grades: Grade[]
   stations: Station[]
@@ -2770,9 +2778,9 @@ function RecordTab({
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Assistant Station Head is paid on the shift's actual output, not a
-  // manually typed quantity: pick the date + shift they supervised, and the
-  // cage count comes straight from the Operators' Daily Job Record entries
-  // for that station/date/shift.
+  // manually typed quantity: the duty date is the day the record is made
+  // and the shift is read off their team, and the cage count comes straight
+  // from the Operators' Daily Job Record entries for that station/date/shift.
   const isASH = tier?.name === 'Assistant Station Head'
   // At station level and below there is one station — yours — and the work
   // is counted from the photos, so neither is asked for. Counted off the
@@ -2782,10 +2790,40 @@ function RecordTab({
     : 0
   const atStationLevel = tier != null && rungsBelow <= 2
   const ownStation = myStations[0] ?? null
-  const [dutyDate, setDutyDate] = useState(todayISO())
-  const [dutyShift, setDutyShift] = useState('')
+  // Neither the date nor the shift is asked for: the duty date is simply
+  // today (the record is stamped when the photo is taken), and the shift is
+  // whichever team the person stands in on the Worker Management board.
+  const dutyDate = todayISO()
+  const [myTeamName, setMyTeamName] = useState<string | null>(null)
   const [pulledQty, setPulledQty] = useState(0)
   const [pulling, setPulling] = useState(false)
+
+  useEffect(() => {
+    if (!isASH) return
+    let cancelled = false
+    ;(async () => {
+      // The team they belong to names the shift; the team they lead is the
+      // fallback for a leader whose own block predates the board.
+      let name = teamName
+      if (teamId) {
+        const { data } = await supabase
+          .from('shared_teams')
+          .select('name')
+          .eq('id', teamId)
+          .maybeSingle()
+        if (data?.name) name = data.name as string
+      }
+      if (!cancelled) setMyTeamName(name ?? null)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isASH, teamId, teamName])
+
+  // "Team A" works shift A. A team named any other way cannot name a
+  // shift, and the form says so rather than guessing.
+  const shiftMatch = myTeamName?.trim().match(/([ab])$/i)
+  const dutyShift = shiftMatch ? (shiftMatch[1].toLowerCase() as 'a' | 'b') : ''
 
   // Nothing to choose at station level — the form is already on the right
   // station before it is opened.
@@ -2877,7 +2915,7 @@ function RecordTab({
 
   async function submit() {
     if (isASH) {
-      if (!profileId || !stationId || !jobId || !dutyDate || !dutyShift || !pulledQty) return
+      if (!profileId || !stationId || !jobId || !dutyShift || !pulledQty || !photo) return
     } else if (!profileId || !stationId || !jobId || !photo) {
       return
     }
@@ -2890,7 +2928,7 @@ function RecordTab({
       const { data, error } = await supabase
         .from('operation_entries')
         .insert({
-          work_date: isASH ? dutyDate : todayISO(),
+          work_date: todayISO(),
           station_id: stationId,
           job_id: jobId,
           user_id: profileId,
@@ -2916,7 +2954,6 @@ function RecordTab({
         }
       }
       setJobId('')
-      setDutyShift('')
       retakePhoto()
       setRecorded((n) => n + 1)
     } catch (err) {
@@ -3196,28 +3233,16 @@ function RecordTab({
 
             {isASH ? (
               <>
-                <div className="mob-field-label">Date on duty</div>
-                <input
-                  className="mob-input"
-                  type="date"
-                  value={dutyDate}
-                  onChange={(e) => setDutyDate(e.target.value)}
-                />
-
-                <div className="mob-field-label">Shift</div>
-                <select className="mob-select" value={dutyShift} onChange={(e) => setDutyShift(e.target.value)}>
-                  <option value="">Choose shift…</option>
-                  <option value="a">Shift A</option>
-                  <option value="b">Shift B</option>
-                </select>
-
-                {jobId && dutyDate && dutyShift && (
+                {/* No date row and no shift row: the record is stamped with
+                    the day it is made, and the shift comes off the team the
+                    person stands in — detected, never chosen. */}
+                {jobId && dutyShift && (
                   <div className="mob-sub">
                     {pulling
                       ? 'Pulling cages tipped from Daily Job Record…'
                       : !operatorJob
                         ? 'No matching Operator job found at this station.'
-                        : `${pulledQty} cage${pulledQty === 1 ? '' : 's'} tipped (from Daily Job Record)`}
+                        : `${pulledQty} cage${pulledQty === 1 ? '' : 's'} tipped today, Shift ${dutyShift.toUpperCase()} (from Daily Job Record)`}
                   </div>
                 )}
 
@@ -3252,7 +3277,7 @@ function RecordTab({
 
             {/* The one photo, shown back centred with when and where it was
                 taken — tap it to see it full screen. */}
-            {photo && !isASH && (() => {
+            {photo && (() => {
               const st = stations.find((x) => x.id === stationId) ?? ownStation
               const dist =
                 photo.coords && st?.latitude != null && st?.longitude != null
@@ -3304,7 +3329,7 @@ function RecordTab({
 
             {/* One photo is the requirement — once it is in, the button
                 gives way to the stamps above. */}
-            {!photo && !isASH && (
+            {!photo && (
               <button className="mob-btn ghost" onClick={() => fileRef.current?.click()}>
                 📷 Take photo
               </button>
@@ -3316,7 +3341,7 @@ function RecordTab({
                 submitting ||
                 !stationId ||
                 !jobId ||
-                (isASH ? !dutyDate || !dutyShift || !pulledQty : !photo)
+                (isASH ? !dutyShift || !pulledQty || !photo : !photo)
               }
               onClick={submit}
             >
@@ -3325,12 +3350,13 @@ function RecordTab({
             {/* A grey button with no reason reads as broken — say what is
                 still missing. */}
             {!submitting && (isASH
-              ? (!stationId || !jobId || !dutyDate || !dutyShift || !pulledQty) && (
+              ? (!stationId || !jobId || !dutyShift || !pulledQty || !photo) && (
                   <div className="mob-sub" style={{ textAlign: 'center' }}>
                     {!stationId ? 'Pick a station to submit.'
                       : !jobId ? 'Choose the job to submit.'
-                      : !dutyDate || !dutyShift ? 'Pick the date and shift to submit.'
-                      : 'No cages pulled for that shift yet.'}
+                      : !dutyShift ? 'Join a team first — your team names your shift.'
+                      : !pulledQty ? 'No cages pulled for your shift yet today.'
+                      : 'Take the photo to submit.'}
                   </div>
                 )
               : (!stationId || !jobId || !photo) && (
