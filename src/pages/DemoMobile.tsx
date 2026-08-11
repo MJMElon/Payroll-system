@@ -746,6 +746,56 @@ const DAY_RANGES = [
 
 type DayRange = (typeof DAY_RANGES)[number]['key']
 
+/**
+ * The Work Record History's windows. Calendar periods, not rolling days:
+ * "this week" is the week you are in, so the number stops moving under
+ * you as the days pass, and it is the same week your leader means.
+ *
+ * A key that is none of these is a month — "2026-07" — one of the three
+ * before this one, reached from the history icon.
+ */
+const HISTORY_RANGES = [
+  { key: 'today', label: 'Today' },
+  { key: 'week', label: 'This week' },
+  { key: 'month', label: 'This month' },
+] as const
+
+type HistoryRange = (typeof HISTORY_RANGES)[number]['key'] | string
+
+/** The first and last day a window covers, both inclusive. */
+function historyWindow(key: HistoryRange): { from: string; to: string } {
+  const today = todayISO()
+  if (key === 'today') return { from: today, to: today }
+  if (key === 'week') {
+    const monday = new Date()
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
+    return { from: dayISO(monday), to: today }
+  }
+  if (key === 'month') return { from: today.slice(0, 8) + '01', to: today }
+  // A whole month that has already finished.
+  const [y, m] = key.split('-').map(Number)
+  return { from: dayISO(new Date(y, m - 1, 1)), to: dayISO(new Date(y, m, 0)) }
+}
+
+/** The three months before this one, newest first. */
+function recentMonths(): { key: string; label: string }[] {
+  const now = new Date()
+  return [1, 2, 3].map((back) => {
+    const m = new Date(now.getFullYear(), now.getMonth() - back, 1)
+    return {
+      key: `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`,
+      label: m.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
+    }
+  })
+}
+
+/** The Output record's windows, said in this screen's words. */
+const RANGE_FROM_OUTPUT: Record<DayRange, HistoryRange> = {
+  today: 'today',
+  '7d': 'week',
+  '30d': 'month',
+}
+
 function MobSubHeader({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <div className="mob-subhead">
@@ -3184,7 +3234,13 @@ function RecordHistory({
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
-  const [rangeKey, setRangeKey] = useState<DayRange>(initialRange)
+  const [rangeKey, setRangeKey] = useState<HistoryRange>(
+    RANGE_FROM_OUTPUT[initialRange] ?? 'today',
+  )
+  // The earlier-months list, folded away behind the history icon.
+  const [showMonths, setShowMonths] = useState(false)
+  const months = useMemo(recentMonths, [])
+  const pickedMonth = months.find((m) => m.key === rangeKey) ?? null
   const [rows, setRows] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
   // The entry whose pencil was tapped, and the number being retyped.
@@ -3236,12 +3292,15 @@ function RecordHistory({
 
   useEffect(() => {
     if (!station && !profileId) return
-    const range = DAY_RANGES.find((r) => r.key === rangeKey)!
-    const d = new Date()
-    d.setDate(d.getDate() - range.days)
-    const since = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+    // A finished month has an end as well as a start, so the window is
+    // read as a pair rather than as "everything since".
+    const { from, to } = historyWindow(rangeKey)
     setLoading(true)
-    let q = supabase.from('operation_entries').select('*').gte('work_date', since)
+    let q = supabase
+      .from('operation_entries')
+      .select('*')
+      .gte('work_date', from)
+      .lte('work_date', to)
     // Station mode reads the whole station; personal mode reads your rows.
     q = station ? q.eq('station_id', station.id) : q.eq('user_id', profileId!)
     q.order('created_at', { ascending: false })
@@ -3284,31 +3343,66 @@ function RecordHistory({
 
       <div className="mob-body">
         <MobSubHeader title="Work Record History" onBack={onBack} />
-        {headStation && <div className="mob-card-label centred">{headStation}</div>}
+        {/* The station, with the way back through earlier months beside
+            it — three columns, so the name stays centred on the screen
+            rather than on the space left over next to the button. */}
+        <div className="mob-histhead">
+          <span className="mob-card-label centred">{headStation}</span>
+          <button
+            className={`mob-icon-btn ${showMonths ? 'on' : ''}`}
+            onClick={() => setShowMonths((v) => !v)}
+            title="Earlier months"
+            aria-label="Earlier months"
+            aria-expanded={showMonths}
+          >
+            <IconHistory />
+          </button>
+        </div>
 
         {/* The same picker as the Output record — one window question,
             asked the same way wherever it is asked. */}
         <div className="mob-queue-chips" role="tablist">
-          {DAY_RANGES.map((r) => (
+          {HISTORY_RANGES.map((r) => (
             <button
               key={r.key}
               role="tab"
               aria-selected={rangeKey === r.key}
               className={rangeKey === r.key ? 'on' : ''}
-              onClick={() => setRangeKey(r.key)}
+              onClick={() => {
+                setRangeKey(r.key)
+                setShowMonths(false)
+              }}
             >
               {r.label}
             </button>
           ))}
         </div>
 
+        {/* Opened by the icon, or held open by the month being read — a
+            picked month with its own list folded away would leave the
+            three chips all dark and nothing saying why. */}
+        {(showMonths || pickedMonth) && (
+          <div className="mob-queue-chips">
+            {months.map((m) => (
+              <button
+                key={m.key}
+                className={rangeKey === m.key ? 'on' : ''}
+                onClick={() => {
+                  setRangeKey(m.key)
+                  setShowMonths(false)
+                }}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="mob-card">
           {loading ? (
             <div className="mob-sub">Loading…</div>
           ) : rows.length === 0 ? (
-            <div className="mob-sub">
-              {rangeKey === 'today' ? 'Nothing submitted today.' : 'Nothing submitted in this range.'}
-            </div>
+            <div className="mob-empty">Nothing in list</div>
           ) : (
             rows.map((e) =>
               editing?.id === e.id ? (
@@ -4234,17 +4328,6 @@ function MyWorkTab({
     )
   }
 
-  // On the history tabs the answer depends on the window being looked at,
-  // so it says so — "no approved work yet" would read as a verdict on all
-  // of it when only today is on screen.
-  const windowLabel =
-    dateMode === 'today' ? 'today' : dateMode === 'month' ? 'this month' : 'in that date range'
-  const emptyText: Record<WorkFilter, string> = {
-    pending: 'Nothing waiting for approval right now.',
-    approved: `No approved work ${windowLabel}.`,
-    rejected: dateMode === 'today' ? 'Nothing rejected today — good work ✅' : `Nothing rejected ${windowLabel}.`,
-  }
-
   return (
     <>
       <div className="mob-header">
@@ -4337,7 +4420,7 @@ function MyWorkTab({
         {loading ? (
           <p className="muted small">Loading…</p>
         ) : shown.length === 0 && queueShown.length === 0 ? (
-          <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
+          <div className="mob-card"><div className="mob-empty">Nothing in list</div></div>
         ) : grouped ? (
           stationBlocks.map((b) => {
             const total = b.mine.length + b.queue.length

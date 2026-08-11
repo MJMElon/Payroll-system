@@ -961,6 +961,24 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    section of its own rather than as more of the card before it. Same face
    and weight as a tab's own title, because that is what it is — the name
    of everything below it, not a label on the first card. */
+/* An empty list. Left-aligned, one line of prose was easy to read as the
+   first ROW of the list rather than as its absence — centred and set in
+   the muted face, it reads as the space where rows would be. */
+.mob-empty {
+  text-align: center; padding: 0.5rem 0;
+  font-size: 0.8rem; font-weight: 700; color: var(--muted);
+}
+
+/* The station's name with the earlier-months button beside it: three
+   columns, so the name is centred on the screen and not on the space
+   left over next to the button. */
+.mob-histhead {
+  display: grid; grid-template-columns: 30px 1fr 30px; align-items: center;
+  padding: 0 0.2rem;
+}
+.mob-histhead > :first-child { grid-column: 2; }
+.mob-histhead > :last-child { grid-column: 3; }
+
 .mob-sectionhead {
   padding: 0.6rem 0.2rem 0; text-align: center;
   font-weight: 700; font-size: 1.05rem; font-family: 'Montserrat', sans-serif;
