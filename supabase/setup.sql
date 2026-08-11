@@ -3,38 +3,329 @@
 -- Creates the core tables, row level security policies, the auto-profile
 -- trigger, and seeds the 7 mill stations.
 
+
+-- ---------------------------------------------------------------------------
+-- TABLE NAMES CARRY THEIR MODULE.
+--
+-- Every table is prefixed by the module that owns it, so the table list
+-- reads like the app's sidebar:
+--
+--   shared_*      profiles, tier tags, stations, teams, audit log — data
+--                 every module leans on. shared_workers is the LEGACY
+--                 manual-worker list kept only for old payroll rows.
+--   operation_*   work records: entries, photos, clock in/out.
+--   piece_rate_*  the rate masterlist (piece_rate_jobs) and its amounts
+--                 (piece_rates — the name already carries the prefix).
+--   payroll_*     already prefixed; columns deliberately left as they are
+--                 until that module gets its own rework.
+--
+-- A database built before this convention renames itself here, ONCE, before
+-- anything else runs: each rename fires only while the old name still
+-- exists and the new one does not, so re-running the file never loses a
+-- row. Indexes, foreign keys, triggers and policies travel with a rename;
+-- FUNCTION BODIES DO NOT — they are plain text — which is why the rest of
+-- this file (all "create or replace function" statements included) speaks
+-- the new names, and why this file must be run TOP TO BOTTOM after the
+-- renames, never the tail alone.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  pair text[];
+begin
+  foreach pair slice 1 in array array[
+    ['access_profiles',    'shared_profiles'],
+    ['grades',             'shared_grades'],
+    ['stations',           'shared_stations'],
+    ['teams',              'shared_teams'],
+    ['workers',            'shared_workers'],
+    ['audit_log',          'shared_audit_log'],
+    ['jobs',               'piece_rate_jobs'],
+    ['production_entries', 'operation_entries'],
+    ['photo_records',      'operation_photos'],
+    ['attendance',         'operation_attendance']
+  ]
+  loop
+    if to_regclass('public.' || pair[1]) is not null
+       and to_regclass('public.' || pair[2]) is null then
+      execute format('alter table public.%I rename to %I', pair[1], pair[2]);
+    end if;
+  end loop;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- FUNCTIONS RE-SPOKEN IMMEDIATELY AFTER THE RENAMES.
+--
+-- A table rename carries its policies, indexes and triggers along — but a
+-- function body is plain text, and every helper below still said the OLD
+-- table names the moment the block above ran. The very first audited
+-- statement then died inside log_audit() ("public.audit_log does not
+-- exist") and took the whole run — and the app's access — with it, because
+-- the policies lean on my_role() and my_capabilities().
+--
+-- So the exact final definitions from further down this file are repeated
+-- here, before ANY statement that could call them. Running the file top to
+-- bottom is now safe on a freshly renamed database; the later copies are
+-- identical and simply re-assert these.
+-- ---------------------------------------------------------------------------
+-- On a FRESH database these tables do not exist yet at this point in the
+-- file, and Postgres normally validates a "language sql" body against the
+-- catalog at create time — so validation is off for this section only,
+-- exactly the way pg_dump restores functions.
+set check_function_bodies = off;
+
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  op_grade uuid;
+begin
+  -- Every new signup starts as an Operator; leaders place them from there.
+  select id into op_grade from public.shared_grades where name = 'Operator' limit 1;
+  insert into public.shared_profiles (id, full_name, email, role, grade_id)
+  values (
+    new.id,
+    nullif(btrim(coalesce(new.raw_user_meta_data ->> 'full_name', '')), ''),
+    new.email,
+    'operator',
+    op_grade
+  )
+  on conflict (id) do nothing;
+  return new;
+exception when others then
+  -- Never block a signup because profile creation failed; the app
+  -- self-heals a missing profile on first login.
+  return new;
+end;
+$$;
+
+create or replace function public.my_role()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select role from public.shared_profiles where id = auth.uid();
+$$;
+
+create or replace function public.my_tag_tier()
+returns int
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select g.sort_order from public.shared_profiles p
+  join public.shared_grades g on g.id = p.grade_id
+  where p.id = auth.uid();
+$$;
+
+create or replace function public.grade_tier(g uuid)
+returns int
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select sort_order from public.shared_grades where id = g;
+$$;
+
+create or replace function public.bottom_tier()
+returns int
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(max(sort_order), 0) from public.shared_grades;
+$$;
+
+create or replace function public.my_capabilities()
+returns text[]
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  -- The coalesce has to sit OUTSIDE the select: an account with no tier tag
+  -- matches no row at all, and a scalar subquery with no rows is null, not
+  -- '{}'. Null then poisons every `my_capabilities() && array[...]` test in
+  -- the policies below — the write is refused, silently, with no error.
+  select coalesce(
+    (
+      select g.capabilities from public.shared_profiles p
+      join public.shared_grades g on g.id = p.grade_id
+      where p.id = auth.uid()
+    ),
+    '{}'
+  );
+$$;
+
+create or replace function public.my_approval_screen()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select mobile_approval from public.shared_profiles where id = auth.uid();
+$$;
+
+create or replace function public.entry_period_locked(d date)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.payroll_runs
+    where status = 'finalized' and period_start <= d and period_end >= d
+  );
+$$;
+
+create or replace function public.block_locked_entry_changes()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op in ('UPDATE', 'DELETE') and public.entry_period_locked(old.work_date) then
+    raise exception 'Locked: this entry''s date falls in a finalized payroll period.';
+  end if;
+  if tg_op in ('INSERT', 'UPDATE') and public.entry_period_locked(new.work_date) then
+    raise exception 'Locked: that work date falls in a finalized payroll period.';
+  end if;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+create or replace function public.log_audit()
+returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  d jsonb;
+  tid uuid;
+begin
+  if tg_op = 'DELETE' then
+    tid := old.id;
+    d := to_jsonb(old);
+  elsif tg_op = 'INSERT' then
+    tid := new.id;
+    d := to_jsonb(new);
+  else
+    tid := new.id;
+    select coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb) into d
+      from jsonb_each(to_jsonb(new)) e
+      where to_jsonb(old) -> e.key is distinct from e.value;
+    if d = '{}'::jsonb then
+      return new; -- nothing actually changed; keep the log quiet
+    end if;
+  end if;
+  insert into public.shared_audit_log (actor, action, target, target_id, detail)
+  values (auth.uid(), lower(tg_op), tg_table_name, tid, d);
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+create or replace function public.my_team_id()
+returns uuid
+language sql stable security definer set search_path = public as $$
+  select team_id from public.shared_profiles where id = auth.uid();
+$$;
+
+create or replace function public.manageable_team_ids()
+returns uuid[]
+language sql stable security definer set search_path = public as $$
+  select coalesce(array_agg(t.id), '{}'::uuid[])
+  from public.shared_teams t
+  join public.shared_grades g on g.id = t.grade_id
+  where public.my_tag_tier() is not null
+    and public.my_tag_tier() <= g.sort_order;
+$$;
+
+create or replace function public.set_my_avatar(path text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.shared_profiles set avatar_path = path where id = auth.uid();
+$$;
+
+create or replace function public.set_my_details(code text, phone_no text)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.shared_profiles
+     set employee_code = case
+           when public.my_role() = 'admin'
+             or public.my_tag_tier() = 1
+             or 'worker-id-edit' = any(public.my_capabilities())
+           then nullif(btrim(coalesce(code, '')), '')
+           else employee_code
+         end,
+         phone = nullif(btrim(coalesce(phone_no, '')), '')
+   where id = auth.uid();
+$$;
+
+create or replace function public.guard_employee_code()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.employee_code is distinct from old.employee_code
+     and auth.uid() is not null
+     and not (
+       public.my_role() = 'admin'
+       or public.my_tag_tier() = 1
+       or 'worker-id-edit' = any(public.my_capabilities())
+     )
+  then
+    raise exception 'Your tier is not allowed to change a Worker ID.';
+  end if;
+  return new;
+end;
+$$;
+
+reset check_function_bodies;
+
 -- ---------------------------------------------------------------------------
 -- Tables
 -- ---------------------------------------------------------------------------
 
-create table if not exists public.stations (
+create table if not exists public.shared_stations (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
   sort_order int not null default 0,
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.workers (
+create table if not exists public.shared_workers (
   id uuid primary key default gen_random_uuid(),
   full_name text not null,
-  station_id uuid references public.stations (id),
+  station_id uuid references public.shared_stations (id),
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
 
 -- One row per auth user. Mirrors src/lib/supabase.ts (Profile / Role types).
-create table if not exists public.access_profiles (
+create table if not exists public.shared_profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   full_name text,
   email text,
   role text not null default 'worker'
     check (role in ('admin', 'manager', 'engineer', 'operator', 'worker')),
-  station_id uuid references public.stations (id),
-  worker_id uuid references public.workers (id),
+  station_id uuid references public.shared_stations (id),
+  worker_id uuid references public.shared_workers (id),
   created_at timestamptz not null default now()
 );
 
-alter table public.access_profiles add column if not exists email text;
+alter table public.shared_profiles add column if not exists email text;
 
 -- ---------------------------------------------------------------------------
 -- Auto-create a profile (role 'worker') whenever an auth user is created,
@@ -51,8 +342,8 @@ declare
   op_grade uuid;
 begin
   -- Every new signup starts as an Operator; admins upgrade access later.
-  select id into op_grade from public.grades where name = 'Operator' limit 1;
-  insert into public.access_profiles (id, full_name, email, role, grade_id)
+  select id into op_grade from public.shared_grades where name = 'Operator' limit 1;
+  insert into public.shared_profiles (id, full_name, email, role, grade_id)
   values (
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name', new.email),
@@ -86,51 +377,51 @@ stable
 security definer
 set search_path = public
 as $$
-  select role from public.access_profiles where id = auth.uid();
+  select role from public.shared_profiles where id = auth.uid();
 $$;
 
 -- ---------------------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------------------
 
-alter table public.stations enable row level security;
-alter table public.workers enable row level security;
-alter table public.access_profiles enable row level security;
+alter table public.shared_stations enable row level security;
+alter table public.shared_workers enable row level security;
+alter table public.shared_profiles enable row level security;
 
 -- access_profiles: everyone reads their own row; admins read and edit all.
-drop policy if exists "read own profile" on public.access_profiles;
-create policy "read own profile" on public.access_profiles
+drop policy if exists "read own profile" on public.shared_profiles;
+create policy "read own profile" on public.shared_profiles
   for select using (id = auth.uid());
 
-drop policy if exists "admin reads all profiles" on public.access_profiles;
-create policy "admin reads all profiles" on public.access_profiles
+drop policy if exists "admin reads all profiles" on public.shared_profiles;
+create policy "admin reads all profiles" on public.shared_profiles
   for select using (public.my_role() = 'admin');
 
-drop policy if exists "admin updates profiles" on public.access_profiles;
-create policy "admin updates profiles" on public.access_profiles
+drop policy if exists "admin updates profiles" on public.shared_profiles;
+create policy "admin updates profiles" on public.shared_profiles
   for update using (public.my_role() = 'admin');
 
 -- Users may create their own missing profile row (self-heal after signup).
-drop policy if exists "insert own profile" on public.access_profiles;
-create policy "insert own profile" on public.access_profiles
+drop policy if exists "insert own profile" on public.shared_profiles;
+create policy "insert own profile" on public.shared_profiles
   for insert with check (id = auth.uid());
 
 -- stations: any signed-in user can read; admins/managers manage.
-drop policy if exists "authenticated read stations" on public.stations;
-create policy "authenticated read stations" on public.stations
+drop policy if exists "authenticated read stations" on public.shared_stations;
+create policy "authenticated read stations" on public.shared_stations
   for select using (auth.uid() is not null);
 
-drop policy if exists "admin manager manage stations" on public.stations;
-create policy "admin manager manage stations" on public.stations
+drop policy if exists "admin manager manage stations" on public.shared_stations;
+create policy "admin manager manage stations" on public.shared_stations
   for all using (public.my_role() in ('admin', 'manager'));
 
 -- workers: any signed-in user can read; admins/managers manage.
-drop policy if exists "authenticated read workers" on public.workers;
-create policy "authenticated read workers" on public.workers
+drop policy if exists "authenticated read workers" on public.shared_workers;
+create policy "authenticated read workers" on public.shared_workers
   for select using (auth.uid() is not null);
 
-drop policy if exists "admin manager manage workers" on public.workers;
-create policy "admin manager manage workers" on public.workers
+drop policy if exists "admin manager manage workers" on public.shared_workers;
+create policy "admin manager manage workers" on public.shared_workers
   for all using (public.my_role() in ('admin', 'manager'));
 
 -- ---------------------------------------------------------------------------
@@ -139,16 +430,16 @@ create policy "admin manager manage workers" on public.workers
 
 -- Grades are the "tags" a piece rate belongs to (Operator, Station Head, …),
 -- so the same work at the same station can be priced per grade.
-create table if not exists public.grades (
+create table if not exists public.shared_grades (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
   sort_order int not null default 0,
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.jobs (
+create table if not exists public.piece_rate_jobs (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references public.stations (id),
+  station_id uuid not null references public.shared_stations (id),
   name text not null,
   unit text not null default 'unit',
   active boolean not null default true,
@@ -159,34 +450,41 @@ create table if not exists public.jobs (
 -- A piece-rate contract is the station × grade × work combination: add the
 -- grade link and relax the old uniqueness so the same description can exist
 -- per grade. (Idempotent for databases created from earlier versions.)
-alter table public.jobs add column if not exists grade_id uuid references public.grades (id);
-alter table public.jobs drop constraint if exists jobs_station_id_name_key;
+alter table public.piece_rate_jobs add column if not exists grade_id uuid references public.shared_grades (id);
+alter table public.piece_rate_jobs drop constraint if exists jobs_station_id_name_key;
 
 -- Written just before a proposed piece rate is deleted, so the audit log's
 -- delete entry (which snapshots the whole row) carries the reason why.
-alter table public.jobs add column if not exists delete_remark text;
+alter table public.piece_rate_jobs add column if not exists delete_remark text;
+
+-- Which screens a contract appears on, set per contract in the Piece Rate
+-- module's Manage window. Both default to true so existing work keeps
+-- showing where it always did:
+--   record_job    -> offered in the mobile work entry screen
+--   show_on_mill  -> counted on the mobile Mill output dashboard
+alter table public.piece_rate_jobs add column if not exists show_on_mill boolean not null default true;
 
 -- Grade tag assigned to a worker/user (their station tag is workers.station_id).
-alter table public.workers add column if not exists grade_id uuid references public.grades (id);
+alter table public.shared_workers add column if not exists grade_id uuid references public.shared_grades (id);
 
 -- Per-user permission to approve new piece rates (a remark on the user,
 -- not a grade tag). The old 'Piece rate approval' grade tag is retired.
-alter table public.workers add column if not exists can_approve_rates boolean not null default false;
+alter table public.shared_workers add column if not exists can_approve_rates boolean not null default false;
 
 -- Login accounts carry their own tags + approval permission; access is
 -- appointed per signed-up email in Settings -> User access (admin only).
-alter table public.access_profiles add column if not exists grade_id uuid references public.grades (id);
-alter table public.access_profiles add column if not exists can_approve_rates boolean not null default false;
+alter table public.shared_profiles add column if not exists grade_id uuid references public.shared_grades (id);
+alter table public.shared_profiles add column if not exists can_approve_rates boolean not null default false;
 
 -- A user can hold several station tags (empty = all stations).
-alter table public.access_profiles add column if not exists station_ids uuid[];
+alter table public.shared_profiles add column if not exists station_ids uuid[];
 
 -- Station work presets for the mobile view: hourly-counted stations expect
 -- a target number of photo records every hour (the stamp card), plus a
 -- minimum from the previous hour that unlocks this hour's bonus stamps.
-alter table public.stations add column if not exists hourly_count boolean not null default false;
-alter table public.stations add column if not exists hourly_target int not null default 6;
-alter table public.stations add column if not exists hourly_min_prev int not null default 0;
+alter table public.shared_stations add column if not exists hourly_count boolean not null default false;
+alter table public.shared_stations add column if not exists hourly_target int not null default 6;
+alter table public.shared_stations add column if not exists hourly_min_prev int not null default 0;
 
 -- ---------------------------------------------------------------------------
 -- Per-user web access + signup confirmation flow
@@ -194,13 +492,13 @@ alter table public.stations add column if not exists hourly_min_prev int not nul
 
 -- Which modules THIS USER can see (moved from the tag to the user).
 -- New signups default to seeing every module.
-alter table public.access_profiles add column if not exists modules text[] not null
+alter table public.shared_profiles add column if not exists modules text[] not null
   default '{station-status,piece-rate,payroll,demo-mobile}';
 
 -- New signups sit in the 'New sign up' pending list until an upper-tier
 -- user confirms their tags.
-alter table public.access_profiles add column if not exists tags_confirmed boolean not null default false;
-update public.access_profiles set tags_confirmed = true
+alter table public.shared_profiles add column if not exists tags_confirmed boolean not null default false;
+update public.shared_profiles set tags_confirmed = true
   where grade_id is not null and tags_confirmed = false;
 
 -- Tier helpers for the confirmation rules. my_tag_tier is security definer
@@ -212,8 +510,8 @@ stable
 security definer
 set search_path = public
 as $$
-  select g.sort_order from public.access_profiles p
-  join public.grades g on g.id = p.grade_id
+  select g.sort_order from public.shared_profiles p
+  join public.shared_grades g on g.id = p.grade_id
   where p.id = auth.uid();
 $$;
 
@@ -224,7 +522,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select sort_order from public.grades where id = g;
+  select sort_order from public.shared_grades where id = g;
 $$;
 
 create or replace function public.bottom_tier()
@@ -234,15 +532,15 @@ stable
 security definer
 set search_path = public
 as $$
-  select coalesce(max(sort_order), 0) from public.grades;
+  select coalesce(max(sort_order), 0) from public.shared_grades;
 $$;
 
 -- Anyone at least one tier above the bottom may manage users BELOW their own
 -- tier (claim new signups into their team, set station/tier tags). They can
 -- never touch their own tier or above; admins are unrestricted (separate
 -- policy above).
-drop policy if exists "upper tier manages lower signups" on public.access_profiles;
-create policy "upper tier manages lower signups" on public.access_profiles
+drop policy if exists "upper tier manages lower signups" on public.shared_profiles;
+create policy "upper tier manages lower signups" on public.shared_profiles
   for update using (
     public.my_tag_tier() is not null
     and public.my_tag_tier() < public.bottom_tier()
@@ -254,34 +552,34 @@ create policy "upper tier manages lower signups" on public.access_profiles
   );
 
 -- Photo records taken from the mobile view, one row per photo.
-create table if not exists public.photo_records (
+create table if not exists public.operation_photos (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references public.stations (id),
+  station_id uuid not null references public.shared_stations (id),
   photo_path text,
   taken_at timestamptz not null default now(),
   created_by uuid references auth.users (id) default auth.uid()
 );
 create index if not exists photo_records_station_time_idx
-  on public.photo_records (station_id, taken_at);
+  on public.operation_photos (station_id, taken_at);
 
-alter table public.photo_records enable row level security;
+alter table public.operation_photos enable row level security;
 
-drop policy if exists "authenticated read photo records" on public.photo_records;
-create policy "authenticated read photo records" on public.photo_records
+drop policy if exists "authenticated read photo records" on public.operation_photos;
+create policy "authenticated read photo records" on public.operation_photos
   for select using (auth.uid() is not null);
 
-drop policy if exists "authenticated insert photo records" on public.photo_records;
-create policy "authenticated insert photo records" on public.photo_records
+drop policy if exists "authenticated insert photo records" on public.operation_photos;
+create policy "authenticated insert photo records" on public.operation_photos
   for insert with check (auth.uid() is not null);
 
-drop policy if exists "admin manager delete photo records" on public.photo_records;
-create policy "admin manager delete photo records" on public.photo_records
+drop policy if exists "admin manager delete photo records" on public.operation_photos;
+create policy "admin manager delete photo records" on public.operation_photos
   for delete using (public.my_role() in ('admin', 'manager'));
 
 -- Needed so an elapsed hour's photos can be linked to the production entry
 -- auto-created from their count (sets entry_id after the fact).
-drop policy if exists "owner links photo records to entry" on public.photo_records;
-create policy "owner links photo records to entry" on public.photo_records
+drop policy if exists "owner links photo records to entry" on public.operation_photos;
+create policy "owner links photo records to entry" on public.operation_photos
   for update using (
     created_by = auth.uid() or public.my_role() in ('admin', 'manager')
   );
@@ -298,42 +596,50 @@ create policy "authenticated upload records" on storage.objects
 drop policy if exists "public read records" on storage.objects;
 create policy "public read records" on storage.objects
   for select using (bucket_id = 'records');
-update public.access_profiles set station_ids = array[station_id]
+update public.shared_profiles set station_ids = array[station_id]
   where station_id is not null and station_ids is null;
-update public.access_profiles p set email = u.email
+update public.shared_profiles p set email = u.email
   from auth.users u where u.id = p.id and p.email is null;
 
 -- Display colour + ability text per tag, shown as the access legend.
-alter table public.grades add column if not exists color text not null default 'grey';
-alter table public.grades add column if not exists ability text;
+alter table public.shared_grades add column if not exists color text not null default 'grey';
+alter table public.shared_grades add column if not exists ability text;
 
 -- What each tag can SEE on the web (module keys). New tags default to the
 -- station board + piece rate module only.
-alter table public.grades add column if not exists modules text[] not null
+alter table public.shared_grades add column if not exists modules text[] not null
   default '{station-status,piece-rate}';
 
 -- What each tag can DO — standardized capabilities:
 --   data-entry: record work (photos / production entries)
 --   verify:     verify work entries of all tiers below
 --   approve:    approve work entries of all tiers below
-alter table public.grades add column if not exists capabilities text[] not null default '{}';
+alter table public.shared_grades add column if not exists capabilities text[] not null default '{}';
 
 -- What each tag is ENTITLED to, which is a different question from what it
 -- may do: "piece-rate" means a piece rate contract may be written for this
 -- tier. Deliberately NULLable with no default — null means the tag predates
 -- this setting, and the app then falls back to the old rule (the station
 -- tier and everything below it), so nothing changes until somebody sets it.
-alter table public.grades add column if not exists entitlements text[];
+alter table public.shared_grades add column if not exists entitlements text[];
+
+-- Whose piece rate contracts / work records a tier may VIEW, as a list of
+-- grade ids. Set per tag in Settings -> Tier Tag Access Manage, under the
+-- module each one governs. Nullable with no default on purpose: null means
+-- the tag was never asked, and the app then falls back to the rule the
+-- whole system ran on before — its own rank and every rank below.
+alter table public.shared_grades add column if not exists view_rate_tiers text[];
+alter table public.shared_grades add column if not exists view_entry_tiers text[];
 
 -- Sensible defaults for the seeded tags (only fills empty ones).
-update public.grades set capabilities = '{data-entry}'
+update public.shared_grades set capabilities = '{data-entry}'
   where name in ('Operator', 'Assistant Station Head', 'Station Head', 'General Worker')
     and capabilities = '{}';
-update public.grades set capabilities = '{data-entry,verify}'
+update public.shared_grades set capabilities = '{data-entry,verify}'
   where name = 'Engineer' and capabilities = '{}';
-update public.grades set capabilities = '{verify}'
+update public.shared_grades set capabilities = '{verify}'
   where name = 'Manager' and capabilities = '{}';
-update public.grades set capabilities = '{approve}'
+update public.shared_grades set capabilities = '{approve}'
   where name = 'Management' and capabilities = '{}';
 
 -- The signed-in user's tag capabilities (security definer for policy use).
@@ -350,77 +656,77 @@ as $$
   -- the policies below — the write is refused, silently, with no error.
   select coalesce(
     (
-      select g.capabilities from public.access_profiles p
-      join public.grades g on g.id = p.grade_id
+      select g.capabilities from public.shared_profiles p
+      join public.shared_grades g on g.id = p.grade_id
       where p.id = auth.uid()
     ),
     '{}'
   );
 $$;
-update public.grades set modules = '{station-status,piece-rate,payroll,demo-mobile}'
+update public.shared_grades set modules = '{station-status,piece-rate,payroll,demo-mobile}'
   where name in ('Management', 'Manager', 'Engineer')
     and modules = '{station-status,piece-rate}';
 
 -- Daily Job Record: for the tags that actually record production entries.
-update public.grades set modules = array_append(modules, 'daily-job-record')
+update public.shared_grades set modules = array_append(modules, 'daily-job-record')
   where name in ('Operator', 'Assistant Station Head', 'Station Head', 'General Worker')
     and not ('daily-job-record' = any(modules));
 
 
-update public.workers set grade_id = null
-  where grade_id in (select id from public.grades where name = 'Piece rate approval');
-update public.jobs set grade_id = null
-  where grade_id in (select id from public.grades where name = 'Piece rate approval');
-delete from public.grades where name = 'Piece rate approval';
+update public.shared_workers set grade_id = null
+  where grade_id in (select id from public.shared_grades where name = 'Piece rate approval');
+update public.piece_rate_jobs set grade_id = null
+  where grade_id in (select id from public.shared_grades where name = 'Piece rate approval');
+delete from public.shared_grades where name = 'Piece rate approval';
 
 -- New piece rates go through a two-step flow: proposed (pending) ->
 -- verified (by an approver preset to 'verify') -> approved (preset
 -- 'approve'). Who did each step is recorded. Existing rows default approved.
-alter table public.jobs add column if not exists approval_status text not null default 'approved'
+alter table public.piece_rate_jobs add column if not exists approval_status text not null default 'approved'
   check (approval_status in ('pending', 'approved', 'rejected'));
-alter table public.jobs drop constraint if exists jobs_approval_status_check;
-alter table public.jobs add constraint jobs_approval_status_check
+alter table public.piece_rate_jobs drop constraint if exists jobs_approval_status_check;
+alter table public.piece_rate_jobs add constraint jobs_approval_status_check
   check (approval_status in ('pending', 'verified', 'approved', 'rejected'));
-alter table public.jobs add column if not exists verified_by text;
-alter table public.jobs add column if not exists verified_at timestamptz;
-alter table public.jobs add column if not exists approved_by text;
-alter table public.jobs add column if not exists approved_at timestamptz;
+alter table public.piece_rate_jobs add column if not exists verified_by text;
+alter table public.piece_rate_jobs add column if not exists verified_at timestamptz;
+alter table public.piece_rate_jobs add column if not exists approved_by text;
+alter table public.piece_rate_jobs add column if not exists approved_at timestamptz;
 
 -- Each approver email is preset to its step in the approval process.
-alter table public.access_profiles add column if not exists approval_role text
+alter table public.shared_profiles add column if not exists approval_role text
   check (approval_role in ('verify', 'approve'));
 
 -- Approvers may update jobs (verify/approve/reject) even without the
 -- admin/manager role.
-drop policy if exists "approvers update jobs" on public.jobs;
-create policy "approvers update jobs" on public.jobs
+drop policy if exists "approvers update jobs" on public.piece_rate_jobs;
+create policy "approvers update jobs" on public.piece_rate_jobs
   for update using (
     exists (
-      select 1 from public.access_profiles p
+      select 1 from public.shared_profiles p
       where p.id = auth.uid() and p.can_approve_rates
     )
     or public.my_capabilities() && array['verify', 'approve']
   );
 create unique index if not exists jobs_station_grade_name_idx
-  on public.jobs (station_id, grade_id, name);
+  on public.piece_rate_jobs (station_id, grade_id, name);
 
 -- Rate history per job. The rate in force on a date is the newest row with
 -- effective_from <= that date.
 create table if not exists public.piece_rates (
   id uuid primary key default gen_random_uuid(),
-  job_id uuid not null references public.jobs (id) on delete cascade,
+  job_id uuid not null references public.piece_rate_jobs (id) on delete cascade,
   rate numeric(12,4) not null check (rate >= 0),
   effective_from date not null default current_date,
   created_at timestamptz not null default now(),
   unique (job_id, effective_from)
 );
 
-create table if not exists public.production_entries (
+create table if not exists public.operation_entries (
   id uuid primary key default gen_random_uuid(),
   work_date date not null default current_date,
-  station_id uuid not null references public.stations (id),
-  job_id uuid not null references public.jobs (id),
-  worker_id uuid not null references public.workers (id),
+  station_id uuid not null references public.shared_stations (id),
+  job_id uuid not null references public.piece_rate_jobs (id),
+  worker_id uuid not null references public.shared_workers (id),
   quantity numeric(12,3) not null check (quantity > 0),
   notes text,
   created_by uuid references auth.users (id) default auth.uid(),
@@ -428,7 +734,7 @@ create table if not exists public.production_entries (
 );
 
 create index if not exists production_entries_work_date_idx
-  on public.production_entries (work_date);
+  on public.operation_entries (work_date);
 
 -- ---------------------------------------------------------------------------
 -- Payroll runs
@@ -448,8 +754,8 @@ create table if not exists public.payroll_runs (
 create table if not exists public.payroll_lines (
   id uuid primary key default gen_random_uuid(),
   run_id uuid not null references public.payroll_runs (id) on delete cascade,
-  worker_id uuid not null references public.workers (id),
-  job_id uuid not null references public.jobs (id),
+  worker_id uuid not null references public.shared_workers (id),
+  job_id uuid not null references public.piece_rate_jobs (id),
   quantity numeric(12,3) not null,
   rate numeric(12,4) not null,
   amount numeric(14,2) not null
@@ -458,7 +764,7 @@ create table if not exists public.payroll_lines (
 create table if not exists public.payroll_adjustments (
   id uuid primary key default gen_random_uuid(),
   run_id uuid not null references public.payroll_runs (id) on delete cascade,
-  worker_id uuid not null references public.workers (id),
+  worker_id uuid not null references public.shared_workers (id),
   amount numeric(14,2) not null,
   reason text not null,
   created_at timestamptz not null default now()
@@ -468,32 +774,32 @@ create table if not exists public.payroll_adjustments (
 -- RLS for the work tables
 -- ---------------------------------------------------------------------------
 
-alter table public.jobs enable row level security;
+alter table public.piece_rate_jobs enable row level security;
 alter table public.piece_rates enable row level security;
-alter table public.production_entries enable row level security;
+alter table public.operation_entries enable row level security;
 alter table public.payroll_runs enable row level security;
 alter table public.payroll_lines enable row level security;
 alter table public.payroll_adjustments enable row level security;
 
-alter table public.grades enable row level security;
+alter table public.shared_grades enable row level security;
 
-drop policy if exists "authenticated read grades" on public.grades;
-create policy "authenticated read grades" on public.grades
+drop policy if exists "authenticated read grades" on public.shared_grades;
+create policy "authenticated read grades" on public.shared_grades
   for select using (auth.uid() is not null);
 
 -- Only admins or tier-1 (Management) users manage tags.
-drop policy if exists "admin manager manage grades" on public.grades;
-drop policy if exists "management tier manages grades" on public.grades;
-create policy "management tier manages grades" on public.grades
+drop policy if exists "admin manager manage grades" on public.shared_grades;
+drop policy if exists "management tier manages grades" on public.shared_grades;
+create policy "management tier manages grades" on public.shared_grades
   for all using (public.my_role() = 'admin' or public.my_tag_tier() = 1);
 
 -- jobs / piece_rates: any signed-in user reads; admins/managers manage.
-drop policy if exists "authenticated read jobs" on public.jobs;
-create policy "authenticated read jobs" on public.jobs
+drop policy if exists "authenticated read jobs" on public.piece_rate_jobs;
+create policy "authenticated read jobs" on public.piece_rate_jobs
   for select using (auth.uid() is not null);
 
-drop policy if exists "admin manager manage jobs" on public.jobs;
-create policy "admin manager manage jobs" on public.jobs
+drop policy if exists "admin manager manage jobs" on public.piece_rate_jobs;
+create policy "admin manager manage jobs" on public.piece_rate_jobs
   for all using (public.my_role() in ('admin', 'manager'));
 
 drop policy if exists "authenticated read piece_rates" on public.piece_rates;
@@ -506,26 +812,26 @@ create policy "admin manager manage piece_rates" on public.piece_rates
 
 -- production entries: everyone signed-in reads; admins/managers write freely;
 -- operators may only record for their own station and delete their own rows.
-drop policy if exists "authenticated read production" on public.production_entries;
-create policy "authenticated read production" on public.production_entries
+drop policy if exists "authenticated read production" on public.operation_entries;
+create policy "authenticated read production" on public.operation_entries
   for select using (auth.uid() is not null);
 
-drop policy if exists "insert production" on public.production_entries;
-create policy "insert production" on public.production_entries
+drop policy if exists "insert production" on public.operation_entries;
+create policy "insert production" on public.operation_entries
   for insert with check (
     public.my_role() in ('admin', 'manager')
     or (
       public.my_role() = 'operator'
       and exists (
-        select 1 from public.access_profiles p
+        select 1 from public.shared_profiles p
         where p.id = auth.uid()
-          and production_entries.station_id = any(coalesce(p.station_ids, array[p.station_id]))
+          and operation_entries.station_id = any(coalesce(p.station_ids, array[p.station_id]))
       )
     )
   );
 
-drop policy if exists "delete production" on public.production_entries;
-create policy "delete production" on public.production_entries
+drop policy if exists "delete production" on public.operation_entries;
+create policy "delete production" on public.operation_entries
   for delete using (
     public.my_role() in ('admin', 'manager')
     or (public.my_role() = 'operator' and created_by = auth.uid())
@@ -551,26 +857,26 @@ create policy "admin manager payroll_adjustments" on public.payroll_adjustments
 
 -- Everyone signed in may read profiles (needed to show names on entries,
 -- boards and payslips). Writing is still admin-only.
-drop policy if exists "authenticated read profiles" on public.access_profiles;
-create policy "authenticated read profiles" on public.access_profiles
+drop policy if exists "authenticated read profiles" on public.shared_profiles;
+create policy "authenticated read profiles" on public.shared_profiles
   for select using (auth.uid() is not null);
 
-alter table public.production_entries add column if not exists user_id uuid references public.access_profiles (id);
-alter table public.production_entries alter column worker_id drop not null;
-alter table public.payroll_lines add column if not exists user_id uuid references public.access_profiles (id);
+alter table public.operation_entries add column if not exists user_id uuid references public.shared_profiles (id);
+alter table public.operation_entries alter column worker_id drop not null;
+alter table public.payroll_lines add column if not exists user_id uuid references public.shared_profiles (id);
 alter table public.payroll_lines alter column worker_id drop not null;
-alter table public.payroll_adjustments add column if not exists user_id uuid references public.access_profiles (id);
+alter table public.payroll_adjustments add column if not exists user_id uuid references public.shared_profiles (id);
 alter table public.payroll_adjustments alter column worker_id drop not null;
 
 -- Backfill: rows whose worker is already linked to an account.
-update public.production_entries pe set user_id = ap.id
-  from public.access_profiles ap
+update public.operation_entries pe set user_id = ap.id
+  from public.shared_profiles ap
   where ap.worker_id = pe.worker_id and pe.user_id is null and pe.worker_id is not null;
 update public.payroll_lines pl set user_id = ap.id
-  from public.access_profiles ap
+  from public.shared_profiles ap
   where ap.worker_id = pl.worker_id and pl.user_id is null and pl.worker_id is not null;
 update public.payroll_adjustments pa set user_id = ap.id
-  from public.access_profiles ap
+  from public.shared_profiles ap
   where ap.worker_id = pa.worker_id and pa.user_id is null and pa.worker_id is not null;
 
 -- ---------------------------------------------------------------------------
@@ -579,24 +885,24 @@ update public.payroll_adjustments pa set user_id = ap.id
 -- piece rates). Old rows default to 'approved' so history stays payable.
 -- Photos can attach to a specific entry as evidence.
 -- ---------------------------------------------------------------------------
-alter table public.production_entries add column if not exists approval_status text not null default 'approved';
-alter table public.production_entries drop constraint if exists production_entries_approval_status_check;
-alter table public.production_entries add constraint production_entries_approval_status_check
+alter table public.operation_entries add column if not exists approval_status text not null default 'approved';
+alter table public.operation_entries drop constraint if exists production_entries_approval_status_check;
+alter table public.operation_entries add constraint production_entries_approval_status_check
   check (approval_status in ('pending', 'verified', 'approved', 'rejected'));
-alter table public.production_entries add column if not exists verified_by text;
-alter table public.production_entries add column if not exists verified_at timestamptz;
-alter table public.production_entries add column if not exists approved_by text;
-alter table public.production_entries add column if not exists approved_at timestamptz;
-alter table public.photo_records add column if not exists entry_id uuid references public.production_entries (id) on delete set null;
+alter table public.operation_entries add column if not exists verified_by text;
+alter table public.operation_entries add column if not exists verified_at timestamptz;
+alter table public.operation_entries add column if not exists approved_by text;
+alter table public.operation_entries add column if not exists approved_at timestamptz;
+alter table public.operation_photos add column if not exists entry_id uuid references public.operation_entries (id) on delete set null;
 
 -- Hourly piece-work photos (mobile view): each photo is tagged with the job
 -- it's being counted against, so an elapsed hour's photo count can convert
 -- into a production entry priced at that job's approved rate.
-alter table public.photo_records add column if not exists job_id uuid references public.jobs (id);
+alter table public.operation_photos add column if not exists job_id uuid references public.piece_rate_jobs (id);
 
 -- Tiers holding the verify/approve capability may update entries below them.
-drop policy if exists "verifiers update production" on public.production_entries;
-create policy "verifiers update production" on public.production_entries
+drop policy if exists "verifiers update production" on public.operation_entries;
+create policy "verifiers update production" on public.operation_entries
   for update using (
     public.my_role() in ('admin', 'manager')
     or public.my_capabilities() && array['verify', 'approve']
@@ -604,7 +910,7 @@ create policy "verifiers update production" on public.production_entries
 
 -- Seed only when the table is empty, so stations you delete stay deleted
 -- on later re-runs.
-insert into public.stations (name, sort_order)
+insert into public.shared_stations (name, sort_order)
 select v.name, v.sort_order from (values
   ('Loading Ramp', 1),
   ('Sterilizer', 2),
@@ -614,12 +920,12 @@ select v.name, v.sort_order from (values
   ('Kernel Recovery', 6),
   ('Boiler', 7)
 ) as v(name, sort_order)
-where not exists (select 1 from public.stations);
+where not exists (select 1 from public.shared_stations);
 
 -- Starter grades (tags) — tier 1 is the HIGHEST; a tier sees every tier
 -- below it. Seeded only when the table is empty, so tags you delete or
 -- re-order stay that way on later re-runs.
-insert into public.grades (name, sort_order)
+insert into public.shared_grades (name, sort_order)
 select v.name, v.sort_order from (values
   ('Management', 1),
   ('Manager', 2),
@@ -629,43 +935,43 @@ select v.name, v.sort_order from (values
   ('Operator', 6),
   ('General Worker', 7)
 ) as v(name, sort_order)
-where not exists (select 1 from public.grades);
+where not exists (select 1 from public.shared_grades);
 
 -- One-time remap for databases created before tier-1-was-highest (detected
 -- by Operator still sitting above Management).
 do $$
 begin
   if exists (
-    select 1 from public.grades m, public.grades o
+    select 1 from public.shared_grades m, public.shared_grades o
     where m.name = 'Management' and o.name = 'Operator' and m.sort_order > o.sort_order
   ) then
-    update public.grades set sort_order = 1 where name = 'Management';
-    update public.grades set sort_order = 2 where name = 'Manager';
-    update public.grades set sort_order = 3 where name = 'Engineer';
-    update public.grades set sort_order = 4 where name = 'Station Head';
-    update public.grades set sort_order = 5 where name = 'Assistant Station Head';
-    update public.grades set sort_order = 6 where name = 'Operator';
-    update public.grades set sort_order = 7 where name = 'General Worker';
+    update public.shared_grades set sort_order = 1 where name = 'Management';
+    update public.shared_grades set sort_order = 2 where name = 'Manager';
+    update public.shared_grades set sort_order = 3 where name = 'Engineer';
+    update public.shared_grades set sort_order = 4 where name = 'Station Head';
+    update public.shared_grades set sort_order = 5 where name = 'Assistant Station Head';
+    update public.shared_grades set sort_order = 6 where name = 'Operator';
+    update public.shared_grades set sort_order = 7 where name = 'General Worker';
   end if;
 end $$;
 
 -- Default colours/abilities (only fills tags still on the default grey).
-update public.grades set color = 'blue',
+update public.shared_grades set color = 'blue',
   ability = 'Sees own level piece rates; records production at own station'
   where name = 'Operator' and color = 'grey';
-update public.grades set color = 'yellow',
+update public.shared_grades set color = 'yellow',
   ability = 'Sees own and operator level piece rates'
   where name = 'Assistant Station Head' and color = 'grey';
-update public.grades set color = 'red',
+update public.shared_grades set color = 'red',
   ability = 'Sees own level and below piece rates'
   where name = 'Station Head' and color = 'grey';
-update public.grades set color = 'silver',
+update public.shared_grades set color = 'silver',
   ability = 'Can propose new piece rates; sees own level and below'
   where name = 'Engineer' and color = 'grey';
-update public.grades set color = 'gold',
+update public.shared_grades set color = 'gold',
   ability = 'Verifies new piece rates before management approval'
   where name = 'Manager' and color = 'grey';
-update public.grades set color = 'diamond',
+update public.shared_grades set color = 'diamond',
   ability = 'Final approval of each new piece rate; sees everything'
   where name = 'Management' and color = 'grey';
 
@@ -676,40 +982,40 @@ update public.grades set color = 'diamond',
 -- is a capability too. Backfill from the old verify/approve flags so
 -- existing tags keep working after the split.
 -- ---------------------------------------------------------------------------
-update public.grades set capabilities = capabilities || '{rate-verify}'
+update public.shared_grades set capabilities = capabilities || '{rate-verify}'
   where 'verify' = any(capabilities) and not 'rate-verify' = any(capabilities);
-update public.grades set capabilities = capabilities || '{rate-approve}'
+update public.shared_grades set capabilities = capabilities || '{rate-approve}'
   where 'approve' = any(capabilities) and not 'rate-approve' = any(capabilities);
-update public.grades set capabilities = capabilities || '{report-view}'
+update public.shared_grades set capabilities = capabilities || '{report-view}'
   where ('verify' = any(capabilities) or 'approve' = any(capabilities))
     and not 'report-view' = any(capabilities);
 
 -- Tag admin split: "tag-edit" used to cover everything, so tiers holding it
 -- also get the new separate add/move keys.
-update public.grades set capabilities = capabilities || '{tag-add}'
+update public.shared_grades set capabilities = capabilities || '{tag-add}'
   where 'tag-edit' = any(capabilities) and not 'tag-add' = any(capabilities);
-update public.grades set capabilities = capabilities || '{tag-move}'
+update public.shared_grades set capabilities = capabilities || '{tag-move}'
   where 'tag-edit' = any(capabilities) and not 'tag-move' = any(capabilities);
 
 -- Tier 1 (Management) is the SUPER ADMIN: pinned at #1 and always holding
 -- every ability. Re-asserted on every run so it can never drift.
-update public.grades set capabilities =
+update public.shared_grades set capabilities =
   '{data-entry,verify,approve,rate-create,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,station-create,report-view}'
   where sort_order = 1;
 
 -- Tag editing and station management follow the granted capabilities, not
 -- only the admin/manager roles — so the super admin can open the "edit
 -- tags" / "create stations" functions to chosen tiers.
-drop policy if exists "management tier manages grades" on public.grades;
-create policy "management tier manages grades" on public.grades
+drop policy if exists "management tier manages grades" on public.shared_grades;
+create policy "management tier manages grades" on public.shared_grades
   for all using (
     public.my_role() = 'admin'
     or public.my_tag_tier() = 1
     or 'tag-edit' = any(public.my_capabilities())
   );
 
-drop policy if exists "admin manager manage stations" on public.stations;
-create policy "admin manager manage stations" on public.stations
+drop policy if exists "admin manager manage stations" on public.shared_stations;
+create policy "admin manager manage stations" on public.shared_stations
   for all using (
     public.my_role() in ('admin', 'manager')
     or public.my_tag_tier() = 1
@@ -719,8 +1025,8 @@ create policy "admin manager manage stations" on public.stations
 -- Changing other users' settings is grantable too: tiers holding
 -- "user-access" may update profiles of LOWER tiers (never their own tier
 -- or above). Upper tiers keep their signup-confirmation rights.
-drop policy if exists "upper tier manages lower signups" on public.access_profiles;
-create policy "upper tier manages lower signups" on public.access_profiles
+drop policy if exists "upper tier manages lower signups" on public.shared_profiles;
+create policy "upper tier manages lower signups" on public.shared_profiles
   for update using (
     public.my_tag_tier() = 1
     or (
@@ -745,25 +1051,25 @@ create policy "upper tier manages lower signups" on public.access_profiles
 -- next to the name in the employee picker (e.g. "Ali Bin Ahmad (EMP001)").
 -- ---------------------------------------------------------------------------
 
-alter table public.production_entries add column if not exists shift text;
+alter table public.operation_entries add column if not exists shift text;
 
 -- Only Shift A / Shift B are offered — remap any rows saved under the
 -- earlier morning/afternoon/night options before tightening the check.
-update public.production_entries set shift = 'a' where shift in ('morning', 'afternoon');
-update public.production_entries set shift = 'b' where shift = 'night';
+update public.operation_entries set shift = 'a' where shift in ('morning', 'afternoon');
+update public.operation_entries set shift = 'b' where shift = 'night';
 
-alter table public.production_entries drop constraint if exists production_entries_shift_check;
-alter table public.production_entries add constraint production_entries_shift_check
+alter table public.operation_entries drop constraint if exists production_entries_shift_check;
+alter table public.operation_entries add constraint production_entries_shift_check
   check (shift is null or shift in ('a', 'b'));
 
-alter table public.access_profiles add column if not exists employee_code text;
+alter table public.shared_profiles add column if not exists employee_code text;
 create unique index if not exists access_profiles_employee_code_idx
-  on public.access_profiles (employee_code) where employee_code is not null;
+  on public.shared_profiles (employee_code) where employee_code is not null;
 
 -- Where a block sits among its row/cell mates on the Team Manage chart —
 -- set by dragging a name onto a teammate. Lower comes first; null queues
 -- at the end, so a fresh placement lands last until it is hand-ordered.
-alter table public.access_profiles add column if not exists chart_pos int;
+alter table public.shared_profiles add column if not exists chart_pos int;
 
 -- ---------------------------------------------------------------------------
 -- Tiered hourly piece rates (e.g. cage tipping): a job's rate can pay one
@@ -790,17 +1096,17 @@ declare
   plain_job uuid;
   fifth_rate numeric;
 begin
-  select id into ffb_station from public.stations where name = 'Sterilizer & Tippler Station';
+  select id into ffb_station from public.shared_stations where name = 'Sterilizer & Tippler Station';
   if ffb_station is null then return; end if;
 
-  select id into op_grade from public.grades where name = 'Operator';
-  select id into ash_grade from public.grades where name = 'Assistant Station Head';
-  select id into sh_grade from public.grades where name = 'Station Head';
+  select id into op_grade from public.shared_grades where name = 'Operator';
+  select id into ash_grade from public.shared_grades where name = 'Assistant Station Head';
+  select id into sh_grade from public.shared_grades where name = 'Station Head';
 
-  select id into first4_job from public.jobs
+  select id into first4_job from public.piece_rate_jobs
     where station_id = ffb_station and grade_id = op_grade
       and name = 'FFB Cages Tipped (First to Fourth Cages of the hour)';
-  select id into fifth_job from public.jobs
+  select id into fifth_job from public.piece_rate_jobs
     where station_id = ffb_station and grade_id = op_grade
       and name = 'FFB Cages Tipped (Fifth Cages onward of the hour)';
 
@@ -820,25 +1126,25 @@ begin
           select max(effective_from) from public.piece_rates where job_id = first4_job
         );
 
-    update public.jobs set name = 'FFB Cages Tipped' where id = first4_job;
+    update public.piece_rate_jobs set name = 'FFB Cages Tipped' where id = first4_job;
     -- Retired, not deleted — existing production_entries/photo_records still
     -- reference it, and its piece_rates history stays intact for their payout.
-    update public.jobs set active = false where id = fifth_job;
+    update public.piece_rate_jobs set active = false where id = fifth_job;
 
     -- Roll tiering out to Assistant Station Head / Station Head too. Their
     -- existing flat rate becomes Tier 1; Tier 2 is unset until someone fills
     -- it in, so the job needs re-approval before it's usable again.
-    select id into plain_job from public.jobs
+    select id into plain_job from public.piece_rate_jobs
       where station_id = ffb_station and grade_id = ash_grade and name = 'FFB Cages Tipped';
     if plain_job is not null then
-      update public.jobs set approval_status = 'pending'
+      update public.piece_rate_jobs set approval_status = 'pending'
         where id = plain_job and approval_status = 'approved';
     end if;
 
-    select id into plain_job from public.jobs
+    select id into plain_job from public.piece_rate_jobs
       where station_id = ffb_station and grade_id = sh_grade and name = 'FFB Cages Tipped';
     if plain_job is not null then
-      update public.jobs set approval_status = 'pending'
+      update public.piece_rate_jobs set approval_status = 'pending'
         where id = plain_job and approval_status = 'approved';
     end if;
   end if;
@@ -850,8 +1156,8 @@ end $$;
 -- makes the reporting chain loop-free). Drawn as the tree in Settings →
 -- User access, and the basis for who verifies/approves whose work.
 -- ---------------------------------------------------------------------------
-alter table public.access_profiles add column if not exists supervisor_id uuid
-  references public.access_profiles (id) on delete set null;
+alter table public.shared_profiles add column if not exists supervisor_id uuid
+  references public.shared_profiles (id) on delete set null;
 
 -- ---------------------------------------------------------------------------
 -- Mobile Approvals screen. Access is granted PER USER in Settings → User
@@ -859,13 +1165,13 @@ alter table public.access_profiles add column if not exists supervisor_id uuid
 -- submitted work, 'approve' = final approval (sees both queues). Not tied
 -- to any tier — the super admin / admins always have it.
 -- ---------------------------------------------------------------------------
-alter table public.access_profiles add column if not exists mobile_approval text;
-alter table public.access_profiles drop constraint if exists access_profiles_mobile_approval_check;
-alter table public.access_profiles add constraint access_profiles_mobile_approval_check
+alter table public.shared_profiles add column if not exists mobile_approval text;
+alter table public.shared_profiles drop constraint if exists access_profiles_mobile_approval_check;
+alter table public.shared_profiles add constraint access_profiles_mobile_approval_check
   check (mobile_approval is null or mobile_approval in ('verify', 'approve'));
 
 -- Reason shown to the worker when their entry is rejected.
-alter table public.production_entries add column if not exists rejected_reason text;
+alter table public.operation_entries add column if not exists rejected_reason text;
 
 create or replace function public.my_approval_screen()
 returns text
@@ -874,13 +1180,13 @@ stable
 security definer
 set search_path = public
 as $$
-  select mobile_approval from public.access_profiles where id = auth.uid();
+  select mobile_approval from public.shared_profiles where id = auth.uid();
 $$;
 
 -- Granted users may update entries (verify / approve / reject) in addition
 -- to the tier-capability holders.
-drop policy if exists "verifiers update production" on public.production_entries;
-create policy "verifiers update production" on public.production_entries
+drop policy if exists "verifiers update production" on public.operation_entries;
+create policy "verifiers update production" on public.operation_entries
   for update using (
     public.my_role() in ('admin', 'manager')
     or public.my_tag_tier() = 1
@@ -893,10 +1199,10 @@ create policy "verifiers update production" on public.production_entries
 -- direct upper (supervisor) may manage their own team members — claim new
 -- sign-ups into the team and edit their details.
 -- ---------------------------------------------------------------------------
-alter table public.access_profiles add column if not exists basic_salary numeric;
+alter table public.shared_profiles add column if not exists basic_salary numeric;
 
-drop policy if exists "upper tier manages lower signups" on public.access_profiles;
-create policy "upper tier manages lower signups" on public.access_profiles
+drop policy if exists "upper tier manages lower signups" on public.shared_profiles;
+create policy "upper tier manages lower signups" on public.shared_profiles
   for update using (
     public.my_tag_tier() = 1
     or supervisor_id = auth.uid()
@@ -923,8 +1229,8 @@ create policy "upper tier manages lower signups" on public.access_profiles
 -- still pending (or was rejected — editing resubmits it). Managers and the
 -- super admin keep full edit/delete.
 -- ---------------------------------------------------------------------------
-drop policy if exists "own pending entries editable" on public.production_entries;
-create policy "own pending entries editable" on public.production_entries
+drop policy if exists "own pending entries editable" on public.operation_entries;
+create policy "own pending entries editable" on public.operation_entries
   for update using (
     (created_by = auth.uid() or user_id = auth.uid())
     and approval_status in ('pending', 'rejected')
@@ -932,15 +1238,15 @@ create policy "own pending entries editable" on public.production_entries
 
 -- The tag editor's Edit tick (Work entry setting) reaches other people's
 -- entries too, while they are still in (or thrown out of) the queue.
-drop policy if exists "editors update production" on public.production_entries;
-create policy "editors update production" on public.production_entries
+drop policy if exists "editors update production" on public.operation_entries;
+create policy "editors update production" on public.operation_entries
   for update using (
     'edit-entry' = any(public.my_capabilities())
     and approval_status in ('pending', 'rejected')
   );
 
-drop policy if exists "delete production" on public.production_entries;
-create policy "delete production" on public.production_entries
+drop policy if exists "delete production" on public.operation_entries;
+create policy "delete production" on public.operation_entries
   for delete using (
     public.my_role() in ('admin', 'manager')
     or public.my_tag_tier() = 1
@@ -955,18 +1261,18 @@ create policy "delete production" on public.production_entries
 -- Worker profile details, edited in Worker Management (needed later by
 -- payroll: payslips, bank transfer files).
 -- ---------------------------------------------------------------------------
-alter table public.access_profiles add column if not exists ic_number text;
-alter table public.access_profiles add column if not exists phone text;
-alter table public.access_profiles add column if not exists bank_name text;
-alter table public.access_profiles add column if not exists bank_account text;
-alter table public.access_profiles add column if not exists joined_on date;
+alter table public.shared_profiles add column if not exists ic_number text;
+alter table public.shared_profiles add column if not exists phone text;
+alter table public.shared_profiles add column if not exists bank_name text;
+alter table public.shared_profiles add column if not exists bank_account text;
+alter table public.shared_profiles add column if not exists joined_on date;
 
 -- ---------------------------------------------------------------------------
 -- Named teams. A team is a leader plus everyone reporting to them; the
 -- leader's profile carries the team's display name (e.g. "Team A"), set in
 -- Worker Management -> worker profile.
 -- ---------------------------------------------------------------------------
-alter table public.access_profiles add column if not exists team_name text;
+alter table public.shared_profiles add column if not exists team_name text;
 
 -- ---------------------------------------------------------------------------
 -- Payroll period locking. Once a payroll run covering a work date is
@@ -997,9 +1303,9 @@ begin
 end;
 $$;
 
-drop trigger if exists trg_block_locked_entries on public.production_entries;
+drop trigger if exists trg_block_locked_entries on public.operation_entries;
 create trigger trg_block_locked_entries
-  before insert or update or delete on public.production_entries
+  before insert or update or delete on public.operation_entries
   for each row execute function public.block_locked_entry_changes();
 
 -- Everyone signed in may see finalized run periods (the app uses them to
@@ -1024,7 +1330,7 @@ create policy "own payroll adjustments" on public.payroll_adjustments
 -- UPDATEs store only the changed fields to keep rows small. Admins /
 -- managers / tier-1 read it in Settings -> Audit log.
 -- ---------------------------------------------------------------------------
-create table if not exists public.audit_log (
+create table if not exists public.shared_audit_log (
   id uuid primary key default gen_random_uuid(),
   at timestamptz not null default now(),
   actor uuid,
@@ -1034,10 +1340,10 @@ create table if not exists public.audit_log (
   detail jsonb
 );
 
-alter table public.audit_log enable row level security;
+alter table public.shared_audit_log enable row level security;
 
-drop policy if exists "admins read audit log" on public.audit_log;
-create policy "admins read audit log" on public.audit_log
+drop policy if exists "admins read audit log" on public.shared_audit_log;
+create policy "admins read audit log" on public.shared_audit_log
   for select using (
     public.my_role() in ('admin', 'manager') or public.my_tag_tier() = 1
   );
@@ -1064,21 +1370,21 @@ begin
       return new; -- nothing actually changed; keep the log quiet
     end if;
   end if;
-  insert into public.audit_log (actor, action, target, target_id, detail)
+  insert into public.shared_audit_log (actor, action, target, target_id, detail)
   values (auth.uid(), lower(tg_op), tg_table_name, tid, d);
   if tg_op = 'DELETE' then return old; end if;
   return new;
 end;
 $$;
 
-drop trigger if exists trg_audit_production_entries on public.production_entries;
+drop trigger if exists trg_audit_production_entries on public.operation_entries;
 create trigger trg_audit_production_entries
-  after insert or update or delete on public.production_entries
+  after insert or update or delete on public.operation_entries
   for each row execute function public.log_audit();
 
-drop trigger if exists trg_audit_jobs on public.jobs;
+drop trigger if exists trg_audit_jobs on public.piece_rate_jobs;
 create trigger trg_audit_jobs
-  after insert or update or delete on public.jobs
+  after insert or update or delete on public.piece_rate_jobs
   for each row execute function public.log_audit();
 
 drop trigger if exists trg_audit_piece_rates on public.piece_rates;
@@ -1096,14 +1402,14 @@ create trigger trg_audit_payroll_adjustments
   after insert or update or delete on public.payroll_adjustments
   for each row execute function public.log_audit();
 
-drop trigger if exists trg_audit_access_profiles on public.access_profiles;
+drop trigger if exists trg_audit_access_profiles on public.shared_profiles;
 create trigger trg_audit_access_profiles
-  after update or delete on public.access_profiles
+  after update or delete on public.shared_profiles
   for each row execute function public.log_audit();
 
-drop trigger if exists trg_audit_grades on public.grades;
+drop trigger if exists trg_audit_grades on public.shared_grades;
 create trigger trg_audit_grades
-  after insert or update or delete on public.grades
+  after insert or update or delete on public.shared_grades
   for each row execute function public.log_audit();
 
 -- ---------------------------------------------------------------------------
@@ -1116,20 +1422,20 @@ create trigger trg_audit_grades
 --   tag-add               -> insert grades
 --   tag-move              -> update grades (re-tiering)
 -- ---------------------------------------------------------------------------
-drop policy if exists "rate creators insert jobs" on public.jobs;
-create policy "rate creators insert jobs" on public.jobs
+drop policy if exists "rate creators insert jobs" on public.piece_rate_jobs;
+create policy "rate creators insert jobs" on public.piece_rate_jobs
   for insert with check ('rate-create' = any(public.my_capabilities()));
 
 -- Tier 1 is named the super admin throughout the app, and the web UI hands
 -- it every ability whatever its tag happens to store. The database has to
 -- agree, or an approve click updates zero rows and comes back looking like
 -- a success — the rate stays pending with nothing to explain it.
-drop policy if exists "approvers update jobs" on public.jobs;
-create policy "approvers update jobs" on public.jobs
+drop policy if exists "approvers update jobs" on public.piece_rate_jobs;
+create policy "approvers update jobs" on public.piece_rate_jobs
   for update using (
     public.my_tag_tier() = 1
     or exists (
-      select 1 from public.access_profiles p
+      select 1 from public.shared_profiles p
       where p.id = auth.uid() and p.can_approve_rates
     )
     or public.my_capabilities() && array['verify', 'approve', 'rate-verify', 'rate-approve', 'rate-edit']
@@ -1137,8 +1443,8 @@ create policy "approvers update jobs" on public.jobs
 
 -- Deleting a piece rate follows the tag editor's own Delete tick (the
 -- View window asks for a remark first, which the audit log keeps).
-drop policy if exists "approvers delete jobs" on public.jobs;
-create policy "approvers delete jobs" on public.jobs
+drop policy if exists "approvers delete jobs" on public.piece_rate_jobs;
+create policy "approvers delete jobs" on public.piece_rate_jobs
   for delete using (
     public.my_tag_tier() = 1
     or 'rate-delete' = any(public.my_capabilities())
@@ -1148,12 +1454,12 @@ drop policy if exists "rate creators write piece_rates" on public.piece_rates;
 create policy "rate creators write piece_rates" on public.piece_rates
   for all using (public.my_capabilities() && array['rate-create', 'rate-edit']);
 
-drop policy if exists "tag adders insert grades" on public.grades;
-create policy "tag adders insert grades" on public.grades
+drop policy if exists "tag adders insert grades" on public.shared_grades;
+create policy "tag adders insert grades" on public.shared_grades
   for insert with check ('tag-add' = any(public.my_capabilities()));
 
-drop policy if exists "tag movers update grades" on public.grades;
-create policy "tag movers update grades" on public.grades
+drop policy if exists "tag movers update grades" on public.shared_grades;
+create policy "tag movers update grades" on public.shared_grades
   for update using ('tag-move' = any(public.my_capabilities()));
 
 -- ---------------------------------------------------------------------------
@@ -1163,19 +1469,19 @@ create policy "tag movers update grades" on public.grades
 -- modules used to default to a fixed list, which silently narrowed every
 -- user; the default is now NULL = "follow the tier's module list".
 -- ---------------------------------------------------------------------------
-update public.grades set modules = array_replace(modules, 'daily-job-record', 'operation')
+update public.shared_grades set modules = array_replace(modules, 'daily-job-record', 'operation')
   where 'daily-job-record' = any(modules);
-update public.grades set modules = array_append(modules, 'operation')
+update public.shared_grades set modules = array_append(modules, 'operation')
   where not 'operation' = any(modules);
-update public.grades set modules = array_append(modules, 'worker-management')
+update public.shared_grades set modules = array_append(modules, 'worker-management')
   where sort_order < public.bottom_tier()
     and not 'worker-management' = any(modules);
 
-update public.access_profiles set modules = array_replace(modules, 'daily-job-record', 'operation')
+update public.shared_profiles set modules = array_replace(modules, 'daily-job-record', 'operation')
   where modules is not null and 'daily-job-record' = any(modules);
-alter table public.access_profiles alter column modules drop not null;
-alter table public.access_profiles alter column modules drop default;
-update public.access_profiles set modules = null
+alter table public.shared_profiles alter column modules drop not null;
+alter table public.shared_profiles alter column modules drop default;
+update public.shared_profiles set modules = null
   where modules = '{station-status,piece-rate,payroll,demo-mobile}'::text[];
 
 -- ---------------------------------------------------------------------------
@@ -1185,8 +1491,8 @@ update public.access_profiles set modules = null
 -- Claiming a new sign-up into YOUR OWN team stays open to every leader and
 -- is already covered by the "upper tier manages lower signups" policy.
 -- ---------------------------------------------------------------------------
-drop policy if exists "worker managers edit lower profiles" on public.access_profiles;
-create policy "worker managers edit lower profiles" on public.access_profiles
+drop policy if exists "worker managers edit lower profiles" on public.shared_profiles;
+create policy "worker managers edit lower profiles" on public.shared_profiles
   for update using (
     public.my_capabilities() && array['worker-edit', 'worker-assign-any']
     and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
@@ -1198,14 +1504,14 @@ create policy "worker managers edit lower profiles" on public.access_profiles
 
 -- Leaders that already manage a team keep the profile-edit right they had
 -- before this split, so nothing regresses for existing station heads.
-update public.grades set capabilities = capabilities || '{worker-edit}'
+update public.shared_grades set capabilities = capabilities || '{worker-edit}'
   where 'user-access' = any(capabilities) and not 'worker-edit' = any(capabilities);
-update public.grades set capabilities = capabilities || '{worker-assign-any}'
+update public.shared_grades set capabilities = capabilities || '{worker-assign-any}'
   where 'user-access' = any(capabilities) and not 'worker-assign-any' = any(capabilities);
 
 -- Tier 1 (Management) is the SUPER ADMIN: re-assert the full ability list
 -- now that Worker Management added two more functions.
-update public.grades set capabilities =
+update public.shared_grades set capabilities =
   '{data-entry,verify,approve,rate-create,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,worker-edit,worker-assign-any,station-create,report-view}'
   where sort_order = 1;
 
@@ -1220,37 +1526,37 @@ update public.grades set capabilities =
 -- teams created above the station-head tier — those belong to every
 -- station. A worker's box is access_profiles.team_id.
 -- ---------------------------------------------------------------------------
-create table if not exists public.teams (
+create table if not exists public.shared_teams (
   id uuid primary key default gen_random_uuid(),
   name text not null,
-  grade_id uuid references public.grades (id) on delete cascade,
-  station_id uuid references public.stations (id) on delete cascade,
-  created_by uuid references public.access_profiles (id) on delete set null,
+  grade_id uuid references public.shared_grades (id) on delete cascade,
+  station_id uuid references public.shared_stations (id) on delete cascade,
+  created_by uuid references public.shared_profiles (id) on delete set null,
   sort_order int not null default 0,
   created_at timestamptz not null default now()
 );
 
-alter table public.access_profiles add column if not exists team_id uuid
-  references public.teams (id) on delete set null;
+alter table public.shared_profiles add column if not exists team_id uuid
+  references public.shared_teams (id) on delete set null;
 
-create index if not exists access_profiles_team_idx on public.access_profiles (team_id);
+create index if not exists access_profiles_team_idx on public.shared_profiles (team_id);
 
-alter table public.teams enable row level security;
+alter table public.shared_teams enable row level security;
 
 -- Everyone signed in sees the board.
-drop policy if exists "authenticated read teams" on public.teams;
-create policy "authenticated read teams" on public.teams
+drop policy if exists "authenticated read teams" on public.shared_teams;
+create policy "authenticated read teams" on public.shared_teams
   for select using (auth.uid() is not null);
 
 -- Create / rename / remove: the tier that owns the row and every tier above
 -- it, plus the granted worker-management functions.
 -- PostgREST talks to the database as these roles: without the grants a
 -- request never reaches a policy at all.
-grant select, insert, update, delete on public.teams to authenticated;
-grant select on public.teams to anon;
+grant select, insert, update, delete on public.shared_teams to authenticated;
+grant select on public.shared_teams to anon;
 
-drop policy if exists "leaders manage teams" on public.teams;
-create policy "leaders manage teams" on public.teams
+drop policy if exists "leaders manage teams" on public.shared_teams;
+create policy "leaders manage teams" on public.shared_teams
   for all using (
     public.my_role() = 'admin'
     or public.my_tag_tier() = 1
@@ -1276,7 +1582,7 @@ create policy "leaders manage teams" on public.teams
 create or replace function public.my_team_id()
 returns uuid
 language sql stable security definer set search_path = public as $$
-  select team_id from public.access_profiles where id = auth.uid();
+  select team_id from public.shared_profiles where id = auth.uid();
 $$;
 
 -- Teams I may fill: every team owned by my tier or a tier below it. My own
@@ -1286,8 +1592,8 @@ create or replace function public.manageable_team_ids()
 returns uuid[]
 language sql stable security definer set search_path = public as $$
   select coalesce(array_agg(t.id), '{}'::uuid[])
-  from public.teams t
-  join public.grades g on g.id = t.grade_id
+  from public.shared_teams t
+  join public.shared_grades g on g.id = t.grade_id
   where public.my_tag_tier() is not null
     and public.my_tag_tier() <= g.sort_order;
 $$;
@@ -1295,8 +1601,8 @@ $$;
 -- Placing a worker in a team is an ordinary profile update, so a leader
 -- needs update rights on people who are unplaced, already in one of their
 -- teams, or in their own team — always a strictly lower tier.
-drop policy if exists "team leaders place their workers" on public.access_profiles;
-create policy "team leaders place their workers" on public.access_profiles
+drop policy if exists "team leaders place their workers" on public.shared_profiles;
+create policy "team leaders place their workers" on public.shared_profiles
   for update using (
     public.my_tag_tier() is not null
     and (grade_id is null or public.grade_tier(grade_id) > public.my_tag_tier())
@@ -1316,9 +1622,9 @@ create policy "team leaders place their workers" on public.access_profiles
     )
   );
 
-drop trigger if exists trg_audit_teams on public.teams;
+drop trigger if exists trg_audit_teams on public.shared_teams;
 create trigger trg_audit_teams
-  after insert or update or delete on public.teams
+  after insert or update or delete on public.shared_teams
   for each row execute function public.log_audit();
 
 -- ---------------------------------------------------------------------------
@@ -1340,8 +1646,8 @@ declare
   op_grade uuid;
 begin
   -- Every new signup starts as an Operator; leaders place them from there.
-  select id into op_grade from public.grades where name = 'Operator' limit 1;
-  insert into public.access_profiles (id, full_name, email, role, grade_id)
+  select id into op_grade from public.shared_grades where name = 'Operator' limit 1;
+  insert into public.shared_profiles (id, full_name, email, role, grade_id)
   values (
     new.id,
     nullif(btrim(coalesce(new.raw_user_meta_data ->> 'full_name', '')), ''),
@@ -1358,7 +1664,7 @@ exception when others then
 end;
 $$;
 
-update public.access_profiles
+update public.shared_profiles
   set full_name = null
   where full_name is not null and email is not null
     and lower(btrim(full_name)) = lower(btrim(email));
@@ -1375,7 +1681,7 @@ update public.access_profiles
 -- function is that narrow door — it touches avatar_path and nothing else,
 -- always for the caller's own row.
 -- ---------------------------------------------------------------------------
-alter table public.access_profiles add column if not exists avatar_path text;
+alter table public.shared_profiles add column if not exists avatar_path text;
 
 create or replace function public.set_my_avatar(path text)
 returns void
@@ -1383,7 +1689,7 @@ language sql
 security definer
 set search_path = public
 as $$
-  update public.access_profiles set avatar_path = path where id = auth.uid();
+  update public.shared_profiles set avatar_path = path where id = auth.uid();
 $$;
 
 revoke all on function public.set_my_avatar(text) from public;
@@ -1400,19 +1706,19 @@ grant execute on function public.set_my_avatar(text) to authenticated;
 -- log. The run itself is audited, and the lines are its detail.
 -- ---------------------------------------------------------------------------
 
-drop trigger if exists trg_audit_stations on public.stations;
+drop trigger if exists trg_audit_stations on public.shared_stations;
 create trigger trg_audit_stations
-  after insert or update or delete on public.stations
+  after insert or update or delete on public.shared_stations
   for each row execute function public.log_audit();
 
-drop trigger if exists trg_audit_workers on public.workers;
+drop trigger if exists trg_audit_workers on public.shared_workers;
 create trigger trg_audit_workers
-  after insert or update or delete on public.workers
+  after insert or update or delete on public.shared_workers
   for each row execute function public.log_audit();
 
-drop trigger if exists trg_audit_photo_records on public.photo_records;
+drop trigger if exists trg_audit_photo_records on public.operation_photos;
 create trigger trg_audit_photo_records
-  after insert or update or delete on public.photo_records
+  after insert or update or delete on public.operation_photos
   for each row execute function public.log_audit();
 
 -- ---------------------------------------------------------------------------
@@ -1430,14 +1736,14 @@ do $$
 declare dups text;
 begin
   select string_agg(distinct name, ', ') into dups
-    from public.stations
+    from public.shared_stations
     where lower(btrim(name)) in (
-      select lower(btrim(name)) from public.stations
+      select lower(btrim(name)) from public.shared_stations
       group by lower(btrim(name)) having count(*) > 1
     );
   if dups is null then
     create unique index if not exists stations_name_unique
-      on public.stations (lower(btrim(name)));
+      on public.shared_stations (lower(btrim(name)));
   else
     raise notice 'stations: duplicate names, uniqueness not enforced yet -> %', dups;
   end if;
@@ -1447,14 +1753,14 @@ do $$
 declare dups text;
 begin
   select string_agg(distinct name, ', ') into dups
-    from public.grades
+    from public.shared_grades
     where lower(btrim(name)) in (
-      select lower(btrim(name)) from public.grades
+      select lower(btrim(name)) from public.shared_grades
       group by lower(btrim(name)) having count(*) > 1
     );
   if dups is null then
     create unique index if not exists grades_name_unique
-      on public.grades (lower(btrim(name)));
+      on public.shared_grades (lower(btrim(name)));
   else
     raise notice 'grades: duplicate names, uniqueness not enforced yet -> %', dups;
   end if;
@@ -1464,15 +1770,15 @@ do $$
 declare dups text;
 begin
   select string_agg(distinct email, ', ') into dups
-    from public.access_profiles
+    from public.shared_profiles
     where email is not null and lower(btrim(email)) in (
-      select lower(btrim(email)) from public.access_profiles
+      select lower(btrim(email)) from public.shared_profiles
       where email is not null
       group by lower(btrim(email)) having count(*) > 1
     );
   if dups is null then
     create unique index if not exists access_profiles_email_unique
-      on public.access_profiles (lower(btrim(email)))
+      on public.shared_profiles (lower(btrim(email)))
       where email is not null and btrim(email) <> '';
   else
     raise notice 'access_profiles: duplicate emails, uniqueness not enforced yet -> %', dups;
@@ -1483,17 +1789,17 @@ do $$
 declare dups text;
 begin
   select string_agg(distinct phone, ', ') into dups
-    from public.access_profiles
+    from public.shared_profiles
     where phone is not null
       and regexp_replace(phone, '\D', '', 'g') <> ''
       and regexp_replace(phone, '\D', '', 'g') in (
-        select regexp_replace(phone, '\D', '', 'g') from public.access_profiles
+        select regexp_replace(phone, '\D', '', 'g') from public.shared_profiles
         where phone is not null and regexp_replace(phone, '\D', '', 'g') <> ''
         group by regexp_replace(phone, '\D', '', 'g') having count(*) > 1
       );
   if dups is null then
     create unique index if not exists access_profiles_phone_unique
-      on public.access_profiles ((regexp_replace(phone, '\D', '', 'g')))
+      on public.shared_profiles ((regexp_replace(phone, '\D', '', 'g')))
       where phone is not null and regexp_replace(phone, '\D', '', 'g') <> '';
   else
     raise notice 'access_profiles: duplicate phone numbers, uniqueness not enforced yet -> %', dups;
@@ -1510,12 +1816,12 @@ end $$;
 -- unchanged on the first run and the tags can then be trimmed to whoever
 -- should really hold it.
 -- ---------------------------------------------------------------------------
-update public.grades set capabilities = capabilities || '{team-assign}'
-  where sort_order < (select max(sort_order) from public.grades)
+update public.shared_grades set capabilities = capabilities || '{team-assign}'
+  where sort_order < (select max(sort_order) from public.shared_grades)
     and not 'team-assign' = any(capabilities);
 
 -- Re-assert the super admin's full set, now including team-assign.
-update public.grades set capabilities =
+update public.shared_grades set capabilities =
   '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,worker-edit,worker-salary,station-create}'
   where sort_order = 1;
 
@@ -1531,19 +1837,19 @@ with dupes as (
            partition by station_id, lower(btrim(name))
            order by sort_order, created_at
          ) as n
-    from public.teams
+    from public.shared_teams
 )
-update public.teams t
+update public.shared_teams t
    set name = t.name || ' ' || d.n
   from dupes d
  where d.id = t.id and d.n > 1;
 
 create unique index if not exists teams_name_per_station_idx
-  on public.teams (station_id, lower(btrim(name)))
+  on public.shared_teams (station_id, lower(btrim(name)))
   where station_id is not null;
 
 create unique index if not exists teams_name_no_station_idx
-  on public.teams (lower(btrim(name)))
+  on public.shared_teams (lower(btrim(name)))
   where station_id is null;
 
 -- ---------------------------------------------------------------------------
@@ -1557,13 +1863,13 @@ create unique index if not exists teams_name_no_station_idx
 -- the assistant-station-head rung; untick it in Settings -> Tags management
 -- if only station heads and above should create teams.
 -- ---------------------------------------------------------------------------
-update public.grades g set capabilities = g.capabilities || '{team-create}'
+update public.shared_grades g set capabilities = g.capabilities || '{team-create}'
   where (
-      select count(*) from public.grades x where x.sort_order > g.sort_order
+      select count(*) from public.shared_grades x where x.sort_order > g.sort_order
     ) >= 2
     and not 'team-create' = any(g.capabilities);
 
-update public.grades set capabilities =
+update public.shared_grades set capabilities =
   '{data-entry,edit-entry,delete-entry,verify,approve,rate-create,rate-edit,rate-delete,rate-verify,rate-approve,tag-add,tag-move,tag-edit,user-access,team-assign,team-create,worker-edit,worker-id-edit,worker-salary,station-create}'
   where sort_order = 1;
 
@@ -1583,7 +1889,7 @@ language sql
 security definer
 set search_path = public
 as $$
-  update public.access_profiles
+  update public.shared_profiles
      set employee_code = nullif(btrim(coalesce(code, '')), ''),
          phone = nullif(btrim(coalesce(phone_no, '')), '')
    where id = auth.uid();
@@ -1602,10 +1908,10 @@ grant execute on function public.set_my_details(text, text) to authenticated;
 -- so a tag anybody has since edited is never overwritten — including one
 -- where these were deliberately unticked.
 -- ---------------------------------------------------------------------------
-update public.grades set capabilities = '{data-entry,verify}'
+update public.shared_grades set capabilities = '{data-entry,verify}'
   where name = 'Assistant Station Head' and capabilities = '{data-entry}';
 
-update public.grades set capabilities = '{data-entry,verify,approve}'
+update public.shared_grades set capabilities = '{data-entry,verify,approve}'
   where name = 'Station Head' and capabilities = '{data-entry}';
 
 -- ---------------------------------------------------------------------------
@@ -1621,10 +1927,10 @@ update public.grades set capabilities = '{data-entry,verify,approve}'
 -- because a shift starting at 23:40 still belongs to that day's work and
 -- the server's idea of "today" is UTC.
 -- ---------------------------------------------------------------------------
-create table if not exists public.attendance (
+create table if not exists public.operation_attendance (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.access_profiles (id) on delete cascade,
-  station_id uuid references public.stations (id) on delete set null,
+  user_id uuid not null references public.shared_profiles (id) on delete cascade,
+  station_id uuid references public.shared_stations (id) on delete set null,
   work_date date not null default current_date,
   clock_in timestamptz not null default now(),
   clock_out timestamptz,
@@ -1632,29 +1938,29 @@ create table if not exists public.attendance (
 );
 
 create index if not exists attendance_user_day_idx
-  on public.attendance (user_id, work_date desc);
+  on public.operation_attendance (user_id, work_date desc);
 
 create unique index if not exists attendance_one_open_shift_idx
-  on public.attendance (user_id) where clock_out is null;
+  on public.operation_attendance (user_id) where clock_out is null;
 
-alter table public.attendance enable row level security;
+alter table public.operation_attendance enable row level security;
 
-grant select, insert, update on public.attendance to authenticated;
+grant select, insert, update on public.operation_attendance to authenticated;
 
 -- Reading is open to anyone signed in: a supervisor has to be able to see
 -- who is on site, and the stamps carry no pay.
-drop policy if exists "authenticated read attendance" on public.attendance;
-create policy "authenticated read attendance" on public.attendance
+drop policy if exists "authenticated read attendance" on public.operation_attendance;
+create policy "authenticated read attendance" on public.operation_attendance
   for select using (auth.uid() is not null);
 
 -- Stamping, though, is yours alone — you cannot clock anybody else in or
 -- out, and you cannot reach back into a shift that is already closed.
-drop policy if exists "clock yourself in" on public.attendance;
-create policy "clock yourself in" on public.attendance
+drop policy if exists "clock yourself in" on public.operation_attendance;
+create policy "clock yourself in" on public.operation_attendance
   for insert with check (user_id = auth.uid());
 
-drop policy if exists "clock yourself out" on public.attendance;
-create policy "clock yourself out" on public.attendance
+drop policy if exists "clock yourself out" on public.operation_attendance;
+create policy "clock yourself out" on public.operation_attendance
   for update using (user_id = auth.uid() and clock_out is null)
   with check (user_id = auth.uid());
 
@@ -1666,7 +1972,7 @@ create policy "clock yourself out" on public.attendance
 -- Ticked is the default, so existing contracts keep appearing until an
 -- incentive is deliberately unticked in the Piece Rate Masterlist.
 -- ---------------------------------------------------------------------------
-alter table public.jobs add column if not exists record_job boolean not null default true;
+alter table public.piece_rate_jobs add column if not exists record_job boolean not null default true;
 
 -- ---------------------------------------------------------------------------
 -- A clock-in is witnessed. The phone takes a selfie on the front lens and
@@ -1683,10 +1989,10 @@ alter table public.jobs add column if not exists record_job boolean not null def
 -- Clocking OUT stays one tap. The selfie proves somebody arrived; nobody
 -- fakes leaving.
 -- ---------------------------------------------------------------------------
-alter table public.attendance add column if not exists photo_path text;
-alter table public.attendance add column if not exists latitude double precision;
-alter table public.attendance add column if not exists longitude double precision;
-alter table public.attendance add column if not exists accuracy_m double precision;
+alter table public.operation_attendance add column if not exists photo_path text;
+alter table public.operation_attendance add column if not exists latitude double precision;
+alter table public.operation_attendance add column if not exists longitude double precision;
+alter table public.operation_attendance add column if not exists accuracy_m double precision;
 
 -- ---------------------------------------------------------------------------
 -- Who sent a record back. verified_by and approved_by have always been
@@ -1699,7 +2005,7 @@ alter table public.attendance add column if not exists accuracy_m double precisi
 -- them rather than dropping them, since a nameless rejection is still a
 -- rejection somebody has to fix.
 -- ---------------------------------------------------------------------------
-alter table public.production_entries add column if not exists rejected_by text;
+alter table public.operation_entries add column if not exists rejected_by text;
 
 -- ---------------------------------------------------------------------------
 -- Clocking OUT is witnessed too. It was one tap at first, on the reasoning
@@ -1709,10 +2015,10 @@ alter table public.production_entries add column if not exists rejected_by text;
 -- an upload can die on a bad signal, and losing the shift over either helps
 -- nobody.
 -- ---------------------------------------------------------------------------
-alter table public.attendance add column if not exists out_photo_path text;
-alter table public.attendance add column if not exists out_latitude double precision;
-alter table public.attendance add column if not exists out_longitude double precision;
-alter table public.attendance add column if not exists out_accuracy_m double precision;
+alter table public.operation_attendance add column if not exists out_photo_path text;
+alter table public.operation_attendance add column if not exists out_latitude double precision;
+alter table public.operation_attendance add column if not exists out_longitude double precision;
+alter table public.operation_attendance add column if not exists out_accuracy_m double precision;
 
 -- ---------------------------------------------------------------------------
 -- Worker ID edit is its own grant (Team manage setting -> "Edit Worker ID").
@@ -1748,9 +2054,9 @@ begin
 end;
 $$;
 
-drop trigger if exists guard_employee_code on public.access_profiles;
+drop trigger if exists guard_employee_code on public.shared_profiles;
 create trigger guard_employee_code
-  before update on public.access_profiles
+  before update on public.shared_profiles
   for each row execute function public.guard_employee_code();
 
 -- The mobile self-edit door learns the same rule: without the grant the
@@ -1762,7 +2068,7 @@ language sql
 security definer
 set search_path = public
 as $$
-  update public.access_profiles
+  update public.shared_profiles
      set employee_code = case
            when public.my_role() = 'admin'
              or public.my_tag_tier() = 1
@@ -1785,8 +2091,8 @@ $$;
 --
 -- Null is a real answer: no target, and the card simply counts.
 -- ---------------------------------------------------------------------------
-alter table public.stations add column if not exists daily_target int;
+alter table public.shared_stations add column if not exists daily_target int;
 
-alter table public.stations drop constraint if exists stations_daily_target_positive;
-alter table public.stations add constraint stations_daily_target_positive
+alter table public.shared_stations drop constraint if exists stations_daily_target_positive;
+alter table public.shared_stations add constraint stations_daily_target_positive
   check (daily_target is null or daily_target > 0);

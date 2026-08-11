@@ -13,6 +13,8 @@ import {
   MANAGEMENT_ONLY_GROUPS,
   MODULE_GROUP,
   MODULE_OPTIONS,
+  MODULE_VIEW,
+  VIEW_SCOPES,
   canGiveTier,
   defaultEntitlements,
   effectiveEntitlements,
@@ -22,6 +24,8 @@ import {
   stationTierOf,
   sortCapabilities,
   tagClass,
+  viewableTierIds,
+  type ViewScope,
 } from '../lib/tags'
 import { useOverlayClose } from '../lib/useOverlayClose'
 import { useWideShell } from '../lib/useWideShell'
@@ -187,9 +191,9 @@ function TagsTab() {
 
   async function load() {
     const [g, st, j] = await Promise.all([
-      supabase.from('grades').select('*').order('sort_order'),
-      supabase.from('stations').select('*').order('sort_order'),
-      supabase.from('jobs').select('id, name, station_id, active').order('name'),
+      supabase.from('shared_grades').select('*').order('sort_order'),
+      supabase.from('shared_stations').select('*').order('sort_order'),
+      supabase.from('piece_rate_jobs').select('id, name, station_id, active').order('name'),
     ])
     const err = g.error || st.error
     if (err) setError(err.message)
@@ -250,7 +254,7 @@ function TagsTab() {
       list.map((g, i) =>
         g.sort_order === i + 1
           ? null
-          : supabase.from('grades').update({ sort_order: i + 1 }).eq('id', g.id),
+          : supabase.from('shared_grades').update({ sort_order: i + 1 }).eq('id', g.id),
       ),
     )
     return results.find((r) => r?.error)?.error ?? null
@@ -258,7 +262,7 @@ function TagsTab() {
 
   async function removeTag(g: Grade) {
     if (!window.confirm(`Delete tier tag "${g.name}"?`)) return
-    const { error } = await supabase.from('grades').delete().eq('id', g.id)
+    const { error } = await supabase.from('shared_grades').delete().eq('id', g.id)
     if (error) return setError(deleteError(error, `Tier tag "${g.name}"`))
     // Closing the gap the delete left: tier 4 of 7 going means 5, 6, 7
     // move up, not that the list runs 1, 2, 3, 5, 6, 7.
@@ -275,7 +279,7 @@ function TagsTab() {
     }
     const sort = Math.max(0, ...stations.map((x) => x.sort_order)) + 1
     const { error } = await supabase
-      .from('stations')
+      .from('shared_stations')
       .insert({ name: stationName.trim(), sort_order: sort })
     if (error) return setError(saveError(error, 'station tag', stationName))
     setStationName('')
@@ -294,7 +298,7 @@ function TagsTab() {
     setDragStation(null)
     setStations(next.map((x, i) => ({ ...x, sort_order: i + 1 })))
     const results = await Promise.all(
-      next.map((x, i) => supabase.from('stations').update({ sort_order: i + 1 }).eq('id', x.id)),
+      next.map((x, i) => supabase.from('shared_stations').update({ sort_order: i + 1 }).eq('id', x.id)),
     )
     const err = results.find((r) => r.error)
     if (err?.error) setError(err.error.message)
@@ -350,7 +354,7 @@ function TagsTab() {
     }
     if (next === st.name && target === (st.daily_target ?? null)) return cancelStationEdit()
     const { error } = await supabase
-      .from('stations')
+      .from('shared_stations')
       .update({ name: next, daily_target: target })
       .eq('id', st.id)
     if (error) return setError(saveError(error, 'station tag', next))
@@ -374,7 +378,7 @@ function TagsTab() {
       )
     }
     if (!window.confirm(`Delete station tag "${st.name}"?`)) return
-    const { error } = await supabase.from('stations').delete().eq('id', st.id)
+    const { error } = await supabase.from('shared_stations').delete().eq('id', st.id)
     if (error) return setError(deleteError(error, `Station "${st.name}"`))
     setError(null)
     load()
@@ -670,16 +674,25 @@ function TagsTab() {
 function ModuleTable({
   modules,
   capabilities,
+  allGrades,
+  viewTiers,
   locked,
   onToggleModule,
   onToggleCapability,
+  onToggleViewTier,
 }: {
   modules: string[]
   capabilities: string[]
+  /** Every tier, so the view lists are drawn from the live tier list —
+   *  add or remove a tier and the ticks follow without a code change. */
+  allGrades: Grade[]
+  /** Tier ids this tag may view, per scope. */
+  viewTiers: Record<ViewScope, string[]>
   /** Read-only: the view face, and the Management tag which is fixed. */
   locked: boolean
   onToggleModule: (key: string) => void
   onToggleCapability: (key: string) => void
+  onToggleViewTier: (scope: ViewScope, gradeId: string) => void
 }) {
   return (
     <div className="module-table">
@@ -687,6 +700,10 @@ function ModuleTable({
         const on = modules.includes(m.key)
         const group = MODULE_GROUP[m.key]
         const inner = group ? CAPABILITY_OPTIONS.filter((c) => c.group === group) : []
+        // Piece Rate and Operation each carry a "whose work may this tier
+        // see" list, drawn under the module it governs.
+        const view = MODULE_VIEW[m.key]
+        const chosen = view ? viewTiers[view.scope] : []
         return (
           <div className={`module-row ${on ? 'on' : ''}`} key={m.key}>
             <label className="checkbox module-head">
@@ -714,6 +731,25 @@ function ModuleTable({
                       onChange={() => onToggleCapability(c.key)}
                     />{' '}
                     {c.label}
+                  </label>
+                ))}
+              </div>
+            )}
+            {on && view && (
+              <div className="module-caps">
+                <div className="module-subhead">
+                  {view.label}
+                  <span className="module-count">{chosen.length}/{allGrades.length}</span>
+                </div>
+                {allGrades.map((g) => (
+                  <label key={g.id} className="checkbox small" style={{ margin: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={chosen.includes(g.id)}
+                      disabled={locked}
+                      onChange={() => onToggleViewTier(view.scope, g.id)}
+                    />{' '}
+                    <span className={tagClass(g.color)}>{g.name}</span>
                   </label>
                 ))}
               </div>
@@ -810,9 +846,9 @@ function TierPeople({
     // for anyone never hand-ordered. select('*') because chart_pos may
     // not exist yet on an older database.
     const [pd, st, tm] = await Promise.all([
-      supabase.from('access_profiles').select('*').eq('grade_id', grade.id),
-      supabase.from('stations').select('id, sort_order'),
-      supabase.from('teams').select('id, sort_order'),
+      supabase.from('shared_profiles').select('*').eq('grade_id', grade.id),
+      supabase.from('shared_stations').select('id, sort_order'),
+      supabase.from('shared_teams').select('id, sort_order'),
     ])
     const stationRank = (p: Person) => {
       const ids =
@@ -870,7 +906,7 @@ function TierPeople({
         return
       }
       const { data } = await supabase
-        .from('access_profiles')
+        .from('shared_profiles')
         .select('id, full_name, email, grade_id')
         .or(`full_name.ilike.%${safe}%,email.ilike.%${safe}%`)
         .order('email')
@@ -908,7 +944,7 @@ function TierPeople({
     setBusy(true)
     setError(null)
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update({
         grade_id: grade.id,
         tags_confirmed: true,
@@ -1050,6 +1086,20 @@ function TagModal({
   const [capabilities, setCapabilities] = useState<string[]>(
     isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade?.capabilities ?? ['data-entry']),
   )
+  // Whose contracts / work records this tag may view. Drawn under the
+  // module each one governs, so the setting sits with what it governs.
+  const [viewTiers, setViewTiers] = useState<Record<ViewScope, string[]>>(() =>
+    Object.fromEntries(
+      VIEW_SCOPES.map((v) => [
+        v.scope,
+        grade
+          ? viewableTierIds(grade, allGrades, v.scope)
+          : // A tag being created sits at the bottom, so it starts with
+            // itself alone — and it has no id yet, hence nothing ticked.
+            [],
+      ]),
+    ) as Record<ViewScope, string[]>,
+  )
   // Entitlements are set on every tag, tier 1 included — see EntitlementTable.
   const [entitlements, setEntitlements] = useState<string[]>(
     grade
@@ -1063,6 +1113,15 @@ function TagModal({
   function toggleCapability(key: string) {
     if (isSuper) return
     setCapabilities((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]))
+  }
+
+  function toggleViewTier(scope: ViewScope, gradeId: string) {
+    setViewTiers((v) => ({
+      ...v,
+      [scope]: v[scope].includes(gradeId)
+        ? v[scope].filter((id) => id !== gradeId)
+        : [...v[scope], gradeId],
+    }))
   }
 
   function toggleEntitlement(key: string) {
@@ -1097,23 +1156,32 @@ function TagModal({
       : MODULE_OPTIONS.map((m) => m.key).filter((k) => modules.includes(k))
     const fields = { name: name.trim(), color, modules: mods, capabilities: caps, ability: ability || null }
     const ents = ALL_ENTITLEMENTS.filter((k) => entitlements.includes(k))
+    // Stored in tier order, and only ids that still exist — a tag deleted
+    // while this window was open must not leave a grant behind.
+    const inTierOrder = (ids: string[]) =>
+      allGrades.filter((g) => ids.includes(g.id)).map((g) => g.id)
     const write = (f: Record<string, unknown>) =>
       grade
-        ? supabase.from('grades').update(f).eq('id', grade.id)
-        : supabase.from('grades').insert({ ...f, sort_order: nextTier })
+        ? supabase.from('shared_grades').update(f).eq('id', grade.id)
+        : supabase.from('shared_grades').insert({ ...f, sort_order: nextTier })
 
-    const first = await write({ ...fields, entitlements: ents })
+    const first = await write({
+      ...fields,
+      entitlements: ents,
+      view_rate_tiers: inTierOrder(viewTiers.rate),
+      view_entry_tiers: inTierOrder(viewTiers.entry),
+    })
     // "Entitled Function" needs a column that arrived after the first
     // release. On a database that has not had supabase/setup.sql re-run,
     // save everything else rather than losing the whole edit, and say
     // plainly what is missing instead of showing a Postgres error.
-    if (first.error && /entitlements/i.test(first.error.message)) {
+    if (first.error && /entitlements|view_rate_tiers|view_entry_tiers/i.test(first.error.message)) {
       const { error } = await write(fields)
       setSaving(false)
       if (error) return setError(saveError(error, 'tier tag', name))
       return setError(
         'Saved — except "Entitled Function", which needs one line of SQL. In Supabase → ' +
-          'SQL editor run:  alter table public.grades add column if not exists entitlements text[];  ' +
+          'SQL editor run:  alter table public.shared_grades add column if not exists entitlements text[];  ' +
           'then set it again.',
       )
     }
@@ -1153,6 +1221,11 @@ function TagModal({
       isSuper ? [...ALL_CAPABILITIES] : sortCapabilities(grade.capabilities ?? ['data-entry']),
     )
     setEntitlements(effectiveEntitlements(grade, allGrades))
+    setViewTiers(
+      Object.fromEntries(
+        VIEW_SCOPES.map((v) => [v.scope, viewableTierIds(grade, allGrades, v.scope)]),
+      ) as Record<ViewScope, string[]>,
+    )
     setError(null)
     onMode('view')
   }
@@ -1181,9 +1254,12 @@ function TagModal({
             <ModuleTable
               modules={modules}
               capabilities={capabilities}
+              allGrades={allGrades}
+              viewTiers={viewTiers}
               locked
               onToggleModule={() => {}}
               onToggleCapability={() => {}}
+              onToggleViewTier={() => {}}
             />
           </div>
 
@@ -1249,9 +1325,12 @@ function TagModal({
           <ModuleTable
             modules={modules}
             capabilities={capabilities}
+            allGrades={allGrades}
+            viewTiers={viewTiers}
             locked={isSuper}
             onToggleModule={toggleModule}
             onToggleCapability={toggleCapability}
+            onToggleViewTier={toggleViewTier}
           />
         </div>
 

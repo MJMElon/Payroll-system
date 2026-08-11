@@ -21,7 +21,7 @@ import Select, { MultiSelect, type SelectOption } from '../components/Select'
 import { useAuth } from '../context/AuthContext'
 import { useOverlayClose } from '../lib/useOverlayClose'
 import { useWideShell } from '../lib/useWideShell'
-import { effectiveCapabilities, isEntitled, tagClass } from '../lib/tags'
+import { canViewTier, effectiveCapabilities, isEntitled, tagClass } from '../lib/tags'
 import {
   profileName,
   supabase,
@@ -83,7 +83,6 @@ export default function PieceRate() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<Rate[]>([])
-  const [myTier, setMyTier] = useState<number | null>(null)
   const canManage = profile?.role === 'admin' || profile?.role === 'manager'
   const isAdmin = profile?.role === 'admin'
   const [modal, setModal] = useState<'closed' | 'create'>('closed')
@@ -99,11 +98,11 @@ export default function PieceRate() {
 
   async function load() {
     const [s, g, j, r] = await Promise.all([
-      supabase.from('stations').select('id, name, sort_order').order('sort_order'),
-      supabase.from('grades').select('*').order('sort_order'),
+      supabase.from('shared_stations').select('id, name, sort_order').order('sort_order'),
+      supabase.from('shared_grades').select('*').order('sort_order'),
       // select('*') so the optional record_job flag rides along once its
       // column migration has run — and is simply absent until then.
-      supabase.from('jobs').select('*').order('name'),
+      supabase.from('piece_rate_jobs').select('*').order('name'),
       supabase
         .from('piece_rates')
         .select('id, job_id, rate, effective_from, tier2_rate')
@@ -135,15 +134,6 @@ export default function PieceRate() {
   const canFinal = isAdmin || myCaps.includes('rate-approve')
   const isApprover = isAdmin || canVerify || canFinal
 
-  // Tier comes from the signed-in account's grade tag.
-  useEffect(() => {
-    if (profile?.grade_id) {
-      const g = grades.find((x) => x.id === profile.grade_id)
-      setMyTier(g ? g.sort_order : null)
-    } else {
-      setMyTier(null)
-    }
-  }, [profile, grades])
 
   const currentRate = useMemo(() => {
     const m = new Map<string, Rate>()
@@ -174,10 +164,11 @@ export default function PieceRate() {
 
   // Managers/admins see every contract. Others are scoped two ways:
   // 1. Station — a user with station tags only sees those stations.
-  // 2. Tier — tier 1 is highest; a user sees their tier and every tier
-  //    below it (larger tier numbers). Untagged rates are visible to all.
-  const tierOf = (gradeId: string | null) =>
-    gradeId ? grades.find((g) => g.id === gradeId)?.sort_order ?? 0 : null
+  // 2. Tier — the tags ticked under "View piece rate contract of" on their
+  //    own tier tag (Settings → Tier Tag Access Manage → Piece Rate
+  //    Module). A tag nobody has set falls back to its own rank and every
+  //    rank below. Untagged rates belong to no rung and are open to all.
+  const myGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
   const myStations =
     profile?.station_ids && profile.station_ids.length > 0
       ? profile.station_ids
@@ -187,9 +178,7 @@ export default function PieceRate() {
   const visibleTo = (j: Job) => {
     if (canManage) return true
     if (myStations.length > 0 && !myStations.includes(j.station_id)) return false
-    const t = tierOf(j.grade_id)
-    if (t === null) return true
-    return myTier !== null && t >= myTier
+    return canViewTier(myGrade, grades, 'rate', j.grade_id)
   }
 
   return (
@@ -255,7 +244,6 @@ export default function PieceRate() {
                   canResubmit={canManage || canCreate || isApprover}
                   canVerify={canVerify}
                   canFinal={canFinal}
-                  canDelete={canDeleteRate}
                   myEmail={profile?.email ?? 'unknown'}
                   onChanged={load}
                   onError={setError}
@@ -539,7 +527,6 @@ function SubmissionsList({
   canResubmit,
   canVerify,
   canFinal,
-  canDelete,
   myEmail,
   onChanged,
   onError,
@@ -552,13 +539,11 @@ function SubmissionsList({
   canResubmit: boolean
   canVerify: boolean
   canFinal: boolean
-  canDelete: boolean
   myEmail: string
   onChanged: () => void
   onError: (m: string | null) => void
 }) {
   const [stationFilter, setStationFilter] = useState('')
-  const [viewing, setViewing] = useState<Job | null>(null)
   // The double-check window: which proposal, and what the click meant.
   const [confirm, setConfirm] = useState<{ job: Job; mode: 'verify' | 'approve' | 'reject' } | null>(null)
 
@@ -574,7 +559,7 @@ function SubmissionsList({
    * had lost the approval. Say so instead.
    */
   async function act(job: Job, fields: Partial<Job> & { approval_status: Job['approval_status'] }) {
-    const { data, error } = await supabase.from('jobs').update(fields).eq('id', job.id).select('id')
+    const { data, error } = await supabase.from('piece_rate_jobs').update(fields).eq('id', job.id).select('id')
     if (error) return onError(error.message)
     if (!data || data.length === 0) {
       return onError(
@@ -621,7 +606,7 @@ function SubmissionsList({
     <div className="card stack">
       <div className="row-form spread">
         <h3>
-          Pending Piece Rate Approval
+          Piece Rate Pending Approval
           {pendingCount > 0 && (
             <span className="count-badge static" style={{ marginLeft: '0.5rem' }}>{pendingCount}</span>
           )}
@@ -670,15 +655,6 @@ function SubmissionsList({
                   <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
                   <td className="right">
                     <span className="row-actions">
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        title="View details"
-                        aria-label={`View ${j.name}`}
-                        onClick={() => setViewing(j)}
-                      >
-                        <IconEye />
-                      </button>
                       {j.approval_status === 'pending' && canVerify && (
                         <button
                           type="button"
@@ -771,21 +747,6 @@ function SubmissionsList({
         />
       )}
 
-      {viewing && (
-        <ViewRateModal
-          job={viewing}
-          rate={currentRate.get(viewing.id)}
-          stationName={stationName(viewing.station_id)}
-          grades={grades}
-          canDelete={canDelete}
-          onClose={() => setViewing(null)}
-          onChanged={() => {
-            setViewing(null)
-            onChanged()
-          }}
-          onError={onError}
-        />
-      )}
     </div>
   )
 }
@@ -818,14 +779,22 @@ function ProposalLine({
   const tiered = rate?.tier2_rate != null
   return (
     <div className={`pr-grid pr-confirm ${tiered ? 'tiered' : ''}`}>
+      {/* A tiered proposal has no flat rate, so that column is not shown
+          at all — its two hourly columns carry the "Piece Rate (RM)" name
+          instead, so the amounts read as rates. */}
       <div className="pr-grid-head">
         <span>Tier Tag</span>
         <span>Station Tag</span>
         <span>Piece Rate Work Description</span>
         <span>Unit</span>
-        <span>Piece Rate (RM)</span>
-        {tiered && <span>Tier 1 — 1st to 4th /hr</span>}
-        {tiered && <span>Tier 2 — 5th onward /hr</span>}
+        {tiered ? (
+          <>
+            <span>Piece Rate (RM) — 1st to 4th /hr</span>
+            <span>Piece Rate (RM) — 5th onward /hr</span>
+          </>
+        ) : (
+          <span>Piece Rate (RM)</span>
+        )}
         <span>Effective date</span>
         <span />
       </div>
@@ -836,14 +805,19 @@ function ProposalLine({
         <ProposalCell label="Station Tag">{stationName}</ProposalCell>
         <ProposalCell label="Piece Rate Work Description" wide>{job.name}</ProposalCell>
         <ProposalCell label="Unit">{tiered ? '/hour (tiered)' : job.unit}</ProposalCell>
-        <ProposalCell label="Piece Rate (RM)">
-          {tiered ? '—' : rate ? Number(rate.rate).toFixed(2) : '—'}
-        </ProposalCell>
-        {tiered && (
-          <ProposalCell label="Tier 1 — 1st to 4th /hr">{Number(rate!.rate).toFixed(2)}</ProposalCell>
-        )}
-        {tiered && (
-          <ProposalCell label="Tier 2 — 5th onward /hr">{Number(rate!.tier2_rate).toFixed(2)}</ProposalCell>
+        {tiered ? (
+          <>
+            <ProposalCell label="Piece Rate (RM) — 1st to 4th /hr">
+              {Number(rate!.rate).toFixed(2)}
+            </ProposalCell>
+            <ProposalCell label="Piece Rate (RM) — 5th onward /hr">
+              {Number(rate!.tier2_rate).toFixed(2)}
+            </ProposalCell>
+          </>
+        ) : (
+          <ProposalCell label="Piece Rate (RM)">
+            {rate ? Number(rate.rate).toFixed(2) : '—'}
+          </ProposalCell>
         )}
         <ProposalCell label="Effective date">{rate ? rate.effective_from : '—'}</ProposalCell>
       </div>
@@ -917,119 +891,6 @@ function ConfirmActionModal({
             {yes[mode]}
           </button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-/** The full details of one proposal, and the place a proposal dies: the
- *  delete asks for a remark saying why, writes it onto the row, then
- *  removes it — so the audit log holds both the reason and the rate. */
-function ViewRateModal({
-  job,
-  rate,
-  stationName,
-  grades,
-  canDelete,
-  onClose,
-  onChanged,
-  onError,
-}: {
-  job: Job
-  rate: Rate | undefined
-  stationName: string
-  grades: Grade[]
-  canDelete: boolean
-  onClose: () => void
-  onChanged: () => void
-  onError: (m: string | null) => void
-}) {
-  const [remark, setRemark] = useState('')
-  const [confirming, setConfirming] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-
-  const tiered = rate?.tier2_rate != null
-
-  async function destroy() {
-    if (!remark.trim()) return onError('Say why this proposed piece rate is being deleted.')
-    setDeleting(true)
-    onError(null)
-    // The remark goes onto the row first: the audit trail logs the update
-    // and then the delete, so the reason survives the row itself.
-    const { error: remarkErr } = await supabase
-      .from('jobs')
-      .update({ delete_remark: remark.trim() } as never)
-      .eq('id', job.id)
-    if (remarkErr) {
-      setDeleting(false)
-      return onError(remarkErr.message)
-    }
-    // A delete refused by row security still "succeeds" with zero rows,
-    // so ask for the ids back and treat an empty answer as a refusal.
-    const { data, error } = await supabase.from('jobs').delete().eq('id', job.id).select('id')
-    setDeleting(false)
-    if (error) {
-      onError(
-        error.message.includes('foreign key')
-          ? 'This piece rate is already used in production or payroll records, so it cannot be deleted.'
-          : error.message,
-      )
-    } else if (!data || data.length === 0) {
-      onError('You are not allowed to delete this piece rate.')
-    } else {
-      onChanged()
-    }
-  }
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className={`modal modal-xwide ${tiered ? 'tiered' : ''}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="row-form spread">
-          <h2>Piece rate details</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        </div>
-
-        <ProposalLine job={job} rate={rate} stationName={stationName} grades={grades} />
-
-        <div className="row-form" style={{ gap: '0.8rem', alignItems: 'center' }}>
-          <span className={STATUS_CLASS[job.approval_status]}>{STATUS_LABEL[job.approval_status]}</span>
-          {job.verified_by && <span className="muted small">Verified by {job.verified_by}</span>}
-          {job.approved_by && <span className="muted small">Approved by {job.approved_by}</span>}
-        </div>
-
-        {canDelete && !confirming && (
-          <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-            <button className="btn ghost danger" onClick={() => setConfirming(true)}>
-              Delete piece rate
-            </button>
-          </div>
-        )}
-        {canDelete && confirming && (
-          <div className="stack" style={{ gap: '0.5rem' }}>
-            <label className="field">
-              <span>Why is this proposed piece rate being deleted?</span>
-              <textarea
-                rows={2}
-                value={remark}
-                onChange={(e) => setRemark(e.target.value)}
-                autoFocus
-              />
-            </label>
-            <div className="row-form" style={{ justifyContent: 'flex-end' }}>
-              <button className="btn ghost" onClick={() => setConfirming(false)}>Keep it</button>
-              <button
-                className="btn danger"
-                disabled={deleting || !remark.trim()}
-                onClick={destroy}
-              >
-                {deleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
@@ -1131,7 +992,7 @@ function RatesList({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search work description…"
+            placeholder="Search to filter…"
             style={{ minWidth: '220px' }}
           />
           <button className="btn ghost" onClick={exportCsv}>Export CSV</button>
@@ -1142,13 +1003,15 @@ function RatesList({
           <thead>
             <tr>
               <th>Station</th>
-              <th>Work description</th>
-              <th>Unit</th>
+              {/* The description gets the room; unit, tier rates and date
+                  share one width; actions is just wide enough for its eye. */}
+              <th className="pr-desc">Work description</th>
+              <th className="pr-eqcol">Unit</th>
               {tagCols.map((c) => (
-                <th key={c.key} className="right">{c.label} (RM)</th>
+                <th key={c.key} className="right pr-eqcol">{c.label} (RM)</th>
               ))}
-              <th>Effective date</th>
-              <th className="right">Actions</th>
+              <th className="pr-eqcol">Effective date</th>
+              <th className="right pr-actcol">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1236,8 +1099,6 @@ interface RateDraft {
   rate: string
   tier2: string
   effectiveFrom: string
-  /** Offered in the mobile work entry screen. */
-  onMobile: boolean
 }
 
 /** One line of the before/after sheet shown before anything is written. */
@@ -1245,6 +1106,43 @@ interface Change {
   what: string
   before: string
   after: string
+}
+
+/** One function line of the Manage window: its name on the left, then a
+ *  tick under Show or under No show. Editing turns the two cells into
+ *  boxes that answer as one — ticking a side picks it. */
+function FuncRow({
+  label,
+  hint,
+  on,
+  editing,
+  onPick,
+}: {
+  label: string
+  hint: string
+  on: boolean
+  editing: boolean
+  onPick: (v: boolean) => void
+}) {
+  return (
+    <tr>
+      <td title={hint}>{label}</td>
+      <td className="pr-func-tick">
+        {editing ? (
+          <input type="checkbox" checked={on} onChange={() => onPick(true)} aria-label={`${label}: show`} />
+        ) : (
+          on && <span className="tickmark yes">✓</span>
+        )}
+      </td>
+      <td className="pr-func-tick">
+        {editing ? (
+          <input type="checkbox" checked={!on} onChange={() => onPick(false)} aria-label={`${label}: no show`} />
+        ) : (
+          !on && <span className="tickmark no">✓</span>
+        )}
+      </td>
+    </tr>
+  )
 }
 
 function GroupManageModal({
@@ -1288,7 +1186,6 @@ function GroupManageModal({
             rate: r ? String(Number(r.rate)) : '',
             tier2: r?.tier2_rate != null ? String(Number(r.tier2_rate)) : '',
             effectiveFrom: r?.effective_from ?? todayISO(),
-            onMobile: j.record_job !== false,
           } as RateDraft,
         ]
       }),
@@ -1296,7 +1193,46 @@ function GroupManageModal({
 
   const [mode, setMode] = useState<'view' | 'edit' | 'history'>('view')
   const [name, setName] = useState(jobs[0]?.name ?? '')
+  // The two mobile switches belong to the WORK, not to one tier: the
+  // record is entered once by the operator, and once approved it pays
+  // every tier its own rate — so on/off is one answer for the whole
+  // piece rate, written onto every tier's row together.
+  const groupOnMobile = jobs.some((j) => j.record_job !== false)
+  const groupOnMill = jobs.some((j) => j.show_on_mill !== false)
+  const [onMobile, setOnMobile] = useState(groupOnMobile)
+  const [onMill, setOnMill] = useState(groupOnMill)
   const [draft, setDraft] = useState<Record<string, RateDraft>>(blankDraft)
+  // Tiers being ADDED to this work while editing — the same station and
+  // work description, priced for another tier. Drafted under `new:<grade>`
+  // and written as fresh contracts (through approval) on save.
+  const [addedTiers, setAddedTiers] = useState<string[]>([])
+  const [pickingTier, setPickingTier] = useState(false)
+  const usedGradeIds = new Set(jobs.map((j) => j.grade_id ?? ''))
+  const addableTiers = tierTagOptions(grades).filter(
+    (o) => !usedGradeIds.has(o.value) && !addedTiers.includes(o.value),
+  )
+  const newKey = (gid: string) => `new:${gid}`
+  function addTier(gid: string) {
+    setAddedTiers((t) => [...t, gid].sort((a, b) => tierRank(a) - tierRank(b)))
+    setDraft((d) => ({
+      ...d,
+      [newKey(gid)]: {
+        unit: jobs[0]?.unit ?? '',
+        rate: '',
+        tier2: '',
+        effectiveFrom: todayISO(),
+      },
+    }))
+    setPickingTier(false)
+  }
+  function dropAddedTier(gid: string) {
+    setAddedTiers((t) => t.filter((x) => x !== gid))
+    setDraft((d) => {
+      const next = { ...d }
+      delete next[newKey(gid)]
+      return next
+    })
+  }
   const [confirm, setConfirm] = useState<'save' | 'archive' | null>(null)
   const [remark, setRemark] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1307,6 +1243,10 @@ function GroupManageModal({
   function startEdit() {
     setName(jobs[0]?.name ?? '')
     setDraft(blankDraft())
+    setOnMobile(groupOnMobile)
+    setOnMill(groupOnMill)
+    setAddedTiers([])
+    setPickingTier(false)
     onError(null)
     setMode('edit')
   }
@@ -1314,6 +1254,10 @@ function GroupManageModal({
   function cancelEdit() {
     setName(jobs[0]?.name ?? '')
     setDraft(blankDraft())
+    setOnMobile(groupOnMobile)
+    setOnMill(groupOnMill)
+    setAddedTiers([])
+    setPickingTier(false)
     onError(null)
     setMode('view')
   }
@@ -1328,6 +1272,20 @@ function GroupManageModal({
     const oldName = jobs[0]?.name ?? ''
     if (name.trim() && name.trim() !== oldName) {
       out.push({ what: 'Work description', before: oldName, after: name.trim() })
+    }
+    if (onMobile !== groupOnMobile) {
+      out.push({
+        what: 'Show on mobile apps work entry (whole work)',
+        before: groupOnMobile ? 'Yes' : 'No',
+        after: onMobile ? 'Yes' : 'No',
+      })
+    }
+    if (onMill !== groupOnMill) {
+      out.push({
+        what: 'Show on mill performance (whole work)',
+        before: groupOnMill ? 'Yes' : 'No',
+        after: onMill ? 'Yes' : 'No',
+      })
     }
     for (const j of jobs) {
       const d = draft[j.id]
@@ -1361,13 +1319,19 @@ function GroupManageModal({
           after: d.effectiveFrom || '—',
         })
       }
-      if (d.onMobile !== (j.record_job !== false)) {
-        out.push({
-          what: `${tier} · show on mobile apps work entry`,
-          before: j.record_job !== false ? 'Yes' : 'No',
-          after: d.onMobile ? 'Yes' : 'No',
-        })
-      }
+    }
+    for (const gid of addedTiers) {
+      const d = draft[newKey(gid)]
+      if (!d) continue
+      const rateText =
+        d.unit === TIERED
+          ? `${d.rate || '—'} / ${d.tier2 || '—'} per hr (tiered)`
+          : `${d.rate || '—'} ${d.unit || ''}`.trim()
+      out.push({
+        what: `${gradeName(gid)} · NEW rate on this work`,
+        before: '—',
+        after: `${rateText}, from ${d.effectiveFrom || '—'}`,
+      })
     }
     return out
   })()
@@ -1385,7 +1349,7 @@ function GroupManageModal({
       if (newName !== jobs[0]?.name) {
         for (const j of jobs) {
           const { data, error } = await supabase
-            .from('jobs')
+            .from('piece_rate_jobs')
             .update({ name: newName })
             .eq('id', j.id)
             .select('id')
@@ -1413,21 +1377,26 @@ function GroupManageModal({
 
         const unitValue = tiered ? '/hour' : d.unit.trim() || 'unit'
         if (unitValue !== j.unit) {
-          const { error } = await supabase.from('jobs').update({ unit: unitValue }).eq('id', j.id)
+          const { error } = await supabase.from('piece_rate_jobs').update({ unit: unitValue }).eq('id', j.id)
           if (error) throw new Error(saveMessage(error.message))
         }
 
-        if (d.onMobile !== (j.record_job !== false)) {
-          const { error } = await supabase
-            .from('jobs')
-            .update({ record_job: d.onMobile })
-            .eq('id', j.id)
+        // Both switches are one answer for the whole work, written onto
+        // every tier's row. They live on the jobs row and arrived after
+        // the first release — a database that has not had setup.sql re-run
+        // says which column is missing rather than a raw Postgres error.
+        const flags: Record<string, boolean> = {}
+        if ((j.record_job !== false) !== onMobile) flags.record_job = onMobile
+        if ((j.show_on_mill !== false) !== onMill) flags.show_on_mill = onMill
+        if (Object.keys(flags).length > 0) {
+          const { error } = await supabase.from('piece_rate_jobs').update(flags).eq('id', j.id)
           if (error) {
+            const missing = /record_job|show_on_mill/i.exec(error.message)?.[0]
             throw new Error(
-              /record_job/i.test(error.message)
-                ? 'The database is missing the record_job column — run the latest ' +
-                  'supabase/setup.sql (or just: alter table public.jobs add column ' +
-                  'record_job boolean not null default true;).'
+              missing
+                ? `The database is missing the ${missing} column — run the latest ` +
+                  `supabase/setup.sql (or just: alter table public.piece_rate_jobs add column ` +
+                  `${missing} boolean not null default true;).`
                 : error.message,
             )
           }
@@ -1450,7 +1419,7 @@ function GroupManageModal({
         // and approve — otherwise amending the rate would bypass the flow.
         if (j.approval_status === 'approved') {
           const { error: reErr } = await supabase
-            .from('jobs')
+            .from('piece_rate_jobs')
             .update({
               approval_status: 'pending',
               verified_by: null,
@@ -1462,6 +1431,47 @@ function GroupManageModal({
           if (reErr) throw new Error(reErr.message)
         }
       }
+
+      // Freshly added tiers: the same work priced for another tier — a new
+      // contract, so it starts the same approval walk as any proposal.
+      for (const gid of addedTiers) {
+        const d = draft[newKey(gid)]
+        if (!d) continue
+        const tier = gradeName(gid)
+        const tiered = d.unit === TIERED
+        const rateValue = Number(d.rate)
+        if (d.rate.trim() === '' || Number.isNaN(rateValue) || rateValue < 0) {
+          throw new Error(`${tier}: enter a valid non-negative ${tiered ? 'tier 1' : 'piece'} rate.`)
+        }
+        const tier2Value = tiered ? Number(d.tier2) : null
+        if (tiered && (d.tier2.trim() === '' || Number.isNaN(tier2Value) || (tier2Value as number) < 0)) {
+          throw new Error(`${tier}: enter a valid non-negative tier 2 rate.`)
+        }
+        if (!d.unit.trim()) throw new Error(`${tier}: choose a unit.`)
+        if (!d.effectiveFrom) throw new Error(`${tier}: pick an effective date.`)
+        const row: Record<string, unknown> = {
+          station_id: jobs[0]?.station_id,
+          grade_id: gid,
+          name: newName,
+          unit: tiered ? '/hour' : d.unit.trim(),
+          approval_status: 'pending',
+        }
+        // The whole-work switches carry over — but only when the columns
+        // exist, so an un-migrated database does not refuse the insert.
+        if (jobs[0] && 'record_job' in jobs[0]) row.record_job = onMobile
+        if (jobs[0] && 'show_on_mill' in jobs[0]) row.show_on_mill = onMill
+        const { data, error } = await supabase.from('piece_rate_jobs').insert(row).select().single()
+        if (error || !data) throw new Error(saveMessage(error?.message ?? 'could not be saved.'))
+        const { error: rateErr } = await supabase.from('piece_rates').upsert(
+          { job_id: data.id, rate: rateValue, tier2_rate: tier2Value, effective_from: d.effectiveFrom },
+          { onConflict: 'job_id,effective_from' },
+        )
+        if (rateErr) {
+          await supabase.from('piece_rate_jobs').delete().eq('id', data.id)
+          throw new Error(`${tier}: ${rateErr.message}`)
+        }
+      }
+
       setConfirm(null)
       onChanged()
       onClose()
@@ -1488,7 +1498,7 @@ function GroupManageModal({
     try {
       for (const j of jobs) {
         const { data, error } = await supabase
-          .from('jobs')
+          .from('piece_rate_jobs')
           .update({ active: false, delete_remark: remark.trim() } as never)
           .eq('id', j.id)
           .select('id')
@@ -1514,7 +1524,7 @@ function GroupManageModal({
     onError(null)
     const ids = jobs.map((j) => j.id)
     const { data, error } = await supabase
-      .from('jobs')
+      .from('piece_rate_jobs')
       .update({ active: true })
       .in('id', ids)
       .select('id')
@@ -1532,11 +1542,70 @@ function GroupManageModal({
   // tiers is active any more.
   const archived = jobs.every((j) => !j.active)
 
+  /** The rate cell's edit face: the number box with the unit picker BESIDE
+   *  it, mirroring the read face's "amount unit" line. */
+  const rateEditCell = (key: string, tierLabel: string, unitFallback: string) => {
+    const d = draft[key]
+    const tiered = d?.unit === TIERED
+    return (
+      <div className="pr-manage-edit row">
+        {tiered ? (
+          <span className="rate-tiered">
+            <span className="rate-tier-line">
+              <span className="rate-tier-lbl">1st–4th</span>
+              <input
+                className="quiet-input num"
+                inputMode="decimal"
+                value={d?.rate ?? ''}
+                onChange={(e) => patch(key, { rate: e.target.value })}
+                aria-label={`${tierLabel} tier 1 rate`}
+              />
+            </span>
+            <span className="rate-tier-line">
+              <span className="rate-tier-lbl">5th+</span>
+              <input
+                className="quiet-input num"
+                inputMode="decimal"
+                value={d?.tier2 ?? ''}
+                onChange={(e) => patch(key, { tier2: e.target.value })}
+                aria-label={`${tierLabel} tier 2 rate`}
+              />
+            </span>
+          </span>
+        ) : (
+          <input
+            className="quiet-input num"
+            inputMode="decimal"
+            value={d?.rate ?? ''}
+            onChange={(e) => patch(key, { rate: e.target.value })}
+            aria-label={`${tierLabel} rate`}
+          />
+        )}
+        <UnitPicker
+          allowTiered
+          value={d?.unit ?? unitFallback}
+          onChange={(v) => patch(key, { unit: v })}
+          ariaLabel={`${tierLabel} unit`}
+        />
+      </div>
+    )
+  }
+
+  const dateEditCell = (key: string, tierLabel: string) => (
+    <input
+      className="quiet-input date"
+      type="date"
+      value={draft[key]?.effectiveFrom ?? ''}
+      onChange={(e) => patch(key, { effectiveFrom: e.target.value })}
+      aria-label={`${tierLabel} effective date`}
+    />
+  )
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal modal-manage" onClick={(e) => e.stopPropagation()}>
         <div className="row-form spread">
-          <h2>{stationName}</h2>
+          <h2>Piece Rate Details</h2>
           <div className="row-form manage-tools">
             {/* Reading the history? The eye beside it goes back to the
                 piece rate itself. */}
@@ -1598,146 +1667,174 @@ function GroupManageModal({
         {mode === 'history' ? (
           <GroupHistory jobs={jobs} grades={grades} onError={onError} />
         ) : (
-          /* The unit dropdown is positioned inside its cell, so a scroll
-             container would clip it — only the read-only face gets one. */
-          <div className={editing ? '' : 'table-scroll'}>
-            <table className="table pr-manage">
-              <thead>
-                <tr>
-                  <th className="pr-manage-corner">Work</th>
-                  {jobs.map((j) => (
-                    <th key={j.id}>
-                      <span className={tagClass(gradeColor(j.grade_id))}>{gradeName(j.grade_id)}</span>
-                      {!j.active && <> <span className="badge off">archived</span></>}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <th scope="row" className="pr-manage-work">
-                    {editing ? (
-                      <input
-                        className="quiet-input"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        aria-label="Work description"
-                      />
-                    ) : (
-                      jobs[0]?.name
-                    )}
-                  </th>
-                  {jobs.map((j) => {
-                    const d = draft[j.id]
-                    const r = currentRate.get(j.id)
-                    const tiered = d?.unit === TIERED
-                    return (
-                      <td key={j.id}>
-                        {editing ? (
-                          /* Same shape as the read face — the number where
-                             the number was, the unit under it — only now the
-                             number is a box and the unit is its picker. */
-                          <div className="pr-manage-edit">
-                            {tiered ? (
-                              <span className="rate-tiered">
-                                <span className="rate-tier-line">
-                                  <span className="rate-tier-lbl">1st–4th</span>
-                                  <input
-                                    className="quiet-input num"
-                                    inputMode="decimal"
-                                    value={d?.rate ?? ''}
-                                    onChange={(e) => patch(j.id, { rate: e.target.value })}
-                                    aria-label={`${gradeName(j.grade_id)} tier 1 rate`}
-                                  />
-                                </span>
-                                <span className="rate-tier-line">
-                                  <span className="rate-tier-lbl">5th+</span>
-                                  <input
-                                    className="quiet-input num"
-                                    inputMode="decimal"
-                                    value={d?.tier2 ?? ''}
-                                    onChange={(e) => patch(j.id, { tier2: e.target.value })}
-                                    aria-label={`${gradeName(j.grade_id)} tier 2 rate`}
-                                  />
-                                </span>
-                              </span>
-                            ) : (
-                              <input
-                                className="quiet-input num"
-                                inputMode="decimal"
-                                value={d?.rate ?? ''}
-                                onChange={(e) => patch(j.id, { rate: e.target.value })}
-                                aria-label={`${gradeName(j.grade_id)} rate`}
-                              />
-                            )}
-                            <UnitPicker
-                              allowTiered
-                              value={d?.unit ?? j.unit}
-                              onChange={(v) => patch(j.id, { unit: v })}
-                              ariaLabel={`${gradeName(j.grade_id)} unit`}
+          <>
+            {/* WHAT this window is about: the station and the work. */}
+            <div className="pr-block">
+              <div className="view-row">
+                <span className="view-label">Station</span>
+                <span className="view-value">{stationName}</span>
+              </div>
+              <div className="view-row">
+                <span className="view-label">Work description</span>
+                <span className="view-value">
+                  {editing ? (
+                    <input
+                      className="quiet-input"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      aria-label="Work description"
+                    />
+                  ) : (
+                    jobs[0]?.name
+                  )}
+                  {archived && <> <span className="badge off">archived</span></>}
+                </span>
+              </div>
+            </div>
+
+            {/* Function sheet — one answer per function for the WHOLE work:
+                the record is entered once by the operator and, approved,
+                pays every tier its own rate. Tick Show or No show. */}
+            <div className="pr-block pr-block-fit">
+              <table className="table pr-func">
+                <thead>
+                  <tr>
+                    <th className="pr-manage-corner">Function</th>
+                    <th className="pr-func-tick">Show</th>
+                    <th className="pr-func-tick">No show</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <FuncRow
+                    label="Mobile apps work entry"
+                    hint="Offered as a record to submit on the mobile work entry. Untick for an incentive or support rate — paid through payroll, never submitted."
+                    on={editing ? onMobile : groupOnMobile}
+                    editing={editing}
+                    onPick={setOnMobile}
+                  />
+                  <FuncRow
+                    label="Mill dashboard"
+                    hint="Counted on the mobile Mill output dashboard."
+                    on={editing ? onMill : groupOnMill}
+                    editing={editing}
+                    onPick={setOnMill}
+                  />
+                </tbody>
+              </table>
+            </div>
+
+            {/* Entitled tiers, upper tier first; under each its rate with
+                the unit beside the amount, then its effective date. The
+                unit dropdown is positioned inside its cell, so a scroll
+                container would clip it — only the read-only face gets one.
+                While editing, the ＋ column on the right expands the sheet
+                with a new tier's column. */}
+            <div className="pr-block">
+              <div className={editing ? '' : 'table-scroll'}>
+                <table className="table pr-manage">
+                  <thead>
+                    <tr>
+                      <th className="pr-manage-corner">Entitled tier</th>
+                      {jobs.map((j) => (
+                        <th key={j.id}>
+                          <span className={tagClass(gradeColor(j.grade_id))}>{gradeName(j.grade_id)}</span>
+                          {!j.active && <> <span className="badge off">archived</span></>}
+                        </th>
+                      ))}
+                      {editing &&
+                        addedTiers.map((gid) => (
+                          <th key={gid}>
+                            <span className={tagClass(gradeColor(gid))}>{gradeName(gid)}</span>{' '}
+                            <span className="badge warn">new</span>
+                            <button
+                              type="button"
+                              className="pr-newtier-x"
+                              title="Take this new tier back out"
+                              aria-label={`Remove new tier ${gradeName(gid)}`}
+                              onClick={() => dropAddedTier(gid)}
+                            >
+                              ×
+                            </button>
+                          </th>
+                        ))}
+                      {editing && addableTiers.length > 0 && (
+                        <th className="pr-addcol">
+                          {pickingTier ? (
+                            <Select
+                              value=""
+                              onChange={addTier}
+                              options={addableTiers}
+                              placeholder="Which tier?"
+                              ariaLabel="Add rate to tier"
                             />
-                          </div>
-                        ) : (
-                          <>
-                            <RateCell rate={r} />
-                            <div className="muted small">{j.unit}</div>
-                          </>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-
-                <tr>
-                  <th scope="row">Effective date</th>
-                  {jobs.map((j) => (
-                    <td key={j.id}>
-                      {editing ? (
-                        <input
-                          className="quiet-input date"
-                          type="date"
-                          value={draft[j.id]?.effectiveFrom ?? ''}
-                          onChange={(e) => patch(j.id, { effectiveFrom: e.target.value })}
-                          aria-label={`${gradeName(j.grade_id)} effective date`}
-                        />
-                      ) : (
-                        currentRate.get(j.id)?.effective_from ?? <span className="muted">—</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              title="Add rate to tier"
+                              aria-label="Add rate to tier"
+                              onClick={() => setPickingTier(true)}
+                            >
+                              ＋
+                            </button>
+                          )}
+                        </th>
                       )}
-                    </td>
-                  ))}
-                </tr>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th scope="row">Rate</th>
+                      {jobs.map((j) => {
+                        const r = currentRate.get(j.id)
+                        return (
+                          <td key={j.id}>
+                            {editing
+                              ? rateEditCell(j.id, gradeName(j.grade_id), j.unit)
+                              : r ? (
+                                r.tier2_rate != null ? (
+                                  <RateCell rate={r} />
+                                ) : (
+                                  <span className="pr-rate-inline">
+                                    <strong>{Number(r.rate).toFixed(2)}</strong>
+                                    <span className="muted small">{j.unit}</span>
+                                  </span>
+                                )
+                              ) : (
+                                <span className="muted">—</span>
+                              )}
+                          </td>
+                        )
+                      })}
+                      {editing &&
+                        addedTiers.map((gid) => (
+                          <td key={gid}>{rateEditCell(newKey(gid), gradeName(gid), '')}</td>
+                        ))}
+                      {editing && addableTiers.length > 0 && <td />}
+                    </tr>
 
-                <tr>
-                  <th scope="row">Show on mobile apps work entry</th>
-                  {jobs.map((j) => (
-                    <td key={j.id}>
-                      {editing ? (
-                        <label
-                          className="checkbox tickword"
-                          style={{ margin: 0 }}
-                          title="Untick for an incentive or support rate — paid through payroll, never offered as a record to submit."
-                        >
-                          <input
-                            type="checkbox"
-                            checked={draft[j.id]?.onMobile ?? true}
-                            onChange={(e) => patch(j.id, { onMobile: e.target.checked })}
-                          />{' '}
-                          {(draft[j.id]?.onMobile ?? true)
-                            ? 'Shown on mobile apps'
-                            : 'Not shown on mobile apps'}
-                        </label>
-                      ) : (j.record_job !== false) ? (
-                        <span className="tickmark yes">✓ Shown on mobile apps</span>
-                      ) : (
-                        <span className="tickmark no">✕ Not shown on mobile apps</span>
-                      )}
-                    </td>
-                  ))}
-                </tr>
-
-              </tbody>
-            </table>
-          </div>
+                    <tr>
+                      <th scope="row">Effective date</th>
+                      {jobs.map((j) => (
+                        <td key={j.id}>
+                          {editing ? (
+                            dateEditCell(j.id, gradeName(j.grade_id))
+                          ) : (
+                            currentRate.get(j.id)?.effective_from ?? <span className="muted">—</span>
+                          )}
+                        </td>
+                      ))}
+                      {editing &&
+                        addedTiers.map((gid) => (
+                          <td key={gid}>{dateEditCell(newKey(gid), gradeName(gid))}</td>
+                        ))}
+                      {editing && addableTiers.length > 0 && <td />}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         )}
 
         {editing && (
@@ -1871,6 +1968,7 @@ const AUDIT_FIELD: Record<string, string> = {
   approval_status: 'Approval',
   active: 'In the masterlist',
   record_job: 'Show on mobile work entry',
+  show_on_mill: 'Show on mill performance',
   delete_remark: 'Archive reason',
   verified_by: 'Verified by',
   approved_by: 'Approved by',
@@ -1914,7 +2012,7 @@ function GroupHistory({
       for (const r of prs ?? []) rateMap.set(r.id as string, tierOfJob.get(r.job_id as string) ?? '')
 
       const { data, error } = await supabase
-        .from('audit_log')
+        .from('shared_audit_log')
         .select('id, at, actor, action, target, target_id, detail')
         .in('target_id', [...ids, ...rateMap.keys()])
         .order('at', { ascending: false })
@@ -1927,7 +2025,7 @@ function GroupHistory({
       const names = new Map<string, string>()
       if (actorIds.length > 0) {
         const { data: people } = await supabase
-          .from('access_profiles')
+          .from('shared_profiles')
           .select('id, full_name, email')
           .in('id', actorIds)
         for (const p of people ?? []) names.set(p.id as string, profileName(p as never))
@@ -2104,7 +2202,7 @@ function HistoryList({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search work description…"
+            placeholder="Search to filter…"
             style={{ minWidth: '220px' }}
           />
         </div>
@@ -2413,7 +2511,7 @@ function CreateRatesModal({
           (at.gradeId ? ` · ${nameOf(tierOptions, at.gradeId)}` : '')
         // Every new contract waits for verify + approve, admins included.
         const { data, error: jobErr } = await supabase
-          .from('jobs')
+          .from('piece_rate_jobs')
           .insert({
             station_id: at.stationId,
             grade_id: at.gradeId || null,
@@ -2443,7 +2541,7 @@ function CreateRatesModal({
         if (rateErr) {
           // Take the contract back out, so the row can simply be sent again
           // instead of colliding with a half-made entry.
-          await supabase.from('jobs').delete().eq('id', data.id)
+          await supabase.from('piece_rate_jobs').delete().eq('id', data.id)
           failure = { key: r.key, message: `Row ${n} (${where}): ${rateErr.message}` }
           stopped = true
           break

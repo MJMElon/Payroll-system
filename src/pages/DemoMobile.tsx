@@ -104,7 +104,7 @@ function breakdownFor(
 // specific screen to be reopened after the hour ends).
 async function autoSubmitElapsedHoursForStation(stationId: string, profileId: string) {
   const { data, error } = await supabase
-    .from('photo_records')
+    .from('operation_photos')
     .select('id, taken_at, job_id')
     .eq('station_id', stationId)
     .eq('created_by', profileId)
@@ -130,7 +130,7 @@ async function autoSubmitElapsedHoursForStation(stationId: string, profileId: st
 
   for (const { jobId: jid, workDate, ids } of groups.values()) {
     const { data: entry, error: insErr } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .insert({
         work_date: workDate,
         station_id: stationId,
@@ -143,7 +143,7 @@ async function autoSubmitElapsedHoursForStation(stationId: string, profileId: st
       .select()
       .single()
     if (insErr || !entry) continue
-    await supabase.from('photo_records').update({ entry_id: entry.id }).in('id', ids)
+    await supabase.from('operation_photos').update({ entry_id: entry.id }).in('id', ids)
   }
 }
 
@@ -235,7 +235,7 @@ export default function DemoMobile() {
   useEffect(() => {
     let cancelled = false
     supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select('job_id')
       .limit(1)
       .then(({ error: probeErr }) => {
@@ -249,9 +249,9 @@ export default function DemoMobile() {
   useEffect(() => {
     async function load() {
       const [g, s, j, r] = await Promise.all([
-        supabase.from('grades').select('*').order('sort_order'),
-        supabase.from('stations').select('*').order('sort_order'),
-        supabase.from('jobs').select('*').eq('active', true),
+        supabase.from('shared_grades').select('*').order('sort_order'),
+        supabase.from('shared_stations').select('*').order('sort_order'),
+        supabase.from('piece_rate_jobs').select('*').eq('active', true),
         supabase.from('piece_rates').select('*'),
       ])
       const err = g.error || s.error || j.error || r.error
@@ -551,6 +551,13 @@ function TabBar({
  * different on each screen, and the page's own name sat somewhere else
  * again. One arrow, one title, one place.
  */
+/** Today / 7 days / 30 days — the windows every record screen offers. */
+const DAY_RANGES = [
+  { key: 'today', label: 'Today', days: 0 },
+  { key: '7d', label: '7 days', days: 6 },
+  { key: '30d', label: '30 days', days: 29 },
+] as const
+
 function MobSubHeader({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <div className="mob-subhead">
@@ -792,7 +799,10 @@ function PerformanceTab({
   const [station, setStation] = useState<Station | null>(null)
   // The screens this tab drills into: the work record behind "My work
   // done", and the two queues behind the cards under it.
-  const [sub, setSub] = useState<null | 'history' | 'pending' | 'rejected'>(null)
+  const [sub, setSub] = useState<null | 'history' | 'pending' | 'rejected' | 'output'>(null)
+  // Set by the › beside a station on the Output record: the history that
+  // opens is that station's, and Back returns to the Output record.
+  const [historyStation, setHistoryStation] = useState<Station | null>(null)
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const tierCaps = effectiveCapabilities(tier)
@@ -807,7 +817,7 @@ function PerformanceTab({
     const now = new Date()
     const from = new Date(now.getFullYear(), now.getMonth() - 5, 1)
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .gte('work_date', dayISO(from))
       .then(({ data, error }) => {
@@ -833,7 +843,7 @@ function PerformanceTab({
     from.setDate(from.getDate() - 40) // covers this month + this week
     function load() {
       supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .eq('user_id', profileId)
         .gte('work_date', dayISO(from))
@@ -879,17 +889,6 @@ function PerformanceTab({
   const myQty = (w: (typeof myWeek)[number]) => w.appr + w.rej + w.wait
   const myMaxQty = Math.max(1, ...myWeek.map(myQty))
 
-  // The same week, but the whole mill's approved output rather than one
-  // person's — an Admin reading the mill dashboard has few records of
-  // their own, so their personal chart would sit empty.
-  const millWeek = myWeek.map((w) => ({ label: w.label, iso: w.iso, qty: 0 }))
-  for (const e of entries) {
-    if ((e.approval_status ?? 'approved') !== 'approved') continue
-    if (!stations.some((st) => st.id === e.station_id)) continue
-    const slot = millWeek.find((w) => w.iso === e.work_date)
-    if (slot) slot.qty += e.quantity
-  }
-  const millMaxQty = Math.max(1, ...millWeek.map((w) => w.qty))
   const todayIso = todayISO()
 
   const amountOf = (e: ProductionEntry) => amountFor(e.job_id, e.quantity)
@@ -902,16 +901,12 @@ function PerformanceTab({
   const payable = mtd.filter((e) => status(e) !== 'rejected')
   const cost = payable.reduce((s, e) => s + amountOf(e), 0)
   const mgmtWorkers = new Set(payable.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
-  const activeStations = new Set(payable.map((e) => e.station_id)).size
   // Never your own work — the same self-exclusion as the Approvals tab.
   const needsMe = (e: ProductionEntry) =>
     e.user_id !== profileId &&
     ((canVerify && status(e) === 'pending') || (canFinal && status(e) === 'verified'))
   const awaiting = mtd.filter(needsMe)
   const rejectedWk = entries.filter((e) => status(e) === 'rejected' && e.work_date >= weekStart)
-  const fmtMoney = (v: number) => (v >= 1000 ? `RM ${Math.round(v).toLocaleString()}` : RM(v))
-
-  const stationPct = approvalByStation(mtd, stations)
 
   // Payroll cost trend — last 6 months.
   const trend: { label: string; total: number }[] = []
@@ -925,9 +920,10 @@ function PerformanceTab({
     trend.push({ label: m.toLocaleDateString(undefined, { month: 'short' }), total: trendTotal })
   }
   const maxTrend = Math.max(1, ...trend.map((t) => t.total))
+  // Each month is every work record that was not rejected, priced at the
+  // rate in force on the day worked — so the bar IS the payout. The unit
+  // is said once as a column heading rather than on every bar.
   const fmtK = (v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v).toString())
-
-  const flags = exceptionFlags(entries, mtd, stations, weekStart)
 
   // Workforce (today).
   const today = todayISO()
@@ -978,7 +974,28 @@ function PerformanceTab({
         jobs={jobs}
         amountFor={amountFor}
         canEdit={tierCaps.includes('edit-entry')}
+        station={historyStation}
         onOpen={setDetail}
+        onBack={() => {
+          // A station's history was entered from the Output record, so
+          // Back returns there; your own history goes back to the tab.
+          setSub(historyStation ? 'output' : null)
+          setHistoryStation(null)
+        }}
+      />
+    )
+  }
+
+  if (sub === 'output') {
+    return (
+      <OutputRecordScreen
+        stations={stations}
+        jobs={jobs}
+        entries={entries}
+        onStation={(st) => {
+          setHistoryStation(st)
+          setSub('history')
+        }}
         onBack={() => setSub(null)}
       />
     )
@@ -1007,22 +1024,7 @@ function PerformanceTab({
     )
   }
 
-  const statFor = (sid: string) => {
-    const rows = mtd.filter((e) => e.station_id === sid)
-    const workers = new Set(rows.map((e) => e.user_id ?? e.created_by ?? e.worker_id)).size
-    const output = rows.reduce((s, e) => s + e.quantity, 0)
-    // What the mill actually produced: only records that cleared approval.
-    // Pending work may still be rejected and rejected work never counted,
-    // so neither belongs in a figure read as output.
-    const approved = rows
-      .filter((e) => (e.approval_status ?? 'approved') === 'approved')
-      .reduce((s, e) => s + e.quantity, 0)
-    const done = rows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
-    const pct = rows.length > 0 ? Math.round((done / rows.length) * 100) : null
-    return { workers, output, approved, pct }
-  }
-  const totalOutput = stations.reduce((s, st) => s + statFor(st.id).output, 0)
-  const totalApproved = stations.reduce((s, st) => s + statFor(st.id).approved, 0)
+  const outputRecord = buildOutputRecord(stations, jobs, mtd)
 
   // My own scorecard, against a target of everything I submit ending up
   // approved. Read as a meter over two windows: today first, then the week
@@ -1040,10 +1042,7 @@ function PerformanceTab({
   const reviews = canVerify || canFinal ? 1 : 0
 
   const myThisWeek = scoreOver(myEntries.filter((e) => e.work_date >= dayISO(monday)))
-  const scopedRows = mtd.filter((e) => stations.some((s) => s.id === e.station_id))
-  const doneAll = scopedRows.filter((e) => (e.approval_status ?? 'approved') === 'approved').length
-  const compliance = scopedRows.length > 0 ? Math.round((doneAll / scopedRows.length) * 100) : null
-  const monthLabel = new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+  const shortMonth = new Date().toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
   const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
 
   // WHICH dashboard this tab shows is set per tier, in Settings → Tags
@@ -1075,7 +1074,7 @@ function PerformanceTab({
             broken rather than configured. Say which setting emptied it. */}
         {!showMill && !showKpi && (
           <div className="mob-card">
-            <div className="mob-title">No dashboard switched on</div>
+            <div className="mob-card-label">No dashboard switched on</div>
             <div className="mob-sub">
               This tier has neither the mill output nor the KPI dashboard ticked under
               Settings → Tags management → Entitled Function.
@@ -1083,53 +1082,43 @@ function PerformanceTab({
           </div>
         )}
 
-        {/* Admin tier and above read the mill first: what each station has
-            put out this month, then the week, then who is on, then what it
-            costs. The same cards appear once only — they are skipped in
-            their old places below. */}
+        {/* Admin tier and above read the mill first: the output record —
+            every work set to show here, under its station — then who is on,
+            then what it costs. */}
         {showMill && (
           <>
-            <div className="mob-card">
-              <div className="mob-card-label">Mill Dashboard</div>
-              <div className="mob-sub">{monthLabel} · approved work records only</div>
-              {stations.length === 0 ? (
-                <div className="mob-sub">No stations for your tags yet.</div>
-              ) : (
-                <>
-                  {stations.map((s) => (
-                    <button className="mob-lineitem" key={s.id} onClick={() => setStation(s)}>
-                      <span className="mob-entry-name">{s.name}</span>
-                      <span className="mob-entry-side">
-                        <span className="mob-entry-amt">{fmtQty(statFor(s.id).approved)}</span>
-                        <span className="mob-caret">›</span>
-                      </span>
-                    </button>
-                  ))}
-                  <div className="mob-breakrow total">
-                    <span>Total approved output</span>
-                    <span className="mob-entry-amt">{fmtQty(totalApproved)}</span>
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="mob-card">
-              <div className="mob-title">Daily quantity — this week</div>
-              <div className="mob-bars">
-                {millWeek.map((w) => (
-                  <div className={`mob-barrow ${w.iso === todayIso ? 'today' : ''}`} key={w.iso}>
-                    <span className="lbl">{w.label}{w.iso === todayIso ? ' •' : ''}</span>
-                    <span className="mob-bartrack">
-                      <div style={{ width: `${(w.qty / millMaxQty) * 100}%` }} />
-                    </span>
-                    <span className="val">{w.qty > 0 ? fmtQty(w.qty) : '·'}</span>
-                  </div>
-                ))}
+            {/* The whole card opens the record over today, 7 days and 30
+                days — for the stations this tier may see, which is the
+                list it was handed. */}
+            <button className="mob-card mob-card-tap" onClick={() => setSub('output')}>
+              {/* The same head as the KPI dashboard's cards: the label
+                  small and grey, the caret on the right. */}
+              <div className="mob-cardhead">
+                <span className="mob-card-label">{shortMonth} Output Record</span>
+                <span className="mob-caret" aria-hidden="true">›</span>
               </div>
-            </div>
+              {outputRecord.length === 0 ? (
+                <div className="mob-sub">
+                  No work is set to show here yet — tick “Show on mill performance”
+                  on a piece rate.
+                </div>
+              ) : (
+                outputRecord.map((r) => (
+                  <div key={r.station.id}>
+                    <div className="mob-breakrow station">{r.station.name}</div>
+                    {r.works.map((w) => (
+                      <div className="mob-breakrow indent" key={w.name}>
+                        <span>{w.name}</span>
+                        <span className="mob-entry-amt">{fmtQty(w.qty)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
+            </button>
 
             <div className="mob-card">
-              <div className="mob-title">Workforce</div>
+              <div className="mob-card-label">Workforce</div>
               <div className="mob-breakrow">
                 <span>Active workers today</span>
                 <span className="mob-entry-amt">{activeToday}</span>
@@ -1145,7 +1134,8 @@ function PerformanceTab({
             </div>
 
             <div className="mob-card">
-              <div className="mob-title">Payroll cost trend (6 months)</div>
+              <div className="mob-card-label">Payroll cost trend</div>
+              <div className="mob-barhead"><span className="val">RM</span></div>
               <div className="mob-bars">
                 {trend.map((t) => (
                   <div className="mob-barrow" key={t.label}>
@@ -1251,117 +1241,17 @@ function PerformanceTab({
         )}
 
         {(canVerify || canFinal) && showMill && (
-          <>
-            <div className="mob-sub" style={{ padding: '0 0.2rem' }}>Management dashboard</div>
-
-            <div className="mob-card mob-highlight">
-              <div className="mob-field-label" style={{ color: '#aeb8c4' }}>Payroll cost MTD</div>
-              <div className="mob-big">{fmtMoney(cost)}</div>
-              <div className="mob-sub">
-                {mgmtWorkers} active worker{mgmtWorkers === 1 ? '' : 's'} across {activeStations} station{activeStations === 1 ? '' : 's'}
-              </div>
-            </div>
-
-            <div className="mob-grid2">
-              <div className="mob-card">
-                <div className="mob-field-label">{canFinal ? 'Pending final' : 'Pending verify'}</div>
-                <div className="mob-stat">{awaiting.length}</div>
-              </div>
-              <div className="mob-card">
-                <div className="mob-field-label">Rejected this wk</div>
-                <div className="mob-stat">{rejectedWk.length}</div>
-              </div>
-            </div>
-            <div className="mob-grid2">
-              <div className="mob-card">
-                <div className="mob-field-label">Avg wage / worker</div>
-                <div className="mob-stat">{mgmtWorkers > 0 ? fmtMoney(cost / mgmtWorkers) : '—'}</div>
-              </div>
-              <div className="mob-card">
-                <div className="mob-field-label">Compliance %</div>
-                <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
-              </div>
-            </div>
-
-            {stationPct.length > 0 && !showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Approval completion by station</div>
-                <div className="mob-bars">
-                  {stationPct.map((s) => (
-                    <div className="mob-barrow" key={s.id}>
-                      <span className="lbl station">{s.name}</span>
-                      <span className="mob-bartrack">
-                        <div className={s.pct! < 80 ? 'best' : ''} style={{ width: `${s.pct}%` }} />
-                      </span>
-                      <span className="val">{s.pct}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Payroll cost trend (6 months)</div>
-                <div className="mob-bars">
-                  {trend.map((t) => (
-                    <div className="mob-barrow" key={t.label}>
-                      <span className="lbl">{t.label}</span>
-                      <span className="mob-bartrack">
-                        <div style={{ width: `${(t.total / maxTrend) * 100}%` }} />
-                      </span>
-                      <span className="val">{fmtK(t.total)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Exception flags</div>
-                {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
-                {flags.map((f, i) => (
-                  <div className={`mob-flag ${f.kind}`} key={i}>
-                    <div className="mob-flag-title">{f.title}</div>
-                    <div>{f.text}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!showMill && (
-              <div className="mob-card">
-                <div className="mob-title">Workforce</div>
-                <div className="mob-breakrow">
-                  <span>Active workers today</span>
-                  <span className="mob-entry-amt">{activeToday}</span>
-                </div>
-                <div className="mob-breakrow">
-                  <span>Records submitted today</span>
-                  <span className="mob-entry-amt">{todayRows.length}</span>
-                </div>
-                <div className="mob-breakrow">
-                  <span>Stations at full coverage</span>
-                  <span className="mob-entry-amt">{coveredToday} / {stations.length}</span>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-
-        {showMill && (
-          <div className="mob-grid2">
-            <div className="mob-card">
-              <div className="mob-field-label">Output this month</div>
-              <div className="mob-stat">{fmtQty(totalOutput)}</div>
-            </div>
-            <div className="mob-card">
-              <div className="mob-field-label">Approval %</div>
-              <div className="mob-stat">{compliance == null ? '—' : `${compliance}%`}</div>
+          <div className="mob-card">
+            <div className="mob-card-label">Avg wage / worker</div>
+            <div className="mob-breakrow">
+              <span>RM / Worker</span>
+              <span className="mob-entry-amt">
+                {mgmtWorkers > 0 ? Math.round(cost / mgmtWorkers).toLocaleString() : '—'}
+              </span>
             </div>
           </div>
         )}
+
       </div>
     </>
   )
@@ -1391,6 +1281,118 @@ function onePerWork(list: Job[], tier: Grade | null, grades: Grade[]): Job[] {
     if (!seen || rank(j) < rank(seen)) best.set(j.name, j)
   }
   return [...best.values()]
+}
+
+/* ------------------------------------------------------------------ */
+/* Output record — the same sheet as the dashboard card, over a window  */
+/* you choose. The station list handed in is already what this tier may */
+/* see, so a station-scoped tier reads its own station here and a       */
+/* mill-wide one reads every station, with no extra filtering.          */
+/* ------------------------------------------------------------------ */
+
+function OutputRecordScreen({
+  stations,
+  jobs,
+  entries,
+  onStation,
+  onBack,
+}: {
+  stations: Station[]
+  jobs: Job[]
+  entries: ProductionEntry[]
+  onStation: (s: Station) => void
+  onBack: () => void
+}) {
+  const [range, setRange] = useState<(typeof DAY_RANGES)[number]['key']>('today')
+  const chosen = DAY_RANGES.find((r) => r.key === range) ?? DAY_RANGES[0]
+
+  const from = new Date()
+  from.setDate(from.getDate() - chosen.days)
+  const fromISO = dayISO(from)
+  const rows = entries.filter((e) => e.work_date >= fromISO)
+  const record = buildOutputRecord(stations, jobs, rows)
+  const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
+
+  return (
+    <>
+      <div className="mob-body">
+        <MobSubHeader title="Output record" onBack={onBack} />
+        <div className="mob-queue-chips">
+          {DAY_RANGES.map((r) => (
+            <button key={r.key} className={range === r.key ? 'on' : ''} onClick={() => setRange(r.key)}>
+              {r.label}
+            </button>
+          ))}
+        </div>
+
+        {record.length === 0 ? (
+          <div className="mob-card">
+            <div className="mob-sub">Nothing set to show on the mill dashboard yet.</div>
+          </div>
+        ) : (
+          record.map((r) => (
+            <div className="mob-card" key={r.station.id}>
+              <button className="mob-cardhead" onClick={() => onStation(r.station)}>
+                <span className="mob-card-label">{r.station.name}</span>
+                <span className="mob-caret" aria-hidden="true">›</span>
+              </button>
+              {r.works.map((w) => (
+                <div className="mob-breakrow" key={w.name}>
+                  <span>{w.name}</span>
+                  <span className="mob-entry-amt">{fmtQty(w.qty)}</span>
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  )
+}
+
+/** One station's line on the Output record, and the works under it. */
+interface OutputRow {
+  station: Station
+  works: { name: string; qty: number }[]
+}
+
+/**
+ * The Output record: every work set to "Show on mill performance", under
+ * the station it belongs to, with what was APPROVED against it over the
+ * rows given.
+ *
+ * Summed by work NAME rather than by contract, since the same work is
+ * priced once per tier tag and the mill does not care which tier tipped
+ * the cage. A work with nothing recorded still shows, at zero — a station
+ * that produced nothing is the thing a dashboard is for.
+ *
+ * `stations` is already the list this tier may see, so a station-scoped
+ * tier gets its own station and a mill-wide one gets them all, with no
+ * further filtering here.
+ */
+function buildOutputRecord(stations: Station[], jobs: Job[], rows: ProductionEntry[]): OutputRow[] {
+  const millJobs = jobs.filter((j) => j.show_on_mill !== false)
+  const jobById = new Map(millJobs.map((j) => [j.id, j]))
+  const byStation = new Map(stations.map((s) => [s.id, new Map<string, number>()]))
+  for (const j of millJobs) {
+    const m = byStation.get(j.station_id)
+    if (m && !m.has(j.name)) m.set(j.name, 0)
+  }
+  for (const e of rows) {
+    if ((e.approval_status ?? 'approved') !== 'approved') continue
+    const j = jobById.get(e.job_id)
+    const m = byStation.get(e.station_id)
+    if (!j || !m) continue
+    m.set(j.name, (m.get(j.name) ?? 0) + e.quantity)
+  }
+  return stations
+    .map((s) => ({
+      station: s,
+      works: [...(byStation.get(s.id) ?? new Map<string, number>())]
+        .map(([name, qty]) => ({ name, qty }))
+        .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name)),
+    }))
+    .filter((r) => r.works.length > 0)
 }
 
 // Hard cap on hourly piece-work photos — a station's hourly_target is a
@@ -1538,7 +1540,7 @@ function StationWorkPanel({
       ? 'id, station_id, photo_path, taken_at, job_id, entry_id'
       : 'id, station_id, photo_path, taken_at, entry_id'
     const { data, error } = await supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select<string, PhotoRecord>(cols)
       .eq('station_id', station.id)
       .gte('taken_at', start.toISOString())
@@ -1549,7 +1551,7 @@ function StationWorkPanel({
 
     if (hourlyPieceWork) {
       const { data: entryRows, error: entryErr } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .eq('station_id', station.id)
         .eq('work_date', dayISO(viewDate))
@@ -1611,7 +1613,7 @@ function StationWorkPanel({
         .upload(path, photo, { contentType: 'image/jpeg' })
       if (upErr) throw new Error(upErr.message)
       const { error: insErr } = await supabase
-        .from('photo_records')
+        .from('operation_photos')
         .insert({
           station_id: station.id,
           photo_path: path,
@@ -1892,7 +1894,7 @@ function ClockCard({
     if (!profileId) return
     let cancelled = false
     supabase
-      .from('attendance')
+      .from('operation_attendance')
       .select('id, work_date, clock_in, clock_out')
       .eq('user_id', profileId)
       .gte('work_date', weekAgo)
@@ -2024,7 +2026,7 @@ function ClockCard({
       // closed where it lives — on screen.
       if (id && !id.startsWith(LOCAL_SHIFT)) {
         const { error } = await supabase
-          .from('attendance')
+          .from('operation_attendance')
           .update({
             clock_out: pending.at,
             out_photo_path: photoPath,
@@ -2038,7 +2040,7 @@ function ClockCard({
       setShifts((rows) => rows.map((r) => (r.id === id ? { ...r, clock_out: pending.at } : r)))
     } else {
       const { data, error } = await supabase
-        .from('attendance')
+        .from('operation_attendance')
         .insert({
           user_id: profileId,
           station_id: stationId,
@@ -2363,7 +2365,7 @@ function WorkDoneCard({
     let cancelled = false
     const load = () =>
       supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', profileId)
         .eq('station_id', station.id)
@@ -2542,7 +2544,7 @@ function RecordTab({
     }
     setPulling(true)
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('quantity, approval_status')
       .eq('job_id', operatorJob.id)
       .eq('work_date', dutyDate)
@@ -2575,7 +2577,7 @@ function RecordTab({
     onError(null)
     try {
       const { data, error } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .insert({
           work_date: isASH ? dutyDate : todayISO(),
           station_id: stationId,
@@ -2599,7 +2601,7 @@ function RecordTab({
             .upload(path, compressed, { contentType: 'image/jpeg' })
           if (!upErr) {
             await supabase
-              .from('photo_records')
+              .from('operation_photos')
               .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
           }
         }
@@ -2959,18 +2961,13 @@ function RecordTab({
 /* there. Tapping a row opens the full submitted record.               */
 /* ------------------------------------------------------------------ */
 
-const HISTORY_RANGES = [
-  { key: 'today', label: 'Today', days: 0 },
-  { key: '7d', label: '7 days', days: 6 },
-  { key: '30d', label: '30 days', days: 29 },
-] as const
-
 function RecordHistory({
   profileId,
   stations,
   jobs,
   amountFor,
   canEdit,
+  station = null,
   onOpen,
   onBack,
 }: {
@@ -2980,10 +2977,17 @@ function RecordHistory({
   amountFor: (jobId: string, quantity: number) => number
   /** The tier's Edit tick (Work entry setting) — without it, no pencil. */
   canEdit: boolean
+  /**
+   * Whose history this is. Without a station it is YOUR records, reached
+   * from "My work done". With one — the › beside a station on the Output
+   * record — it is everything recorded AT that station, whoever did it,
+   * and the screen is headed with the station's name.
+   */
+  station?: Station | null
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
-  const [rangeKey, setRangeKey] = useState<(typeof HISTORY_RANGES)[number]['key']>('today')
+  const [rangeKey, setRangeKey] = useState<(typeof DAY_RANGES)[number]['key']>('today')
   const [rows, setRows] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
   // The entry whose pencil was tapped, and the number being retyped.
@@ -3007,7 +3011,7 @@ function RecordHistory({
     setEditErr(null)
     // A fixed entry goes back through verify and approve.
     const { data, error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .update({
         quantity: qty,
         approval_status: 'pending',
@@ -3034,24 +3038,22 @@ function RecordHistory({
   }
 
   useEffect(() => {
-    if (!profileId) return
-    const range = HISTORY_RANGES.find((r) => r.key === rangeKey)!
+    if (!station && !profileId) return
+    const range = DAY_RANGES.find((r) => r.key === rangeKey)!
     const d = new Date()
     d.setDate(d.getDate() - range.days)
     const since = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
     setLoading(true)
-    supabase
-      .from('production_entries')
-      .select('*')
-      .eq('user_id', profileId)
-      .gte('work_date', since)
-      .order('created_at', { ascending: false })
+    let q = supabase.from('operation_entries').select('*').gte('work_date', since)
+    // Station mode reads the whole station; personal mode reads your rows.
+    q = station ? q.eq('station_id', station.id) : q.eq('user_id', profileId!)
+    q.order('created_at', { ascending: false })
       .limit(200)
       .then(({ data }) => {
         setRows(data ?? [])
         setLoading(false)
       })
-  }, [profileId, rangeKey])
+  }, [profileId, rangeKey, station])
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
@@ -3064,9 +3066,10 @@ function RecordHistory({
 
       <div className="mob-body">
         <MobSubHeader title="Work Record History" onBack={onBack} />
+        {station && <div className="mob-card-label centred">{station.name}</div>}
 
         <div className="mob-seg" role="tablist">
-          {HISTORY_RANGES.map((r) => (
+          {DAY_RANGES.map((r) => (
             <button
               key={r.key}
               role="tab"
@@ -3204,7 +3207,7 @@ function EntryDetail({
   const [photos, setPhotos] = useState<PhotoRecord[]>([])
   useEffect(() => {
     supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select('*')
       .eq('entry_id', entry.id)
       .then(({ data }) => setPhotos(data ?? []))
@@ -3426,7 +3429,7 @@ function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () =>
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     supabase
-      .from('photo_records')
+      .from('operation_photos')
       .select('*')
       .eq('entry_id', entry.id)
       .order('taken_at', { ascending: true })
@@ -3507,7 +3510,7 @@ function ReviewSections({
     const from = new Date()
     from.setDate(from.getDate() - 40) // this month and this week, both covered
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .gte('work_date', dayISO(from))
       .then(({ data, error }) => {
@@ -3532,9 +3535,11 @@ function ReviewSections({
 
   return (
     <>
+      {/* Block titles wear the KPI dashboard's card label — small, grey,
+          tracked out — so the two tabs read as one family. */}
       {stationPct.length > 0 && (
         <div className="mob-card">
-          <div className="mob-title">Approval completion by station</div>
+          <div className="mob-card-label">Approval completion by station</div>
           <div className="mob-bars">
             {stationPct.map((s) => (
               <div className="mob-barrow" key={s.id}>
@@ -3550,7 +3555,7 @@ function ReviewSections({
       )}
 
       <div className="mob-card">
-        <div className="mob-title">Exception flags</div>
+        <div className="mob-card-label">Exception flags</div>
         {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
         {flags.map((f, i) => (
           <div className={`mob-flag ${f.kind}`} key={i}>
@@ -3561,7 +3566,7 @@ function ReviewSections({
       </div>
 
       <div className="mob-card">
-        <div className="mob-title">My work done</div>
+        <div className="mob-card-label">My work done</div>
         <div className="mob-sub">Target 100% approved</div>
         <ScoreMeter label="Today" score={myToday} />
         <ScoreMeter label="This week" score={myThisWeek} />
@@ -3628,7 +3633,7 @@ function MyWorkTab({
   async function load() {
     if (!profileId) return
     const mine = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .eq('user_id', profileId)
       .order('created_at', { ascending: false })
@@ -3640,7 +3645,7 @@ function MyWorkTab({
     // too — otherwise their own records fall through the rung test.
     if (profileId) {
       const { data: me } = await supabase
-        .from('access_profiles')
+        .from('shared_profiles')
         .select('id, full_name, email, grade_id, station_id, station_ids')
         .eq('id', profileId)
         .maybeSingle()
@@ -3651,7 +3656,7 @@ function MyWorkTab({
     let waiting: ProductionEntry[] = []
     if (canVerify || canApprove) {
       const { data } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .in('approval_status', ['pending', 'verified'])
         .order('created_at', { ascending: true })
@@ -3665,7 +3670,7 @@ function MyWorkTab({
       let byId = new Map<string, Profile>()
       if (submitterIds.length > 0) {
         const { data: p } = await supabase
-          .from('access_profiles')
+          .from('shared_profiles')
           .select('id, full_name, email, grade_id, station_id, station_ids')
           .in('id', submitterIds)
         byId = new Map(((p ?? []) as Profile[]).map((x) => [x.id, x]))
@@ -3699,7 +3704,7 @@ function MyWorkTab({
     const entryIds = [...own, ...waiting].map((e) => e.id)
     if (entryIds.length > 0) {
       const { data: ph } = await supabase
-        .from('photo_records')
+        .from('operation_photos')
         .select('id, entry_id')
         .in('entry_id', entryIds)
       const m = new Map<string, number>()
@@ -3728,7 +3733,7 @@ function MyWorkTab({
     setBusy(e.id)
     onError(null)
     const { error } = await supabase
-      .from('production_entries')
+      .from('operation_entries')
       .update({
         quantity: qty,
         approval_status: 'pending',
@@ -3767,7 +3772,7 @@ function MyWorkTab({
         approved_at: null,
       })
     }
-    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    const { error } = await supabase.from('operation_entries').update(fields).eq('id', e.id)
     setBusy(null)
     if (error) return onError(error.message)
     load()
@@ -3858,9 +3863,9 @@ function MyWorkTab({
       </div>
 
       <div className="mob-body">
+        {/* Same head as the KPI dashboard: the title alone, no strapline. */}
         <div className="mob-pagehead">
           <div className="mob-role">My work</div>
-          <div className="mob-sub">Everything you recorded and where it stands</div>
         </div>
 
         {showMill && (
@@ -4095,7 +4100,7 @@ function QueueScreen({
     const wanted = kind === 'pending' ? ['pending', 'verified'] : ['rejected']
     const [mineRes, allRes, peopleRes] = await Promise.all([
       supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('*')
         .eq('user_id', profileId)
         .in('approval_status', wanted)
@@ -4107,14 +4112,14 @@ function QueueScreen({
       // down.
       reviews
         ? supabase
-            .from('production_entries')
+            .from('operation_entries')
             .select('*')
             .in('approval_status', wanted)
             .neq('user_id', profileId)
             .order('created_at', { ascending: true })
             .limit(200)
         : Promise.resolve({ data: [] as ProductionEntry[], error: null }),
-      supabase.from('access_profiles').select('id, full_name, email, grade_id'),
+      supabase.from('shared_profiles').select('id, full_name, email, grade_id'),
     ])
     if (mineRes.error) onError(mineRes.error.message)
     const byId = new Map(((peopleRes.data ?? []) as Profile[]).map((p) => [p.id, p]))
@@ -4173,7 +4178,7 @@ function QueueScreen({
         approved_at: null,
       })
     }
-    const { error } = await supabase.from('production_entries').update(fields).eq('id', e.id)
+    const { error } = await supabase.from('operation_entries').update(fields).eq('id', e.id)
     setBusy(null)
     if (error) return onError(error.message)
     load()
@@ -4509,7 +4514,7 @@ function AvatarPicker({
     if (!profile?.id) return
     let cancelled = false
     supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .select('avatar_path')
       .eq('id', profile.id)
       .maybeSingle()
@@ -4609,7 +4614,7 @@ function MyNumbersSection({
     const from = new Date()
     from.setDate(from.getDate() - 40) // this month, plus a little carry-over
     supabase
-      .from('production_entries')
+      .from('operation_entries')
       .select('*')
       .eq('user_id', profileId)
       .gte('work_date', dayISO(from))
@@ -4804,7 +4809,7 @@ function PayslipSection({ profile }: { profile: Profile | null }) {
       setAdjs((a ?? []) as PayrollAdjustment[])
       const jobIds = [...new Set((l ?? []).map((x) => x.job_id))]
       if (jobIds.length > 0) {
-        const { data: j } = await supabase.from('jobs').select('id, name').in('id', jobIds)
+        const { data: j } = await supabase.from('piece_rate_jobs').select('id, name').in('id', jobIds)
         setJobNames(new Map((j ?? []).map((x) => [x.id as string, x.name as string])))
       }
       setLoading(false)
@@ -4968,8 +4973,8 @@ function TeamTab({
 
   async function load() {
     const [p, t] = await Promise.all([
-      supabase.from('access_profiles').select('*'),
-      supabase.from('teams').select('*').order('sort_order'),
+      supabase.from('shared_profiles').select('*'),
+      supabase.from('shared_teams').select('*').order('sort_order'),
     ])
     if (p.error) setError(p.error.message)
     else setPeople((p.data ?? []) as Profile[])
@@ -5204,7 +5209,7 @@ function TeamTab({
     setBusy(p.id)
     setError(null)
     const { error: err } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update({
         supervisor_id: profile.id,
         grade_id: placeable ? p.grade_id : floor?.id ?? p.grade_id,
@@ -5232,7 +5237,7 @@ function TeamTab({
     setBusy(p.id)
     setError(null)
     const { error: err } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update({
         supervisor_id: profile.id,
         grade_id: target.grade.id,
@@ -5274,7 +5279,7 @@ function TeamTab({
     if (clash) return setError(`This station already has a team called "${name}".`)
     setBusy('new-team')
     setError(null)
-    const { error: err } = await supabase.from('teams').insert({
+    const { error: err } = await supabase.from('shared_teams').insert({
       name,
       grade_id: teamLeaderTier.id,
       station_id: activeStation?.id ?? myStationIds[0] ?? null,
@@ -5300,7 +5305,7 @@ function TeamTab({
     setError(null)
     for (const [id, to] of staged) {
       const { error: err } = await supabase
-        .from('access_profiles')
+        .from('shared_profiles')
         .update({ grade_id: to.gradeId, team_id: to.teamId })
         .eq('id', id)
       if (err) {

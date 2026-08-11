@@ -25,8 +25,8 @@ export default function Layout() {
         return setUpperTier(false)
       }
       const [{ data: mine }, { data: all }] = await Promise.all([
-        supabase.from('grades').select('name, sort_order').eq('id', profile.grade_id).maybeSingle(),
-        supabase.from('grades').select('sort_order').order('sort_order', { ascending: false }).limit(1),
+        supabase.from('shared_grades').select('name, sort_order').eq('id', profile.grade_id).maybeSingle(),
+        supabase.from('shared_grades').select('sort_order').order('sort_order', { ascending: false }).limit(1),
       ])
       const bottom = all?.[0]?.sort_order ?? 0
       setTierName(mine?.name ?? null)

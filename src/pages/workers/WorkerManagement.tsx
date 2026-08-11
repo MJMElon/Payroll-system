@@ -136,12 +136,12 @@ export default function WorkerManagement() {
 
   async function load() {
     const [p, g, s, t, j, r] = await Promise.all([
-      supabase.from('access_profiles').select('*').order('full_name'),
-      supabase.from('grades').select('*').order('sort_order'),
-      supabase.from('stations').select('*').order('sort_order'),
-      supabase.from('teams').select('*').order('sort_order'),
+      supabase.from('shared_profiles').select('*').order('full_name'),
+      supabase.from('shared_grades').select('*').order('sort_order'),
+      supabase.from('shared_stations').select('*').order('sort_order'),
+      supabase.from('shared_teams').select('*').order('sort_order'),
       supabase
-        .from('jobs')
+        .from('piece_rate_jobs')
         .select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
       supabase.from('piece_rates').select('id, job_id, rate, effective_from, tier2_rate'),
     ])
@@ -341,7 +341,7 @@ export default function WorkerManagement() {
     const name = nextTeamName(siblings.map((t) => t.name))
     setError(null)
     const { data, error } = await supabase
-      .from('teams')
+      .from('shared_teams')
       .insert({
         name,
         grade_id: headGrade.id,
@@ -384,7 +384,7 @@ export default function WorkerManagement() {
       return setError(`This station already has a team called "${name}".`)
     }
     setRenamingId(null)
-    const { error } = await supabase.from('teams').update({ name }).eq('id', team.id)
+    const { error } = await supabase.from('shared_teams').update({ name }).eq('id', team.id)
     if (error) return setError(error.message)
     setError(null)
     load()
@@ -396,7 +396,7 @@ export default function WorkerManagement() {
         ? `Remove ${team.name}? Its ${members} member${members === 1 ? '' : 's'} stay in the chain, out of a team.`
         : `Remove ${team.name}?`
     if (!window.confirm(warn)) return
-    const { error } = await supabase.from('teams').delete().eq('id', team.id)
+    const { error } = await supabase.from('shared_teams').delete().eq('id', team.id)
     if (error) return setError(error.message)
     setError(null)
     load()
@@ -474,7 +474,7 @@ export default function WorkerManagement() {
     if (person.role !== 'admin') patch.role = roleForTier(landedTier, landedName)
 
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -533,7 +533,7 @@ export default function WorkerManagement() {
     }
     setError(null)
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -594,7 +594,7 @@ export default function WorkerManagement() {
     if (hasChartPos) patch.chart_pos = null
     if (person.role !== 'admin') patch.role = 'operator'
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -648,7 +648,7 @@ export default function WorkerManagement() {
       patch.team_id = null
     }
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -710,7 +710,7 @@ export default function WorkerManagement() {
       patch.station_id = station.id
     }
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .update(patch)
       .eq('id', person.id)
       .select('id')
@@ -754,7 +754,7 @@ export default function WorkerManagement() {
       .filter(({ p, i }) => (p.chart_pos ?? null) !== i)
     const results = await Promise.all(
       updates.map(({ p, i }) =>
-        supabase.from('access_profiles').update({ chart_pos: i }).eq('id', p.id).select('id'),
+        supabase.from('shared_profiles').update({ chart_pos: i }).eq('id', p.id).select('id'),
       ),
     )
     const err = results.find((r) => r.error)?.error
@@ -762,7 +762,7 @@ export default function WorkerManagement() {
       setError(
         /chart_pos/i.test(err.message)
           ? 'The database is missing the chart_pos column — run the latest supabase/setup.sql ' +
-            '(or just: alter table public.access_profiles add column chart_pos int;).'
+            '(or just: alter table public.shared_profiles add column chart_pos int;).'
           : err.message,
       )
     } else if (results.length > 0 && results.every((r) => !r.data || r.data.length === 0)) {

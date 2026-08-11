@@ -178,7 +178,7 @@ function NewRunForm({ onCreated }: { onCreated: (run: PayrollRun) => void }) {
       // 1. Production in the period — APPROVED entries only. Pending,
       // waiting-approval and rejected work is left out of the pay run.
       const { data: entries, error: entErr } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .select('worker_id, user_id, job_id, quantity, approval_status')
         .gte('work_date', start)
         .lte('work_date', end)
@@ -308,9 +308,9 @@ function RunDetail({ run, onBack }: { run: PayrollRun; onBack: () => void }) {
       supabase.from('payroll_adjustments')
         .select('id, run_id, worker_id, user_id, amount, reason')
         .eq('run_id', run.id),
-      supabase.from('access_profiles').select('*').order('email'),
-      supabase.from('workers').select('id, full_name, station_id, grade_id, can_approve_rates, active'),
-      supabase.from('jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
+      supabase.from('shared_profiles').select('*').order('email'),
+      supabase.from('shared_workers').select('id, full_name, station_id, grade_id, can_approve_rates, active'),
+      supabase.from('piece_rate_jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
     ])
     const err = l.error || a.error || u.error || w.error || j.error
     if (err) setError(err.message)

@@ -60,15 +60,15 @@ export default function AddJobRecord() {
   useEffect(() => {
     async function load() {
       const [s, j, g, u] = await Promise.all([
-        supabase.from('stations').select('id, name, sort_order').order('sort_order'),
+        supabase.from('shared_stations').select('id, name, sort_order').order('sort_order'),
         supabase
-          .from('jobs')
+          .from('piece_rate_jobs')
           .select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by')
           .eq('active', true)
           .eq('approval_status', 'approved')
           .order('name'),
-        supabase.from('grades').select('*').order('sort_order'),
-        supabase.from('access_profiles').select('*').order('full_name'),
+        supabase.from('shared_grades').select('*').order('sort_order'),
+        supabase.from('shared_profiles').select('*').order('full_name'),
       ])
       setStations(s.data ?? [])
       setJobs(j.data ?? [])
@@ -209,7 +209,7 @@ export default function AddJobRecord() {
         workNotes.trim() && `Work notes: ${workNotes.trim()}`,
       ].filter(Boolean)
       const { data, error: insErr } = await supabase
-        .from('production_entries')
+        .from('operation_entries')
         .insert({
           work_date: workDate,
           station_id: stationId,
@@ -238,7 +238,7 @@ export default function AddJobRecord() {
           .upload(path, body, { contentType: photo.type || 'image/jpeg' })
         if (upErr) throw new Error(`Record saved, but the attachment failed to upload: ${upErr.message}`)
         const { error: prErr } = await supabase
-          .from('photo_records')
+          .from('operation_photos')
           .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
         if (prErr) throw new Error(`Record saved, but the attachment couldn't be linked: ${prErr.message}`)
       }

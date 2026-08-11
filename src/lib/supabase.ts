@@ -144,6 +144,11 @@ export interface Grade {
   // Null on a tag saved before the setting existed — read it through
   // effectiveEntitlements(), which fills in the old name-based answer.
   entitlements?: string[] | null
+  // Whose piece rate contracts / work records this tier may view, as grade
+  // ids. Null on a tag saved before the setting existed — read them through
+  // viewableTierIds(), which fills in the old own-rank-and-below answer.
+  view_rate_tiers?: string[] | null
+  view_entry_tiers?: string[] | null
 }
 
 export interface Job {
@@ -161,6 +166,9 @@ export interface Job {
   // payroll, never submitted as a job record. Optional: absent until the
   // column migration has run, and older queries don't select it.
   record_job?: boolean | null
+  // Ticked (default): this work is counted on the mobile Mill output
+  // dashboard. Optional: absent until the column migration has run.
+  show_on_mill?: boolean | null
 }
 
 export interface PieceRate {

@@ -999,6 +999,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-cardhead > :first-child { grid-column: 2; justify-content: center; }
 .mob-cardhead > :last-child { grid-column: 3; text-align: right; }
+/* The same head as a button — the Output record's station rows. */
+button.mob-cardhead {
+  background: none; border: 0; padding: 0; width: 100%;
+  font: inherit; cursor: pointer;
+}
 /* Same three columns for a pop-out's heading and its close button. */
 .mob-modal > .mob-card-label {
   display: grid; grid-template-columns: 26px 1fr 26px; align-items: center;
@@ -1489,6 +1494,16 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   display: flex; justify-content: space-between; align-items: center;
   font-size: 0.8rem; color: var(--muted); padding: 0.1rem 0;
 }
+/* A work line sits under the station it belongs to, so it is stepped in
+   and the station name above it reads as the heading it is. */
+.mob-breakrow.indent { padding-left: 0.7rem; }
+/* The station line is still the way into that station's records, so it is
+   a button — reset to sit in the row it shares with the works below it. */
+button.mob-breakrow {
+  appearance: none; border: none; background: none; cursor: pointer;
+  width: 100%; text-align: left; font: inherit;
+}
+.mob-breakrow.station { color: var(--text); font-weight: 700; padding-top: 0.35rem; }
 .mob-breakrow.total {
   color: var(--text); font-weight: 800; border-top: 1px solid #e4e8ed;
   padding-top: 0.4rem; margin-top: 0.2rem; font-size: 0.92rem;
@@ -1655,6 +1670,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   color: var(--accent-strong); background: var(--accent-soft);
   border-radius: 999px; padding: 0.05rem 0.45rem;
 }
+/* A named list inside a module's block — "View piece rate contract of" and
+   its ticks — so the module can hold more than one kind of setting. */
+.module-subhead {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-size: 0.7rem; font-weight: 800; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin-bottom: 0.1rem;
+}
+.module-subhead .module-count { margin-left: 0; }
 .module-caps {
   display: flex; flex-direction: column; gap: 0.25rem;
   margin: 0.4rem 0 0.15rem; padding-left: 1.5rem;
@@ -1746,6 +1770,29 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .mob-card.mob-highlight .mob-sub { color: #aeb8c4; }
 .mob-big { font-size: 1.9rem; font-weight: 800; font-family: 'Montserrat', sans-serif; }
 .mob-title { font-weight: 700; font-size: 0.82rem; }
+/* A heading that carries a caret to its right, and is sometimes the button
+   that opens what it heads. The caret is mirrored by a hidden one on the
+   left in the markup, so the middle child is the true centre of the row. */
+.mob-title.spread {
+  display: flex; justify-content: space-between; align-items: center;
+  appearance: none; background: none; border: none; padding: 0; width: 100%;
+  font: inherit; font-weight: 700; font-size: 0.82rem; color: inherit;
+  text-align: center;
+}
+button.mob-title.spread { cursor: pointer; }
+/* A whole card that is one tap target. Keeps the card's own look — only
+   the button chrome is reset. */
+.mob-card-tap {
+  appearance: none; border: none; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; width: 100%;
+}
+/* Names the unit once over the value column, so the bars stay numbers. */
+.mob-barhead {
+  display: flex; justify-content: flex-end; gap: 0.5rem;
+  font-size: 0.62rem; font-weight: 800; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.mob-barhead .val { width: 30px; flex: none; text-align: right; }
 .mob-row {
   display: flex; justify-content: space-between; align-items: center;
   font-size: 0.8rem; padding: 0.15rem 0;
@@ -2483,18 +2530,52 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    was, unit under it, date where the date was. Inputs are drawn as quietly
    as the text they replace; the dashed underline is the only hint a cell
    has gone live. */
-.pr-manage .quiet-input,
-.pr-manage input.quiet-input {
+.modal-manage .quiet-input,
+.modal-manage input.quiet-input {
   border: none; border-bottom: 1px dashed var(--accent);
   border-radius: 0; background: transparent;
   padding: 0 0.1rem; min-height: 0; font: inherit;
 }
-.pr-manage .quiet-input.num { width: 6ch; font-weight: 700; }
-/* The work title reads at its own length; its box should too, not run a
-   dashed line across the whole (often very wide) column. */
-.pr-manage th input.quiet-input { width: min(100%, 30ch); }
-.pr-manage .quiet-input.date { width: auto; font-size: inherit; }
-.pr-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
+.modal-manage .quiet-input.num { width: 6ch; font-weight: 700; }
+.modal-manage .quiet-input.date { width: auto; font-size: inherit; }
+.modal-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
+
+/* Each section of the window is its own block, so the sheet reads in
+   three clear pieces: what the work is, its functions, its tiers. */
+.pr-block {
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 0.7rem 1rem; background: var(--bg);
+}
+/* A block that hugs its content instead of stretching across the window —
+   the modal is a flex column, which stretches children by default. */
+.pr-block-fit { align-self: flex-start; min-width: min(28rem, 100%); }
+.pr-block .view-row:last-child { border-bottom: none; }
+.pr-block .quiet-input { width: min(100%, 32ch); font: inherit; }
+
+/* Function sheet: the function's name on the left, then a tick under
+   Show or under No show. */
+.table.pr-func { width: auto; }
+.pr-func th:first-child { min-width: 13rem; }
+.pr-func th.pr-func-tick, .pr-func td.pr-func-tick { width: 5.5rem; text-align: center; }
+.pr-func input[type='checkbox'] { width: auto; }
+.pr-func tr:last-child td { border-bottom: none; }
+
+/* The ＋ column at the right end of the tier sheet: click, and it expands
+   into the picker for the next tier's column. */
+.pr-manage th.pr-addcol { vertical-align: middle; }
+.pr-addcol .icon-btn { font-size: 1rem; font-weight: 800; }
+
+/* The read face's rate line — amount with its unit right beside it — and
+   the edit face mirroring it: number box, unit picker beside. */
+.pr-rate-inline { display: inline-flex; align-items: baseline; gap: 0.4rem; }
+.pr-manage-edit.row { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
+
+/* Take a just-added tier column back out. */
+.pr-newtier-x {
+  appearance: none; border: none; background: none; cursor: pointer;
+  margin-left: 0.25rem; color: var(--muted); font-size: 0.95rem; line-height: 1;
+}
+.pr-newtier-x:hover { color: var(--danger); }
 /* Everything hugs the left of the cell exactly where the read face put
    it — nothing stretches to the cell's far edge just because the cell
    is wide (a one-tier window makes a VERY wide cell). */
@@ -2513,6 +2594,14 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .pr-manage .checkbox.tickword {
   font-size: 1rem; font-weight: 800; color: var(--muted); white-space: nowrap;
 }
+
+/* Masterlist: the work description takes the room; unit, every tier rate
+   and the effective date share ONE width (long tier names wrap instead of
+   widening their column); actions is only as wide as its button, so no
+   dead gap opens before it. */
+.table th.pr-desc { min-width: 18rem; }
+.table th.pr-eqcol { width: 9rem; min-width: 9rem; white-space: normal; }
+.table th.pr-actcol { width: 4.5rem; min-width: 4.5rem; }
 
 /* A yes/no answer read at a glance, where a disabled tick box would look
    like something you were meant to be able to press. */
@@ -2581,6 +2670,15 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
    the same column names as the create window. No dropdown ever opens in
    it, so it does not need the create grid's landing room. */
 .pr-grid.pr-confirm { min-height: 0; }
+/* A tiered proposal drops the flat-rate column entirely — its line runs
+   8 tracks, with the two hourly columns named as the rate. */
+.pr-grid.pr-confirm.tiered .pr-grid-head,
+.pr-grid.pr-confirm.tiered .pr-grid-row {
+  grid-template-columns:
+    minmax(190px, 1.3fr) minmax(190px, 1.3fr) minmax(178px, 1.3fr)
+    minmax(120px, 0.9fr) minmax(150px, 1fr) minmax(150px, 1fr)
+    minmax(130px, 0.95fr) 34px;
+}
 .pr-cell-val {
   display: flex; align-items: center; min-height: 40px;
   font-size: 0.92rem; overflow-wrap: anywhere;

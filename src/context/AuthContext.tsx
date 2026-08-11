@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // select('*') keeps login working even when the database is one
     // migration behind the frontend (missing columns come back undefined).
     const { data, error } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .select('*')
       .eq('id', userId)
       .maybeSingle()
@@ -58,12 +58,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const signupName =
       (session.session?.user.user_metadata?.full_name as string | undefined)?.trim() || null
     const { data: opGrade } = await supabase
-      .from('grades')
+      .from('shared_grades')
       .select('id')
       .eq('name', 'Operator')
       .maybeSingle()
     const { data: created, error: insErr } = await supabase
-      .from('access_profiles')
+      .from('shared_profiles')
       .insert({ id: userId, full_name: signupName, email, role: 'operator', grade_id: opGrade?.id ?? null })
       .select()
       .single()

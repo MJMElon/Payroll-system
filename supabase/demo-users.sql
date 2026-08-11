@@ -14,7 +14,7 @@
 --
 -- To remove them all again:
 --   delete from auth.users where email like '%@demo.mjm';
--- (access_profiles rows go with them — the foreign key cascades.)
+-- (shared_profiles rows go with them — the foreign key cascades.)
 -- ---------------------------------------------------------------------------
 
 -- The password every demo account shares.
@@ -74,12 +74,12 @@ begin
       null;
     end;
 
-    -- The on_auth_user_created trigger writes access_profiles. If it was
+    -- The on_auth_user_created trigger writes shared_profiles. If it was
     -- not installed, write the row here so the demo still works.
-    insert into public.access_profiles (id, full_name, email, role, grade_id)
+    insert into public.shared_profiles (id, full_name, email, role, grade_id)
     values (
       new_id, person.full_name, person.email, 'operator',
-      (select id from public.grades where name = 'Operator' limit 1)
+      (select id from public.shared_grades where name = 'Operator' limit 1)
     )
     on conflict (id) do update set full_name = excluded.full_name;
   end loop;
@@ -88,7 +88,7 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- Place four of them on the chart, and leave the other seven queueing as
 -- new signups. Written against the tier NAMES, so it follows whatever the
--- grades table says today.
+-- shared_grades table says today.
 -- ---------------------------------------------------------------------------
 do $$
 declare
@@ -96,50 +96,50 @@ declare
   -- has been put somewhere on the chart, re-running this file leaves it
   -- alone. Re-seeding a moved account would quietly undo real work.
   untouched boolean := not exists (
-    select 1 from public.access_profiles
+    select 1 from public.shared_profiles
      where email like '%@demo.mjm' and (grade_id is not null or tags_confirmed)
   );
-  g_manager uuid := (select id from public.grades where name = 'Manager' limit 1);
-  g_eng     uuid := (select id from public.grades where name = 'Engineer' limit 1);
-  g_sh      uuid := (select id from public.grades where name = 'Station Head' limit 1);
-  g_ash     uuid := (select id from public.grades where name = 'Assistant Station Head' limit 1);
-  st_a      uuid := (select id from public.stations order by sort_order limit 1);
-  id_manager uuid := (select id from public.access_profiles where email = 'rahim.manager@demo.mjm');
-  id_eng     uuid := (select id from public.access_profiles where email = 'chandran.eng@demo.mjm');
-  id_sh      uuid := (select id from public.access_profiles where email = 'norhayati.sh@demo.mjm');
-  id_ash     uuid := (select id from public.access_profiles where email = 'siti.ash@demo.mjm');
+  g_manager uuid := (select id from public.shared_grades where name = 'Manager' limit 1);
+  g_eng     uuid := (select id from public.shared_grades where name = 'Engineer' limit 1);
+  g_sh      uuid := (select id from public.shared_grades where name = 'Station Head' limit 1);
+  g_ash     uuid := (select id from public.shared_grades where name = 'Assistant Station Head' limit 1);
+  st_a      uuid := (select id from public.shared_stations order by sort_order limit 1);
+  id_manager uuid := (select id from public.shared_profiles where email = 'rahim.manager@demo.mjm');
+  id_eng     uuid := (select id from public.shared_profiles where email = 'chandran.eng@demo.mjm');
+  id_sh      uuid := (select id from public.shared_profiles where email = 'norhayati.sh@demo.mjm');
+  id_ash     uuid := (select id from public.shared_profiles where email = 'siti.ash@demo.mjm');
 begin
   if not untouched then
     raise notice 'Demo accounts have been placed on the chart already — leaving them as they are.';
     return;
   end if;
 
-  update public.access_profiles set
+  update public.shared_profiles set
     grade_id = g_manager, role = 'manager', supervisor_id = null,
     station_ids = '{}', station_id = null, tags_confirmed = true,
     employee_code = 'DEMO-01', basic_salary = 7500
     where id = id_manager;
 
-  update public.access_profiles set
+  update public.shared_profiles set
     grade_id = g_eng, role = 'engineer', supervisor_id = id_manager,
     station_ids = '{}', station_id = null, tags_confirmed = true,
     employee_code = 'DEMO-02', basic_salary = 5200
     where id = id_eng;
 
-  update public.access_profiles set
+  update public.shared_profiles set
     grade_id = g_sh, role = 'operator', supervisor_id = id_eng,
     station_ids = array[st_a], station_id = st_a, tags_confirmed = true,
     employee_code = 'DEMO-03', basic_salary = 3400
     where id = id_sh;
 
-  update public.access_profiles set
+  update public.shared_profiles set
     grade_id = g_ash, role = 'operator', supervisor_id = id_sh,
     station_ids = array[st_a], station_id = st_a, tags_confirmed = true,
     employee_code = 'DEMO-04', basic_salary = 2600
     where id = id_ash;
 
   -- The rest wait in the New signups column: no tier, no team, no leader.
-  update public.access_profiles set
+  update public.shared_profiles set
     grade_id = null, supervisor_id = null, team_id = null,
     station_ids = '{}', station_id = null, tags_confirmed = false
     where email in (
@@ -150,7 +150,7 @@ begin
 end $$;
 
 select email, full_name, tags_confirmed,
-       (select name from public.grades g where g.id = p.grade_id) as tier
-  from public.access_profiles p
+       (select name from public.shared_grades g where g.id = p.grade_id) as tier
+  from public.shared_profiles p
  where email like '%@demo.mjm'
  order by tags_confirmed desc, email;

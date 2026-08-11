@@ -19,9 +19,9 @@ select
   j.verified_at,
   j.approved_by,
   j.approved_at
-from public.jobs j
-left join public.stations s on s.id = j.station_id
-left join public.grades   g on g.id = j.grade_id
+from public.piece_rate_jobs j
+left join public.shared_stations s on s.id = j.station_id
+left join public.shared_grades   g on g.id = j.grade_id
 where j.approval_status <> 'approved'
 order by s.name, j.name;
 
@@ -41,8 +41,8 @@ select
   a.action,
   coalesce(p.full_name, p.email, a.actor::text) as who,
   a.detail
-from public.audit_log a
-left join public.access_profiles p on p.id = a.actor
+from public.shared_audit_log a
+left join public.shared_profiles p on p.id = a.actor
 where a.target = 'jobs'
 order by a.at desc
 limit 100;
