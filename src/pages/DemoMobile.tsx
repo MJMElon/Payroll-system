@@ -5648,12 +5648,12 @@ function TeamTab({
 
 
   function dropOn(g: Grade, team?: Team | null) {
-    // The dragged person may report to me OR sit in one of my teams, so
-    // look across everyone I can reach, not just my direct reports.
-    const reachable = people.filter(
-      (p) => p.supervisor_id === profile?.id || myTeams.some((t) => t.id === p.team_id),
-    )
-    const person = reachable.find((p) => p.id === dragId)
+    // Anyone DRAWN on the board can be moved on it. The lookup used to be
+    // narrower than the board — supervisor_id, or a team of mine — so a
+    // name shown in a column but tied to neither could be picked up, and
+    // then silently sprang back: no person found, no move, no message.
+    // What may be done is settled by mayAssign below, not by finding.
+    const person = people.find((p) => p.id === dragId)
     setDragId(null)
     setOverGrade(null)
     if (!person) return
@@ -5911,12 +5911,6 @@ function TeamTab({
 
             {/* A thin column at the end of the row: the place a new team
                 would go, shaped like one. */}
-            {canCreateTeam && canManageTeam && draftName == null && (
-              <button className="mob-teamcol add" onClick={() => setDraftName('')} aria-label="Add new team">
-                <span aria-hidden="true">+</span>
-              </button>
-            )}
-
             {looseMembers.length > 0 && (
               <div className="mob-teamcol loose">
                 <div className="mob-teamcol-name">Not in a team yet</div>
@@ -5930,12 +5924,25 @@ function TeamTab({
                 ))}
               </div>
             )}
+
+            {/* Last in the strip, so adding a team never pushes the
+                columns along and the next one is always one swipe on. */}
+            {canCreateTeam && canManageTeam && draftName == null && (
+              <button className="mob-teamcol add" onClick={() => setDraftName('')} aria-label="Add new team">
+                <span aria-hidden="true">+</span>
+              </button>
+            )}
           </div>
 
-          {teamColumns.length > 1 && (
+          {/* Counts TEAMS. The "+" column and "Not in a team yet" are not
+              teams, which is what made three columns read as two. */}
+          {teamColumns.length > 0 && (
             <div className="mob-teamnav">
               <button className="mob-mini" aria-label="Previous team" onClick={() => stepTeams(-1)}>‹</button>
-              <span className="mob-sub">{teamColumns.length} teams</span>
+              <span className="mob-sub">
+                {teamColumns.length} team{teamColumns.length === 1 ? '' : 's'}
+                {looseMembers.length > 0 && ` · ${looseMembers.length} not in a team`}
+              </span>
               <button className="mob-mini" aria-label="Next team" onClick={() => stepTeams(1)}>›</button>
             </div>
           )}
