@@ -406,7 +406,7 @@ export default function WorkerManagement() {
 
   async function placeUnder(person: Profile, leader: Profile, team: Team | null) {
     if (person.id === leader.id) return
-    if (person.id === profile?.id) {
+    if (person.id === profile?.id && !isTop) {
       return setError('You cannot move yourself on the chart — someone above you has to do that.')
     }
     if (!canPlaceUnder(leader)) {
@@ -615,7 +615,7 @@ export default function WorkerManagement() {
    * other route needs a block already sitting one tier above.
    */
   async function placeOnTier(person: Profile, grade: Grade, station?: Station | null) {
-    if (person.id === profile?.id) {
+    if (person.id === profile?.id && !isTop) {
       return setError('You cannot move yourself on the chart — someone above you has to do that.')
     }
     if (!canPlaceOnTier(grade)) {
@@ -673,7 +673,7 @@ export default function WorkerManagement() {
     team: Team | null,
     station: Station | null,
   ) {
-    if (person.id === profile?.id) {
+    if (person.id === profile?.id && !isTop) {
       return setError('You cannot move yourself on the chart — someone above you has to do that.')
     }
     if (person.tags_confirmed && !canMove(person)) {
@@ -1201,7 +1201,19 @@ export default function WorkerManagement() {
       </header>
       <h1 className="module-banner">Team Manage</h1>
 
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <div className="wm-toast" role="alert">
+          <span>{error}</span>
+          <button
+            type="button"
+            className="wm-toast-x"
+            onClick={() => setError(null)}
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       <div className="wm-cols">
         {/* ---------- left: pending allocation, riding along as you scroll -- */}

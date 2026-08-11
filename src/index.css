@@ -2309,6 +2309,22 @@ button.mob-title.spread { cursor: pointer; }
 }
 @media (max-width: 560px) { .module-banner { font-size: 1.6rem; } }
 
+/* A refusal said where it can be seen: the chart is tall and the page
+   banner scrolls away with its top, so the error floats over the middle
+   of the screen instead — wherever the drop just happened. */
+.wm-toast {
+  position: fixed; left: 50%; bottom: 2rem; transform: translateX(-50%);
+  z-index: 70; max-width: min(560px, calc(100vw - 2rem));
+  display: flex; align-items: flex-start; gap: 0.6rem;
+  background: #fdf0ef; color: #9f2420; border: 1px solid #f1c3c0;
+  border-radius: 12px; padding: 0.7rem 0.9rem; font-size: 0.85rem;
+  box-shadow: 0 16px 40px rgba(20, 30, 45, 0.25);
+}
+.wm-toast-x {
+  appearance: none; background: none; border: none; cursor: pointer;
+  color: inherit; font-size: 0.8rem; padding: 0 0.1rem; flex: none;
+}
+
 /* Three columns; the middle one carries the chart. */
 .wm-cols {
   display: grid; grid-template-columns: 216px minmax(0, 1fr) 310px;
