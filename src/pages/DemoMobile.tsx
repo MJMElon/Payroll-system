@@ -44,6 +44,9 @@ import {
 
 type Tab = 'performance' | 'mywork' | 'record' | 'team' | 'profile'
 
+// Where the open tab is remembered across refreshes (this browser only).
+const MOB_TAB_KEY = 'mjm-mob-tab'
+
 /**
  * Tier 1 is the super admin — it holds every capability no matter what is
  * ticked (see effectiveCapabilities). That makes it an access level rather
@@ -199,14 +202,25 @@ function clockHelp(message: string) {
     : `Clock in/out failed: ${message}`
 }
 
-export default function DemoMobile() {
+export default function DemoMobile({ real = false }: { real?: boolean }) {
   const { profile } = useAuth()
   const [grades, setGrades] = useState<Grade[]>([])
   const [tier, setTier] = useState<Grade | null>(null)
   const [stations, setStations] = useState<Station[]>([])
   const [jobs, setJobs] = useState<Job[]>([])
   const [rates, setRates] = useState<PieceRate[]>([])
-  const [tab, setTab] = useState<Tab>('performance')
+  // The open tab survives a refresh: reloading the page mid-shift should
+  // land back on the same screen, not walk everyone home to Performance.
+  const [tab, setTab] = useState<Tab>(() => {
+    const saved = localStorage.getItem(MOB_TAB_KEY)
+    return saved === 'performance' || saved === 'mywork' || saved === 'record' ||
+      saved === 'team' || saved === 'profile'
+      ? (saved as Tab)
+      : 'performance'
+  })
+  useEffect(() => {
+    localStorage.setItem(MOB_TAB_KEY, tab)
+  }, [tab])
   // Pressing a tab means "take me to that tab's main page" — including the
   // tab you are already on, which is how you get back out of a screen you
   // drilled into. Bumping this remounts the tab, so every screen it was
@@ -263,11 +277,22 @@ export default function DemoMobile() {
       setStations(s.data ?? [])
       setJobs(j.data ?? [])
       setRates(r.data ?? [])
-      if (g.data && g.data.length > 0) setTier((prev) => prev ?? g.data[0])
+      if (!real && g.data && g.data.length > 0) setTier((prev) => prev ?? g.data[0])
       setLoading(false)
     }
     load()
   }, [])
+
+  // REAL mode (#/mobile): the phone is not previewing a tier — it IS the
+  // signed-in account. The tier is the account's own tag, and an account
+  // not yet placed on the chart gets the new-sign-up welcome.
+  useEffect(() => {
+    if (!real) return
+    const mine = grades.find((g) => g.id === profile?.grade_id) ?? null
+    setTier(mine)
+    setSignupPreview(!profile?.tags_confirmed || !mine)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [real, grades, profile?.grade_id, profile?.tags_confirmed])
 
   // Latest rate in force per job (effective_from <= today). A tiered rate
   // (e.g. cage tipping) pays tier2Rate from the 5th unit onward, resetting
@@ -341,66 +366,8 @@ export default function DemoMobile() {
     return () => clearInterval(t)
   }, [profile?.id, jobColumnReady, hourlyStationIds])
 
-  return (
-    <div className="stack">
-      <header className="module-bar">
-        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
-      </header>
-      <h1 className="module-banner">Demo Mobile View</h1>
-
-      {error && <div className="error">{error}</div>}
-
-      <div className="demo-layout">
-        {/* Tier rail — mirrors the tier tags in Tags management. */}
-        <div className="card tier-rail">
-          <h3>View as</h3>
-          <div className="tag-list">
-            <button
-              className={`tag-row ${signupPreview ? 'active' : ''}`}
-              onClick={() => setSignupPreview(true)}
-            >
-              <span className="tag-dot dot-grey" />
-              <span>New sign up (just registered)</span>
-            </button>
-            {grades.map((g) => (
-              <button
-                key={g.id}
-                className={`tag-row ${!signupPreview && tier?.id === g.id ? 'active' : ''}`}
-                onClick={() => {
-                  setTier(g)
-                  setSignupPreview(false)
-                }}
-              >
-                <span className={`tag-dot dot-${g.color}`} />
-                <span>{g.sort_order}. {g.name}</span>
-              </button>
-            ))}
-            {!loading && grades.length === 0 && (
-              <p className="muted small">No tier tags yet — create them in Settings.</p>
-            )}
-          </div>
-        </div>
-
-        <div className="phone-wrap">
-          <div className="phone">
-            <div className="phone-screen">
-              <div className="mob-status">
-                <StatusClock />
-                <span>▮▮▮</span>
-              </div>
-
-              {signupPreview ? (
-                <div className="mob-tier-ribbon">
-                  <span className="tag-dot dot-grey" />
-                  <span>New sign up view</span>
-                </div>
-              ) : tier && (
-                <div className="mob-tier-ribbon">
-                  <span className={`tag-dot dot-${tier.color}`} />
-                  <span>{tier.name} view</span>
-                </div>
-              )}
-
+  const screenBody = (
+    <>
               <div className="mob-content" key={`${tab}-${tabPress}`}>
                 {loading ? (
                   <div className="mob-body"><p className="muted small">Loading…</p></div>
@@ -480,6 +447,80 @@ export default function DemoMobile() {
                   onTab={goTab}
                 />
               )}
+    </>
+  )
+
+  // REAL mode: no rail, no demo frame — the phone itself is the frame.
+  if (real) {
+    return (
+      <div className="mob-real">
+        {error && <div className="error" style={{ margin: '0.5rem 0.9rem 0' }}>{error}</div>}
+        {screenBody}
+      </div>
+    )
+  }
+
+  return (
+    <div className="stack">
+      <header className="module-bar">
+        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
+      </header>
+      <h1 className="module-banner">Demo Mobile View</h1>
+
+      {error && <div className="error">{error}</div>}
+
+      <div className="demo-layout">
+        {/* Tier rail — mirrors the tier tags in Tags management. */}
+        <div className="card tier-rail">
+          <h3>View as</h3>
+          <div className="tag-list">
+            <button
+              className={`tag-row ${signupPreview ? 'active' : ''}`}
+              onClick={() => setSignupPreview(true)}
+            >
+              <span className="tag-dot dot-grey" />
+              <span>New sign up (just registered)</span>
+            </button>
+            {grades.map((g) => (
+              <button
+                key={g.id}
+                className={`tag-row ${!signupPreview && tier?.id === g.id ? 'active' : ''}`}
+                onClick={() => {
+                  setTier(g)
+                  setSignupPreview(false)
+                }}
+              >
+                <span className={`tag-dot dot-${g.color}`} />
+                <span>{g.sort_order}. {g.name}</span>
+              </button>
+            ))}
+            {!loading && grades.length === 0 && (
+              <p className="muted small">No tier tags yet — create them in Settings.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="phone-wrap">
+          <div className="phone">
+            <div className="phone-screen">
+              <div className="mob-status">
+                <StatusClock />
+                <span>▮▮▮</span>
+              </div>
+
+              {signupPreview ? (
+                <div className="mob-tier-ribbon">
+                  <span className="tag-dot dot-grey" />
+                  <span>New sign up view</span>
+                </div>
+              ) : tier && (
+                <div className="mob-tier-ribbon">
+                  <span className={`tag-dot dot-${tier.color}`} />
+                  <span>{tier.name} view</span>
+                </div>
+              )}
+
+              {screenBody}
             </div>
           </div>
           <p className="muted small">
@@ -1221,7 +1262,7 @@ function PerformanceTab({
               {/* The same head as the KPI dashboard's cards: the label
                   small and grey, the caret on the right. */}
               <div className="mob-cardhead">
-                <span className="mob-card-label">{shortMonth} Work recorded</span>
+                <span className="mob-card-label">{shortMonth} Work Done</span>
                 <span className="mob-caret" aria-hidden="true">›</span>
               </div>
               {outputRecord.length === 0 ? (
@@ -1408,7 +1449,7 @@ function OutputRecordScreen({
       </div>
 
       <div className="mob-body">
-        <MobSubHeader title="Work recorded history" onBack={onBack} />
+        <MobSubHeader title="Work Done History" onBack={onBack} />
         <div className="mob-queue-chips">
           {DAY_RANGES.map((r) => (
             <button key={r.key} className={range === r.key ? 'on' : ''} onClick={() => setRange(r.key)}>
@@ -2091,6 +2132,18 @@ function getCoords(): Promise<{ lat: number; lng: number; accuracy: number } | n
   })
 }
 
+/** Metres between two coordinates — close enough at mill scale. */
+function distanceM(aLat: number, aLng: number, bLat: number, bLng: number) {
+  const R = 6371000
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(bLat - aLat)
+  const dLng = toRad(bLng - aLng)
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2
+  return Math.round(2 * R * Math.asin(Math.sqrt(s)))
+}
+
 /** "4h 22m" — a shift length as it would be said out loud. */
 function spanLabel(fromISO: string, toISO: string) {
   const mins = Math.max(0, Math.round((new Date(toISO).getTime() - new Date(fromISO).getTime()) / 60_000))
@@ -2730,12 +2783,23 @@ function RecordTab({
   // The screen behind the clock button: everything already submitted,
   // by range. The form itself stays clean.
   const [view, setView] = useState<'form' | 'history'>('form')
+  // The history button opens a small month list first; the picked month
+  // becomes the history screen's window and its title.
+  const [showMonths, setShowMonths] = useState(false)
+  const [histRange, setHistRange] = useState<HistoryRange>('month')
   const [stationId, setStationId] = useState('')
   const [jobId, setJobId] = useState('')
-  const [qty, setQty] = useState('')
-  // Photos ARE the record now: one entry, one photo per unit of work, so
-  // there is nothing to type.
-  const [photos, setPhotos] = useState<File[]>([])
+  // ONE photo per work record — the evidence, stamped with when and where
+  // it was taken the moment the shutter fires. No quantity is typed:
+  // every submission is one record.
+  const [photo, setPhoto] = useState<{
+    file: File
+    preview: string
+    at: string
+    coords: { lat: number; lng: number; accuracy: number } | null
+    locating: boolean
+  } | null>(null)
+  const [photoView, setPhotoView] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   // Bumped by anything that lands a record, so the tick card counts again
   // without the whole tab being rebuilt around a shared list.
@@ -2786,7 +2850,7 @@ function RecordTab({
   const job = jobs.find((j) => j.id === jobId)
   const rate = jobId ? rateFor(jobId) : 0
   const tier2Rate = jobId ? tier2RateFor(jobId) : null
-  const amount = jobId ? amountFor(jobId, Number(qty) || 0) : 0
+  const amount = jobId ? amountFor(jobId, 1) : 0
 
   // The same job at the same station, tagged to the tier DIRECTLY BELOW
   // this one — that is whose Daily Job Record entries are the cages
@@ -2830,19 +2894,33 @@ function RecordTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isASH, operatorJob?.id, dutyDate, dutyShift])
 
+  // Where and when are settled the moment the shot comes back, so the
+  // card can show all of it before anything is sent.
+  async function tookPhoto(file: File | undefined) {
+    if (!file) return
+    onError(null)
+    const at = new Date().toISOString()
+    setPhoto({ file, preview: URL.createObjectURL(file), at, coords: null, locating: true })
+    const coords = await getCoords()
+    setPhoto((p) => (p == null ? p : { ...p, coords, locating: false }))
+  }
+
+  function retakePhoto() {
+    if (photo) URL.revokeObjectURL(photo.preview)
+    setPhoto(null)
+    setPhotoView(false)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
   async function submit() {
     if (isASH) {
       if (!profileId || !stationId || !jobId || !dutyDate || !dutyShift || !pulledQty) return
-    } else if (atStationLevel) {
-      if (!profileId || !stationId || !jobId || photos.length === 0) return
-    } else if (!profileId || !stationId || !jobId || !Number(qty)) {
+    } else if (!profileId || !stationId || !jobId || !photo) {
       return
     }
-    // At station level the photos ARE the count — one per unit of work.
-    const n = isASH ? pulledQty : atStationLevel ? photos.length : Number(qty)
+    // One submission is one record; only the ASH shift pull carries more.
+    const n = isASH ? pulledQty : 1
     if (n <= 0) return onError('Quantity must be a positive number.')
-    // Guard against fat-finger quantities (e.g. 400 instead of 40).
-    if (n > 200 && !window.confirm(`Quantity ${n} looks unusually large. Submit anyway?`)) return
     setSubmitting(true)
     onError(null)
     try {
@@ -2861,25 +2939,22 @@ function RecordTab({
         .select()
         .single()
       if (error) throw new Error(error.message)
-      if (data) {
-        for (const [i, file] of photos.entries()) {
-          const compressed = await compressImage(file)
-          const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-          const path = `${stationId}/entry-${stamp}-${i}.jpg`
-          const { error: upErr } = await supabase.storage
-            .from('records')
-            .upload(path, compressed, { contentType: 'image/jpeg' })
-          if (!upErr) {
-            await supabase
-              .from('operation_photos')
-              .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
-          }
+      if (data && photo) {
+        const compressed = await compressImage(photo.file)
+        const stamp = photo.at.replace(/[:.]/g, '-')
+        const path = `${stationId}/entry-${stamp}.jpg`
+        const { error: upErr } = await supabase.storage
+          .from('records')
+          .upload(path, compressed, { contentType: 'image/jpeg' })
+        if (!upErr) {
+          await supabase
+            .from('operation_photos')
+            .insert({ station_id: stationId, photo_path: path, entry_id: data.id })
         }
       }
       setJobId('')
-      setQty('')
       setDutyShift('')
-      setPhotos([])
+      retakePhoto()
       setRecorded((n) => n + 1)
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
@@ -2905,6 +2980,18 @@ function RecordTab({
     )
   }
 
+  // This month leads the history list, the three before follow.
+  const historyMonths = useMemo(() => {
+    const now = new Date()
+    return [
+      {
+        key: 'month' as HistoryRange,
+        label: now.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }),
+      },
+      ...recentMonths(),
+    ]
+  }, [])
+
   // Operators record work by taking photos at their own station, merged
   // directly into this tab — no manual station/job/quantity form.
   const isOperator = tier?.name === 'Operator'
@@ -2919,6 +3006,7 @@ function RecordTab({
         amountFor={amountFor}
         canEdit={effectiveCapabilities(tier).includes('edit-entry')}
         myStations={myStations}
+        initialRange={histRange}
         onOpen={setDetail}
         onBack={() => setView('form')}
       />
@@ -2938,14 +3026,34 @@ function RecordTab({
               <div className="mob-role">New Work Record</div>
               {myStation && <div className="mob-sub">{myStation.name}</div>}
             </div>
-            <button
-              className="mob-icon-btn"
-              onClick={() => setView('history')}
-              title="Work record history"
-              aria-label="Work record history"
-            >
-              <IconHistory />
-            </button>
+            <div className="mob-histwrap">
+              <button
+                className={`mob-icon-btn ${showMonths ? 'on' : ''}`}
+                onClick={() => setShowMonths((v) => !v)}
+                title="Work record history"
+                aria-label="Work record history"
+                aria-expanded={showMonths}
+              >
+                <IconHistory />
+              </button>
+              {showMonths && (
+                <div className="mob-monthpop">
+                  <div className="mob-monthpop-title">History — pick a month</div>
+                  {historyMonths.map((m) => (
+                    <button
+                      key={m.key}
+                      onClick={() => {
+                        setHistRange(m.key)
+                        setShowMonths(false)
+                        setView('history')
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {isEntitled(tier, 'clock-in-out', grades) && (
@@ -3019,14 +3127,34 @@ function RecordTab({
       <div className="mob-body">
         <div className="mob-rolebar">
           <div className="mob-role">New Work Record</div>
-          <button
-            className="mob-icon-btn"
-            onClick={() => setView('history')}
-            title="Work record history"
-            aria-label="Work record history"
-          >
-            <IconHistory />
-          </button>
+          <div className="mob-histwrap">
+            <button
+              className={`mob-icon-btn ${showMonths ? 'on' : ''}`}
+              onClick={() => setShowMonths((v) => !v)}
+              title="Work record history"
+              aria-label="Work record history"
+              aria-expanded={showMonths}
+            >
+              <IconHistory />
+            </button>
+            {showMonths && (
+              <div className="mob-monthpop">
+                <div className="mob-monthpop-title">History — pick a month</div>
+                {historyMonths.map((m) => (
+                  <button
+                    key={m.key}
+                    onClick={() => {
+                      setHistRange(m.key)
+                      setShowMonths(false)
+                      setView('history')
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {isEntitled(tier, 'clock-in-out', grades) && (
@@ -3135,30 +3263,11 @@ function RecordTab({
                 )}
               </>
             ) : (
-              !atStationLevel && (
-                <>
-                  <div className="mob-field-label">Quantity{job ? ` (${job.unit.replace('/', '')})` : ''}</div>
-                  <input
-                    className="mob-input"
-                    type="number"
-                    min="0"
-                    step="any"
-                    placeholder="0"
-                    value={qty}
-                    onChange={(e) => setQty(e.target.value)}
-                  />
-
-                  {job && Number(qty) > 0 && (
-                    <div className="mob-breakrow total">
-                      <span>
-                        {tier2Rate == null
-                          ? `${qty} × ${RM(rate)}${job.unit}`
-                          : breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, Number(qty))}
-                      </span>
-                      <span>{RM(amount)}</span>
-                    </div>
-                  )}
-                </>
+              job && (
+                <div className="mob-breakrow total">
+                  <span>1 × {RM(rate)}{job.unit}</span>
+                  <span>{RM(amount)}</span>
+                </div>
               )
             )}
 
@@ -3168,48 +3277,68 @@ function RecordTab({
               accept="image/*"
               capture="environment"
               style={{ display: 'none' }}
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (f) setPhotos((prev) => [...prev, f])
-                if (fileRef.current) fileRef.current.value = ''
-              }}
+              onChange={(e) => tookPhoto(e.target.files?.[0])}
             />
 
-            {/* Each photo is one unit of work, so they are shown back before
-                anything is sent — a miscount is obvious here and nowhere
-                later. */}
-            {photos.length > 0 && (
-              <>
-                <div className="mob-field-label">
-                  {photos.length} photo{photos.length === 1 ? '' : 's'}
-                  {atStationLevel && job ? ` · ${photos.length}${job.unit}` : ''}
-                </div>
-                <div className="mob-photo-grid">
-                  {photos.map((f, i) => (
-                    <span className="mob-photo-slot" key={`${f.name}-${i}`}>
-                      <img className="mob-photo" src={URL.createObjectURL(f)} alt={`photo ${i + 1}`} />
-                      <button
-                        className="mob-photo-x"
-                        onClick={() => setPhotos((prev) => prev.filter((_, x) => x !== i))}
-                        aria-label={`Remove photo ${i + 1}`}
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                {atStationLevel && job && (
-                  <div className="mob-breakrow total">
-                    <span>{breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, photos.length)}{job.unit}</span>
-                    <span>{RM(amountFor(jobId, photos.length))}</span>
+            {/* The one photo, shown back centred with when and where it was
+                taken — tap it to see it full screen. */}
+            {photo && !isASH && (() => {
+              const st = stations.find((x) => x.id === stationId) ?? ownStation
+              const dist =
+                photo.coords && st?.latitude != null && st?.longitude != null
+                  ? distanceM(photo.coords.lat, photo.coords.lng, st.latitude, st.longitude)
+                  : null
+              const outside = dist != null && st?.geofence_m != null && dist > st.geofence_m
+              return (
+                <>
+                  <button
+                    type="button"
+                    className="mob-photoone"
+                    onClick={() => setPhotoView(true)}
+                    aria-label="View the photo full screen"
+                  >
+                    <img src={photo.preview} alt="Work record photo" />
+                  </button>
+                  <div className="mob-row">
+                    <span className="mob-field-label">Date</span>
+                    <span>{new Date(photo.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                   </div>
-                )}
-              </>
-            )}
+                  <div className="mob-row">
+                    <span className="mob-field-label">Time</span>
+                    <span>{clockTime(photo.at)}</span>
+                  </div>
+                  <div className="mob-row">
+                    <span className="mob-field-label">Location</span>
+                    <span>
+                      {photo.locating
+                        ? 'Finding…'
+                        : photo.coords
+                          ? `${photo.coords.lat.toFixed(5)}, ${photo.coords.lng.toFixed(5)}`
+                          : '—'}
+                    </span>
+                  </div>
+                  {photo.coords && (
+                    <div className="mob-row">
+                      <span className="mob-field-label">Accuracy</span>
+                      <span className={outside ? 'mob-geo-out' : undefined}>
+                        ±{Math.round(photo.coords.accuracy)} m
+                        {dist != null && st ? ` · ${dist} m from ${st.name}` : ''}
+                        {outside ? ' ⚠' : ''}
+                      </span>
+                    </div>
+                  )}
+                  <button className="mob-linkrow" onClick={retakePhoto}>Retake photo</button>
+                </>
+              )
+            })()}
 
-            <button className="mob-btn ghost" onClick={() => fileRef.current?.click()}>
-              {photos.length > 0 ? '📷 Add photo' : '📷 Take photo'}
-            </button>
+            {/* One photo is the requirement — once it is in, the button
+                gives way to the stamps above. */}
+            {!photo && !isASH && (
+              <button className="mob-btn ghost" onClick={() => fileRef.current?.click()}>
+                📷 Take photo
+              </button>
+            )}
 
             <button
               className="mob-btn"
@@ -3217,20 +3346,48 @@ function RecordTab({
                 submitting ||
                 !stationId ||
                 !jobId ||
-                (isASH
-                  ? !dutyDate || !dutyShift || !pulledQty
-                  : atStationLevel
-                    ? photos.length === 0
-                    : !Number(qty))
+                (isASH ? !dutyDate || !dutyShift || !pulledQty : !photo)
               }
               onClick={submit}
             >
               {submitting ? 'Submitting…' : 'Submit for approval'}
             </button>
+            {/* A grey button with no reason reads as broken — say what is
+                still missing. */}
+            {!submitting && (isASH
+              ? (!stationId || !jobId || !dutyDate || !dutyShift || !pulledQty) && (
+                  <div className="mob-sub" style={{ textAlign: 'center' }}>
+                    {!stationId ? 'Pick a station to submit.'
+                      : !jobId ? 'Choose the job to submit.'
+                      : !dutyDate || !dutyShift ? 'Pick the date and shift to submit.'
+                      : 'No cages pulled for that shift yet.'}
+                  </div>
+                )
+              : (!stationId || !jobId || !photo) && (
+                  <div className="mob-sub" style={{ textAlign: 'center' }}>
+                    {!stationId ? 'Pick a station to submit.'
+                      : !jobId ? 'Choose the job to submit.'
+                      : 'Take the photo to submit.'}
+                  </div>
+                ))}
           </div>
         )}
 
       </div>
+
+      {photoView && photo && (
+        <div className="mob-photoview" onClick={() => setPhotoView(false)}>
+          <button
+            type="button"
+            className="mob-photoview-x"
+            onClick={() => setPhotoView(false)}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+          <img src={photo.preview} alt="Work record photo" onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
     </>
   )
 }
@@ -3278,12 +3435,12 @@ function RecordHistory({
    * landing on "Today" throws the question away and makes the numbers
    * look wrong.
    */
-  initialRange?: DayRange
+  initialRange?: HistoryRange
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
   const [rangeKey, setRangeKey] = useState<HistoryRange>(
-    RANGE_FROM_OUTPUT[initialRange] ?? 'today',
+    RANGE_FROM_OUTPUT[initialRange as DayRange] ?? initialRange ?? 'today',
   )
   // The earlier-months list, folded away behind the history icon.
   const [showMonths, setShowMonths] = useState(false)
@@ -3390,7 +3547,18 @@ function RecordHistory({
       </div>
 
       <div className="mob-body">
-        <MobSubHeader title="Work Record History" onBack={onBack} />
+        {/* The month IS the title — "Aug 2026" over its records reads in
+            one glance; the generic name keeps the day/week windows. */}
+        <MobSubHeader
+          title={
+            pickedMonth
+              ? pickedMonth.label
+              : rangeKey === 'month'
+                ? new Date().toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+                : 'Work Record History'
+          }
+          onBack={onBack}
+        />
         {/* The station, with the way back through earlier months beside
             it — three columns, so the name stays centred on the screen
             rather than on the space left over next to the button. */}
@@ -3429,7 +3597,7 @@ function RecordHistory({
         {/* Opened by the icon, or held open by the month being read — a
             picked month with its own list folded away would leave the
             three chips all dark and nothing saying why. */}
-        {(showMonths || pickedMonth) && (
+        {showMonths && (
           <div className="mob-queue-chips">
             {months.map((m) => (
               <button

@@ -34,6 +34,10 @@ export default function App() {
           <Route element={<RequireModule moduleKey="demo-mobile" />}>
             <Route path="/demo-mobile" element={<DemoMobile />} />
           </Route>
+          {/* The REAL phone face: full screen, tier read from the signed-in
+              account — open #/mobile on an actual phone. Not module-gated:
+              the face itself scopes what each tier sees. */}
+          <Route path="/mobile" element={<DemoMobile real />} />
           <Route element={<RequireModule moduleKey="operation" />}>
             <Route path="/operation" element={<Operation />} />
             <Route path="/operation/add" element={<AddJobRecord />} />
