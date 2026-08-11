@@ -574,6 +574,81 @@ function TabBar({
  * different on each screen, and the page's own name sat somewhere else
  * again. One arrow, one title, one place.
  */
+/* ------------------------------------------------------------------ */
+/* A filter behind one button, rather than a row of chips across the    */
+/* screen. Picking is ADDITIVE — tap a tier to tick it, tap another to  */
+/* read both side by side, tap again to untick. An empty set is ALL,    */
+/* not none: that is what the list does before anybody touches it, so   */
+/* "All" needs no state of its own.                                     */
+/* ------------------------------------------------------------------ */
+
+function FilterMenu({
+  title,
+  allLabel,
+  options,
+  picked,
+  onToggle,
+  onAll,
+}: {
+  title: string
+  allLabel: string
+  options: { key: string; name: string; color?: string | null }[]
+  picked: Set<string>
+  onToggle: (key: string) => void
+  onAll: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const narrowed = picked.size > 0
+  return (
+    <div className="mob-filter">
+      <button
+        type="button"
+        className={`mob-filter-btn ${narrowed ? 'on' : ''}`}
+        onClick={() => setOpen((v) => !v)}
+        aria-label={title}
+        aria-expanded={open}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 5h18l-7 8v6l-4 2v-8Z" />
+        </svg>
+        {narrowed && <span className="mob-filter-count">{picked.size}</span>}
+      </button>
+
+      {open && (
+        <>
+          {/* Anywhere else closes it — a filter should not need its own
+              close button to get out of the way. */}
+          <button type="button" className="mob-filter-scrim" aria-label="Close filter" onClick={() => setOpen(false)} />
+          <div className="mob-filter-menu" role="menu">
+            <div className="mob-filter-title">{title}</div>
+            <button
+              type="button"
+              className={`mob-filter-row ${picked.size === 0 ? 'on' : ''}`}
+              onClick={onAll}
+            >
+              <span className="mob-filter-tick">{picked.size === 0 ? '✓' : ''}</span>
+              <span>{allLabel}</span>
+            </button>
+            {options.map((o) => (
+              <button
+                type="button"
+                key={o.key}
+                className={`mob-filter-row ${picked.has(o.key) ? 'on' : ''}`}
+                onClick={() => onToggle(o.key)}
+              >
+                <span className="mob-filter-tick">{picked.has(o.key) ? '✓' : ''}</span>
+                {o.color && <span className={`tag-dot dot-${o.color}`} aria-hidden="true" />}
+                <span>{o.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 /** Today / 7 days / 30 days — the windows every record screen offers. */
 const DAY_RANGES = [
   { key: 'today', label: 'Today', days: 0 },
@@ -3676,8 +3751,8 @@ function MyWorkTab({
   const [filter, setFilter] = useState<WorkFilter>(initialFilter)
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
   // Narrow the list by the submitter's tier — only worth offering when
-  // this tier may look at more than its own.
-  const [tierFilter, setTierFilter] = useState('')
+  // this tier may look at more than its own. Empty is ALL, not none.
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set())
   // Which station blocks are open. Collapsed is the default: a station
   // head with six stations wants the shape first, the records second.
   const [openStations, setOpenStations] = useState<Set<string>>(new Set())
@@ -3889,7 +3964,11 @@ function MyWorkTab({
   /** The tier tag of whoever submitted a record. */
   const tierIdOf = (e: ProductionEntry) =>
     (e.user_id ? submitters.get(e.user_id)?.grade_id : null) ?? null
-  const matchesTier = (e: ProductionEntry) => !tierFilter || tierIdOf(e) === tierFilter
+  const matchesTier = (e: ProductionEntry) => {
+    if (tierFilter.size === 0) return true
+    const id = tierIdOf(e)
+    return id != null && tierFilter.has(id)
+  }
 
   // Pending is a queue — all of it, always. Approved and rejected are a
   // history, so they open on today and widen only when asked.
@@ -4090,26 +4169,25 @@ function MyWorkTab({
           <button className={filter === 'rejected' ? 'on' : ''} onClick={() => setFilter('rejected')}>
             Rejected ({count('rejected')})
           </button>
+          {/* Only worth offering when this tier may look past its own rank
+              — one tier means nothing to choose between. */}
+          {viewableTiers.length > 1 && (
+            <FilterMenu
+              title="Tier"
+              allLabel="All tiers"
+              options={viewableTiers.map((g) => ({ key: g.id, name: g.name, color: g.color }))}
+              picked={tierFilter}
+              onToggle={(key) =>
+                setTierFilter((cur) => {
+                  const next = new Set(cur)
+                  if (!next.delete(key)) next.add(key)
+                  return next
+                })
+              }
+              onAll={() => setTierFilter(new Set())}
+            />
+          )}
         </div>
-
-        {/* Only worth a row of its own when this tier may look past its
-            own rank — one tier means nothing to choose between. */}
-        {viewableTiers.length > 1 && (
-          <div className="mob-queue-chips wrap">
-            <button className={tierFilter === '' ? 'on' : ''} onClick={() => setTierFilter('')}>
-              All tiers
-            </button>
-            {viewableTiers.map((g) => (
-              <button
-                key={g.id}
-                className={tierFilter === g.id ? 'on' : ''}
-                onClick={() => setTierFilter(g.id)}
-              >
-                {g.name}
-              </button>
-            ))}
-          </div>
-        )}
 
         {/* Approved and rejected are a history and open on today. Pending
             is a queue — every item in it is waiting now, so a date window
@@ -4723,35 +4801,25 @@ function ContractSection({
     <>
       <div className="mob-sectionhead">Piece Rate</div>
       <div className="mob-card">
-      <div className="mob-card-label">Piece rate contract</div>
-
-      {/* One chip per rung this contract covers — your own first, then
-          down. Only rungs that are actually here get a chip, so the row
-          never offers a filter that filters to nothing. */}
-      {groups.length + (untagged.length > 0 ? 1 : 0) > 1 && (
-        <div className="mob-chiprow">
-          <button className={picked.size === 0 ? 'on' : ''} onClick={() => setPicked(new Set())}>
-            All
-          </button>
-          {groups.map(({ grade }) => (
-            <button
-              key={grade.id}
-              className={picked.has(grade.id) ? 'on' : ''}
-              onClick={() => toggle(grade.id)}
-            >
-              {grade.name}
-            </button>
-          ))}
-          {untagged.length > 0 && (
-            <button
-              className={picked.has(UNTAGGED_KEY) ? 'on' : ''}
-              onClick={() => toggle(UNTAGGED_KEY)}
-            >
-              Any tier
-            </button>
-          )}
-        </div>
-      )}
+      {/* The filter sits in the block's own heading rather than as a row
+          of chips beneath it — only the rungs actually here are offered,
+          so it never filters to nothing. */}
+      <div className="mob-card-label spread">
+        <span>Piece rate contract</span>
+        {groups.length + (untagged.length > 0 ? 1 : 0) > 1 && (
+          <FilterMenu
+            title="Tier"
+            allLabel="All tiers"
+            options={[
+              ...groups.map(({ grade }) => ({ key: grade.id, name: grade.name, color: grade.color })),
+              ...(untagged.length > 0 ? [{ key: UNTAGGED_KEY, name: 'Any tier' }] : []),
+            ]}
+            picked={picked}
+            onToggle={toggle}
+            onAll={() => setPicked(new Set())}
+          />
+        )}
+      </div>
 
       {groups.length === 0 && untagged.length === 0 && (
         <div className="mob-sub">No approved piece rate at your station yet.</div>
