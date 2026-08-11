@@ -11,7 +11,7 @@
 // My work, Team and Profile are identical for everyone — they just read that
 // person's own data.
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -574,6 +574,169 @@ function TabBar({
  * different on each screen, and the page's own name sat somewhere else
  * again. One arrow, one title, one place.
  */
+/* ------------------------------------------------------------------ */
+/* A filter behind one button, rather than a row of chips across the    */
+/* screen. Picking is ADDITIVE — tap a tier to tick it, tap another to  */
+/* read both side by side, tap again to untick. An empty set is ALL,    */
+/* not none: that is what the list does before anybody touches it, so   */
+/* "All" needs no state of its own.                                     */
+/* ------------------------------------------------------------------ */
+
+function FilterMenu({
+  title,
+  allLabel,
+  options,
+  picked,
+  onToggle,
+  onAll,
+}: {
+  title: string
+  allLabel: string
+  options: { key: string; name: string; color?: string | null }[]
+  picked: Set<string>
+  onToggle: (key: string) => void
+  onAll: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement | null>(null)
+  // The box the list scrolls in, and what it looked like when the menu
+  // was opened: how far it was scrolled, its natural bottom padding, and
+  // how tall it was.
+  const box = useRef<HTMLElement | null>(null)
+  const keep = useRef<number | null>(null)
+  const basePad = useRef(0)
+  const reserve = useRef<number | null>(null)
+  const extraPad = useRef(0)
+  const narrowed = picked.size > 0
+
+  function scrollBox(): HTMLElement | null {
+    let node: HTMLElement | null = root.current?.parentElement ?? null
+    while (node) {
+      const oy = getComputedStyle(node).overflowY
+      if (oy === 'auto' || oy === 'scroll') return node
+      node = node.parentElement
+    }
+    return null
+  }
+
+  /**
+   * Hold the list still while it is being filtered.
+   *
+   * Two things move it. Ticking a tier re-renders the list, and the scroll
+   * box settles somewhere else. Unticking makes the list SHORTER, and if
+   * you were near the bottom there is no longer anywhere to be scrolled
+   * to — the browser clamps, and the block you are working slides.
+   *
+   * So while the menu is open the box keeps the height it had when the
+   * menu opened, held there by padding underneath the list. Nothing can
+   * clamp, so nothing moves; the block grows and shrinks above padding
+   * that gives way in step with it. Closing the menu hands the space
+   * back.
+   */
+  function hold(change: () => void) {
+    box.current = scrollBox()
+    keep.current = box.current ? box.current.scrollTop : null
+    change()
+  }
+
+  function openMenu() {
+    const node = scrollBox()
+    box.current = node
+    if (node) {
+      basePad.current = parseFloat(getComputedStyle(node).paddingBottom) || 0
+      extraPad.current = 0
+      reserve.current = node.scrollHeight
+      keep.current = node.scrollTop
+    }
+    setOpen(true)
+  }
+
+  function closeMenu() {
+    const node = box.current
+    if (node) {
+      node.style.paddingBottom = ''
+      const top = Math.min(node.scrollTop, Math.max(0, node.scrollHeight - node.clientHeight))
+      node.scrollTop = top
+    }
+    reserve.current = null
+    extraPad.current = 0
+    keep.current = null
+    setOpen(false)
+  }
+
+  useLayoutEffect(() => {
+    const node = box.current
+    if (!node) return
+    if (open && reserve.current != null) {
+      // What the list would measure with the reserved space taken out.
+      const natural = node.scrollHeight - extraPad.current
+      const extra = Math.max(0, reserve.current - natural)
+      extraPad.current = extra
+      node.style.paddingBottom = `${basePad.current + extra}px`
+    }
+    const top = keep.current
+    keep.current = null
+    if (top != null) {
+      node.scrollTop = Math.min(top, Math.max(0, node.scrollHeight - node.clientHeight))
+    }
+  })
+
+  // Leaving the tab with the menu still open must not leave the reserved
+  // space behind on a box the next screen will use.
+  useEffect(() => () => {
+    if (box.current) box.current.style.paddingBottom = ''
+  }, [])
+
+  return (
+    <div className="mob-filter" ref={root}>
+      <button
+        type="button"
+        className={`mob-filter-btn ${narrowed ? 'on' : ''}`}
+        onClick={() => (open ? closeMenu() : openMenu())}
+        aria-label={title}
+        aria-expanded={open}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 5h18l-7 8v6l-4 2v-8Z" />
+        </svg>
+        {narrowed && <span className="mob-filter-count">{picked.size}</span>}
+      </button>
+
+      {open && (
+        <>
+          {/* Anywhere else closes it — a filter should not need its own
+              close button to get out of the way. */}
+          <button type="button" className="mob-filter-scrim" aria-label="Close filter" onClick={closeMenu} />
+          <div className="mob-filter-menu" role="menu">
+            <div className="mob-filter-title">{title}</div>
+            <button
+              type="button"
+              className={`mob-filter-row ${picked.size === 0 ? 'on' : ''}`}
+              onClick={() => hold(onAll)}
+            >
+              <span className="mob-filter-tick">{picked.size === 0 ? '✓' : ''}</span>
+              <span>{allLabel}</span>
+            </button>
+            {options.map((o) => (
+              <button
+                type="button"
+                key={o.key}
+                className={`mob-filter-row ${picked.has(o.key) ? 'on' : ''}`}
+                onClick={() => hold(() => onToggle(o.key))}
+              >
+                <span className="mob-filter-tick">{picked.has(o.key) ? '✓' : ''}</span>
+                {o.color && <span className={`tag-dot dot-${o.color}`} aria-hidden="true" />}
+                <span>{o.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 /** Today / 7 days / 30 days — the windows every record screen offers. */
 const DAY_RANGES = [
   { key: 'today', label: 'Today', days: 0 },
@@ -3690,8 +3853,8 @@ function MyWorkTab({
   const [filter, setFilter] = useState<WorkFilter>(initialFilter)
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
   // Narrow the list by the submitter's tier — only worth offering when
-  // this tier may look at more than its own.
-  const [tierFilter, setTierFilter] = useState('')
+  // this tier may look at more than its own. Empty is ALL, not none.
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set())
   // Which station blocks are open. Collapsed is the default: a station
   // head with six stations wants the shape first, the records second.
   const [openStations, setOpenStations] = useState<Set<string>>(new Set())
@@ -3762,13 +3925,19 @@ function MyWorkTab({
           .in('id', submitterIds)
         byId = new Map(((p ?? []) as Profile[]).map((x) => [x.id, x]))
       }
-      // Whose work this tier may look at is one setting, read in one
-      // place: Operation Module → "View work record of". The queue used to
-      // answer it with its own strictly-below comparison, which could
-      // disagree with the module on the very same records.
+      /**
+       * Whose work this tier may look at is one setting, read in one place:
+       * Operation Module → "View work record of".
+       *
+       * There is no exception for the signed-in account's own records. The
+       * queue used to let those through whatever tier they came from, so
+       * that a demo driven from one login always had something to review —
+       * but that put work from ABOVE the previewed tier into its queue,
+       * which is the one thing the ladder is there to prevent. A quiet
+       * queue is the correct answer when nothing below has been submitted.
+       */
       const below = (e: ProductionEntry) => {
         if (tier == null) return false
-        if (e.user_id === profileId) return true // previewing — see above
         const who = e.user_id ? byId.get(e.user_id) : undefined
         return canViewTier(tier, grades, 'entry', who?.grade_id ?? null)
       }
@@ -3897,7 +4066,11 @@ function MyWorkTab({
   /** The tier tag of whoever submitted a record. */
   const tierIdOf = (e: ProductionEntry) =>
     (e.user_id ? submitters.get(e.user_id)?.grade_id : null) ?? null
-  const matchesTier = (e: ProductionEntry) => !tierFilter || tierIdOf(e) === tierFilter
+  const matchesTier = (e: ProductionEntry) => {
+    if (tierFilter.size === 0) return true
+    const id = tierIdOf(e)
+    return id != null && tierFilter.has(id)
+  }
 
   // Pending is a queue — all of it, always. Approved and rejected are a
   // history, so they open on today and widen only when asked.
@@ -3913,8 +4086,13 @@ function MyWorkTab({
   const keep = (e: ProductionEntry) => matchesTier(e) && inDates(e)
   // The chips count what their tab would show, date window included, so a
   // number on a chip and the list behind it can never disagree.
-  const count = (k: WorkFilter) =>
-    entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && (k === 'pending' || inDates(x))).length
+  const count = (k: WorkFilter) => {
+    const mine = entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && (k === 'pending' || inDates(x)))
+    // Work waiting on YOU is listed under Pending too, so it is counted
+    // there — a chip reading (0) above a card that is plainly pending is
+    // the sort of thing that makes a screen untrustworthy.
+    return mine.length + (k === 'pending' ? queue.filter(matchesTier).length : 0)
+  }
   const shown = entries.filter((e) => inBucket(e, filter)).filter(keep)
   // Someone else's work only ever sits in the pending view — once acted on
   // it leaves the queue entirely.
@@ -4093,26 +4271,25 @@ function MyWorkTab({
           <button className={filter === 'rejected' ? 'on' : ''} onClick={() => setFilter('rejected')}>
             Rejected ({count('rejected')})
           </button>
+          {/* Only worth offering when this tier may look past its own rank
+              — one tier means nothing to choose between. */}
+          {viewableTiers.length > 1 && (
+            <FilterMenu
+              title="Tier"
+              allLabel="All tiers"
+              options={viewableTiers.map((g) => ({ key: g.id, name: g.name, color: g.color }))}
+              picked={tierFilter}
+              onToggle={(key) =>
+                setTierFilter((cur) => {
+                  const next = new Set(cur)
+                  if (!next.delete(key)) next.add(key)
+                  return next
+                })
+              }
+              onAll={() => setTierFilter(new Set())}
+            />
+          )}
         </div>
-
-        {/* Only worth a row of its own when this tier may look past its
-            own rank — one tier means nothing to choose between. */}
-        {viewableTiers.length > 1 && (
-          <div className="mob-queue-chips wrap">
-            <button className={tierFilter === '' ? 'on' : ''} onClick={() => setTierFilter('')}>
-              All tiers
-            </button>
-            {viewableTiers.map((g) => (
-              <button
-                key={g.id}
-                className={tierFilter === g.id ? 'on' : ''}
-                onClick={() => setTierFilter(g.id)}
-              >
-                {g.name}
-              </button>
-            ))}
-          </div>
-        )}
 
         {/* Approved and rejected are a history and open on today. Pending
             is a queue — every item in it is waiting now, so a date window
@@ -4726,35 +4903,25 @@ function ContractSection({
     <>
       <div className="mob-sectionhead">Piece Rate</div>
       <div className="mob-card">
-      <div className="mob-card-label">Piece rate contract</div>
-
-      {/* One chip per rung this contract covers — your own first, then
-          down. Only rungs that are actually here get a chip, so the row
-          never offers a filter that filters to nothing. */}
-      {groups.length + (untagged.length > 0 ? 1 : 0) > 1 && (
-        <div className="mob-chiprow">
-          <button className={picked.size === 0 ? 'on' : ''} onClick={() => setPicked(new Set())}>
-            All
-          </button>
-          {groups.map(({ grade }) => (
-            <button
-              key={grade.id}
-              className={picked.has(grade.id) ? 'on' : ''}
-              onClick={() => toggle(grade.id)}
-            >
-              {grade.name}
-            </button>
-          ))}
-          {untagged.length > 0 && (
-            <button
-              className={picked.has(UNTAGGED_KEY) ? 'on' : ''}
-              onClick={() => toggle(UNTAGGED_KEY)}
-            >
-              Any tier
-            </button>
-          )}
-        </div>
-      )}
+      {/* The filter sits in the block's own heading rather than as a row
+          of chips beneath it — only the rungs actually here are offered,
+          so it never filters to nothing. */}
+      <div className="mob-card-label spread">
+        <span>Piece rate contract</span>
+        {groups.length + (untagged.length > 0 ? 1 : 0) > 1 && (
+          <FilterMenu
+            title="Tier"
+            allLabel="All tiers"
+            options={[
+              ...groups.map(({ grade }) => ({ key: grade.id, name: grade.name, color: grade.color })),
+              ...(untagged.length > 0 ? [{ key: UNTAGGED_KEY, name: 'Any tier' }] : []),
+            ]}
+            picked={picked}
+            onToggle={toggle}
+            onAll={() => setPicked(new Set())}
+          />
+        )}
+      </div>
 
       {groups.length === 0 && untagged.length === 0 && (
         <div className="mob-sub">No approved piece rate at your station yet.</div>
