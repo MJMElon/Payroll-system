@@ -5888,10 +5888,23 @@ function TeamTab({
       if (ids.length === 0 || mine.length === 0) return true
       return ids.some((id) => mine.includes(id))
     }
-    const holders = people
+    const chain = chainByGrade.get(g.id)
+    let holders = people
       .filter((p) => p.grade_id === g.id && p.tags_confirmed && sameFloor(p))
       .sort((a, b) => profileName(a).localeCompare(profileName(b)))
-    const chain = chainByGrade.get(g.id)
+    // A rung standing IN the station — the station head's and below — is
+    // part of a team's own line, so only the reader's team's upper shows:
+    // the person on their reporting chain, or a holder in their team.
+    // Tiers above the station cover every station, so all of those show.
+    // A rung where nothing marks anyone as "mine" falls back to everyone
+    // rather than going blank.
+    if (g.sort_order >= stationTierOrder) {
+      const myTeamId = profile?.team_id ?? myLeader?.team_id ?? null
+      const own = holders.filter(
+        (p) => p.id === chain?.id || (myTeamId != null && p.team_id === myTeamId),
+      )
+      if (own.length > 0) holders = own
+    }
     if (chain) {
       const i = holders.findIndex((p) => p.id === chain.id)
       if (i >= 0) holders.splice(i, 1)
