@@ -3083,6 +3083,22 @@ function RecordHistory({
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
 
+  /**
+   * Which station these records are from. A station's own history knows
+   * already; YOUR history did not say at all, and "Work Record History"
+   * over a list of jobs left the question hanging — so it is read off the
+   * records themselves. Most people work one station and get its name;
+   * anyone who does not gets the count, which is the honest answer.
+   */
+  const spanned = [...new Set(rows.map((e) => e.station_id))]
+  const headStation = station
+    ? station.name
+    : spanned.length === 1
+      ? stationName(spanned[0])
+      : spanned.length > 1
+        ? `${spanned.length} stations`
+        : null
+
   return (
     <>
       <div className="mob-header">
@@ -3091,9 +3107,11 @@ function RecordHistory({
 
       <div className="mob-body">
         <MobSubHeader title="Work Record History" onBack={onBack} />
-        {station && <div className="mob-card-label centred">{station.name}</div>}
+        {headStation && <div className="mob-card-label centred">{headStation}</div>}
 
-        <div className="mob-seg" role="tablist">
+        {/* The same picker as the Output record — one window question,
+            asked the same way wherever it is asked. */}
+        <div className="mob-queue-chips" role="tablist">
           {DAY_RANGES.map((r) => (
             <button
               key={r.key}
@@ -3141,8 +3159,10 @@ function RecordHistory({
                   <button className="mob-entry" onClick={() => onOpen(e)}>
                     <span className="mob-entry-main">
                       <span className="mob-entry-name">{jobName(e.job_id)}</span>
+                      {/* The station is named once, over the list. Saying
+                          it again on every row only squeezes the job. */}
                       <span className="mob-station-meta">
-                        {stationName(e.station_id)} ·{' '}
+                        {spanned.length > 1 ? `${stationName(e.station_id)} · ` : ''}
                         {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
                           day: '2-digit', month: 'short',
                         })}
