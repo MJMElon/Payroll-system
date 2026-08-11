@@ -1143,6 +1143,7 @@ function FuncRow({
           !on && <span className="tickmark no">✓</span>
         )}
       </td>
+      <td aria-hidden="true" />
     </tr>
   )
 }
@@ -1697,13 +1698,16 @@ function GroupManageModal({
             {/* Function sheet — one answer per function for the WHOLE work:
                 the record is entered once by the operator and, approved,
                 pays every tier its own rate. Tick Show or No show. */}
-            <div className="pr-block pr-block-fit">
+            <div className="pr-block">
               <table className="table pr-func">
                 <thead>
                   <tr>
                     <th className="pr-manage-corner">Function</th>
                     <th className="pr-func-tick">Show</th>
                     <th className="pr-func-tick">No show</th>
+                    {/* Filler column: the ticks stay beside the names while
+                        the row lines run the block's full width. */}
+                    <th aria-hidden="true" />
                   </tr>
                 </thead>
                 <tbody>
