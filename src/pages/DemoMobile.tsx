@@ -100,12 +100,16 @@ function breakdownFor(
     .join(' + ')
 }
 
-// Once an hour has fully elapsed, that hour's photos (taken by this user at
-// this station) convert into a pending production entry — quantity = photo
-// count, priced at read-time via rateFor/amountFor. Never touches the still-
-// running hour. Shared by the per-station screen (for a snappy refresh while
-// it's open) and a app-wide check (so conversion isn't stuck waiting for that
-// specific screen to be reopened after the hour ends).
+// Photos convert into a pending production entry AS THEY COME — the hour
+// does not have to finish first, so the tiers above can verify and approve
+// while the work is still going. A stamp lands on the hour's entry while
+// that entry is still PENDING (quantity = its photo count); an entry
+// already verified or approved is a decision made, so later stamps of the
+// same hour open a fresh pending entry instead — the Approved history
+// folds the pieces of an hour back into one record. Priced at read-time
+// via rateFor/amountFor. Shared by the per-station screen (for a snappy
+// refresh while it's open) and an app-wide check (so conversion isn't
+// stuck waiting for that specific screen to be open).
 async function autoSubmitElapsedHoursForStation(stationId: string, profileId: string) {
   const { data, error } = await supabase
     .from('operation_photos')
@@ -117,37 +121,62 @@ async function autoSubmitElapsedHoursForStation(stationId: string, profileId: st
     .order('taken_at', { ascending: true })
   if (error || !data || data.length === 0) return
 
-  const currentHourStart = new Date()
-  currentHourStart.setMinutes(0, 0, 0)
-
-  const groups = new Map<string, { jobId: string; workDate: string; ids: string[] }>()
+  const groups = new Map<string, { jobId: string; bucketStart: Date; ids: string[] }>()
   for (const r of data) {
+    if (!r.job_id) continue
     const bucketStart = new Date(r.taken_at)
     bucketStart.setMinutes(0, 0, 0)
-    if (bucketStart >= currentHourStart || !r.job_id) continue // still live — leave it
     const key = `${r.job_id}-${bucketStart.toISOString()}`
     const g = groups.get(key)
     if (g) g.ids.push(r.id)
-    else groups.set(key, { jobId: r.job_id, workDate: dayISO(bucketStart), ids: [r.id] })
+    else groups.set(key, { jobId: r.job_id, bucketStart, ids: [r.id] })
   }
   if (groups.size === 0) return
 
-  for (const { jobId: jid, workDate, ids } of groups.values()) {
-    const { data: entry, error: insErr } = await supabase
+  for (const { jobId: jid, bucketStart, ids } of groups.values()) {
+    const bucketEnd = new Date(bucketStart.getTime() + 3_600_000)
+    // The hour's entry, while it is still open to additions.
+    const { data: pending } = await supabase
       .from('operation_entries')
-      .insert({
-        work_date: workDate,
-        station_id: stationId,
-        job_id: jid,
-        user_id: profileId,
-        created_by: profileId,
-        quantity: ids.length,
-        approval_status: 'pending',
-      })
-      .select()
-      .single()
-    if (insErr || !entry) continue
-    await supabase.from('operation_photos').update({ entry_id: entry.id }).in('id', ids)
+      .select('id')
+      .eq('station_id', stationId)
+      .eq('user_id', profileId)
+      .eq('job_id', jid)
+      .eq('approval_status', 'pending')
+      .gte('created_at', bucketStart.toISOString())
+      .lt('created_at', bucketEnd.toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    let entryId: string | undefined = pending?.id
+    if (!entryId) {
+      const { data: entry, error: insErr } = await supabase
+        .from('operation_entries')
+        .insert({
+          work_date: dayISO(bucketStart),
+          station_id: stationId,
+          job_id: jid,
+          user_id: profileId,
+          created_by: profileId,
+          quantity: ids.length,
+          approval_status: 'pending',
+        })
+        .select()
+        .single()
+      if (insErr || !entry) continue
+      entryId = entry.id as string
+    }
+    await supabase.from('operation_photos').update({ entry_id: entryId }).in('id', ids)
+    // The quantity IS the photo count — recounted after attaching, so two
+    // devices converting at once cannot lose a stamp between them.
+    const { count } = await supabase
+      .from('operation_photos')
+      .select('id', { count: 'exact', head: true })
+      .eq('entry_id', entryId)
+    if (count != null && count > 0) {
+      await supabase.from('operation_entries').update({ quantity: count }).eq('id', entryId)
+    }
   }
 }
 
@@ -3716,6 +3745,7 @@ function EntryDetail({
   ladderFor,
   onBack,
   workerTier,
+  ids,
   decide,
 }: {
   entry: ProductionEntry
@@ -3730,6 +3760,8 @@ function EntryDetail({
   onBack: () => void
   /** The tier tag of whoever submitted it — the viewer's own by default. */
   workerTier?: Grade | null
+  /** Every entry folded into this record — the photos cover them all. */
+  ids?: string[]
   /** Shown only when the viewer's tag grants the step this record is at. */
   decide?: { canVerify: boolean; canApprove: boolean; busy: boolean; act: (next: 'verified' | 'approved' | 'rejected') => void }
 }) {
@@ -3738,9 +3770,10 @@ function EntryDetail({
     supabase
       .from('operation_photos')
       .select('*')
-      .eq('entry_id', entry.id)
+      .in('entry_id', ids && ids.length > 0 ? ids : [entry.id])
       .then(({ data }) => setPhotos(data ?? []))
-  }, [entry.id])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.id, (ids ?? []).join(',')])
 
   const job = jobs.find((j) => j.id === entry.job_id)
   const station = stations.find((s) => s.id === entry.station_id)
@@ -3955,20 +3988,30 @@ function PhotoChip({ n, onOpen }: { n: number; onOpen: () => void }) {
 }
 
 /** The photos behind one entry, fetched when it is opened. */
-function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () => void }) {
+function PhotoSheet({
+  entry,
+  ids,
+  onClose,
+}: {
+  entry: ProductionEntry
+  /** Every entry folded into this record — the photos cover them all. */
+  ids?: string[]
+  onClose: () => void
+}) {
   const [rows, setRows] = useState<PhotoRecord[]>([])
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     supabase
       .from('operation_photos')
       .select('*')
-      .eq('entry_id', entry.id)
+      .in('entry_id', ids && ids.length > 0 ? ids : [entry.id])
       .order('taken_at', { ascending: true })
       .then(({ data }) => {
         setRows((data ?? []) as PhotoRecord[])
         setLoading(false)
       })
-  }, [entry.id])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.id, (ids ?? []).join(',')])
   const url = (path: string | null) =>
     path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
   return (
@@ -4028,6 +4071,7 @@ function ReviewRow({
   stationLabel,
   jobName,
   amount,
+  ladder,
   photos,
   canVerify,
   canApprove,
@@ -4040,6 +4084,8 @@ function ReviewRow({
   stationLabel: string
   jobName: string
   amount: number
+  /** The job's price ladder, so the fold can show the sum worked out. */
+  ladder: number[]
   photos: number
   canVerify: boolean
   canApprove: boolean
@@ -4048,6 +4094,7 @@ function ReviewRow({
 }) {
   const [open, setOpen] = useState(false)
   const [shots, setShots] = useState<PhotoRecord[] | null>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open || shots) return
@@ -4059,12 +4106,20 @@ function ReviewRow({
       .then(({ data }) => setShots((data ?? []) as PhotoRecord[]))
   }, [open, shots, entry.id])
 
+  // Opening reveals the details below the fold — bring them onto the
+  // screen (again once the photos land and the fold grows), or opening
+  // the last row of a full list looks like it did nothing.
+  useEffect(() => {
+    if (open) bodyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [open, shots])
+
   const status = entry.approval_status ?? 'pending'
   // The step this record is AT decides which button is live: verify comes
   // before approve, and a tag holding both still cannot do them at once.
   const showVerify = canVerify && status === 'pending'
   const showApprove = canApprove && status === 'verified'
   const submitted = new Date(entry.created_at)
+  const calc = ladderBreakdownFrom(ladder, Number(entry.quantity))
   const url = (path: string | null) =>
     path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
 
@@ -4085,13 +4140,13 @@ function ReviewRow({
         </span>
         <span className="mob-review2-what">
           <span className="st">{stationLabel}</span>
-          <span className="jb">{jobName} · {entry.quantity}</span>
+          <span className="jb">{jobName}</span>
         </span>
         <span className={`mob-caret ${open ? 'open' : ''}`} aria-hidden="true">⌄</span>
       </button>
 
       {open && (
-        <div className="mob-review2-body">
+        <div className="mob-review2-body" ref={bodyRef}>
           <div className="mob-row">
             <span className="mob-field-label">Work by</span>
             <span>
@@ -4103,18 +4158,25 @@ function ReviewRow({
             <span className="mob-field-label">Quantity</span>
             <span>{entry.quantity}</span>
           </div>
-          <div className="mob-row">
-            <span className="mob-field-label">Amount</span>
-            <span>{RM(amount)}</span>
-          </div>
-          <div className="mob-row">
-            <span className="mob-field-label">Submitted</span>
-            <span>{submitted.toLocaleString()}</span>
-          </div>
-          <div className="mob-row">
-            <span className="mob-field-label">Status</span>
-            {statusChip(status)}
-          </div>
+          {/* The amount as it was worked out — each rate against the units
+              that earned it, and a total only when more than one rate took
+              part. No submitted-at row (the head already says when) and no
+              status chip (the Pending tab is the status). */}
+          {calc.map((s, i) => (
+            <div className="mob-row" key={`${s.rate}-${i}`}>
+              <span className="mob-field-label">{i === 0 ? 'Amount' : ''}</span>
+              <span>
+                {Number.isInteger(s.units) ? s.units : s.units.toFixed(1)} × {RM(s.rate)} ={' '}
+                {RM(s.units * s.rate)}
+              </span>
+            </div>
+          ))}
+          {calc.length > 1 && (
+            <div className="mob-row">
+              <span className="mob-field-label">Total</span>
+              <span style={{ fontWeight: 700 }}>{RM(amount)}</span>
+            </div>
+          )}
 
           <div className="mob-field-label">Photo evidence ({photos})</div>
           {shots == null ? (
@@ -4174,6 +4236,32 @@ function ReviewRow({
 /* ------------------------------------------------------------------ */
 
 type WorkFilter = 'pending' | 'approved' | 'rejected'
+
+/**
+ * An hour approved before it finished and then stamped again leaves two
+ * entries, but they are one hour's work — the Approved history folds them
+ * back into a single record: quantities summed, priced on the hour's
+ * ladder, the photos of every piece shown together.
+ */
+type MergedEntry = ProductionEntry & { merged_ids?: string[] }
+
+function mergeSameHour(list: ProductionEntry[]): MergedEntry[] {
+  const byKey = new Map<string, MergedEntry>()
+  const out: MergedEntry[] = []
+  for (const e of list) {
+    const key = [e.user_id, e.station_id, e.job_id, e.work_date, e.created_at.slice(0, 13)].join('|')
+    const g = byKey.get(key)
+    if (g) {
+      g.quantity = Number(g.quantity) + Number(e.quantity)
+      g.merged_ids?.push(e.id)
+    } else {
+      const m: MergedEntry = { ...e, merged_ids: [e.id] }
+      byKey.set(key, m)
+      out.push(m)
+    }
+  }
+  return out
+}
 
 /** How far back the approved / rejected history reaches. */
 type DateMode = 'today' | 'month' | 'range'
@@ -4515,16 +4603,34 @@ function MyWorkTab({
   // The chips count what their tab would show, date window included, so a
   // number on a chip and the list behind it can never disagree.
   const count = (k: WorkFilter) => {
-    const mine = entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && inDatesFor(x, k))
     // Work waiting on YOU is listed under Pending too, so it is counted
     // there — a chip reading (0) above a card that is plainly pending is
-    // the sort of thing that makes a screen untrustworthy.
-    return mine.length + (k === 'pending' ? queue.filter(matchesTier).length + liveGroups : 0)
+    // the sort of thing that makes a screen untrustworthy. A record that
+    // is both mine and waiting on me is one row, so it is one count.
+    const q = k === 'pending' ? queue.filter(matchesTier) : []
+    const qIds = new Set(q.map((e) => e.id))
+    const mine = entries
+      .filter((e) => inBucket(e, k))
+      .filter((x) => matchesTier(x) && inDatesFor(x, k))
+      .filter((e) => !qIds.has(e.id))
+    return (
+      (k === 'approved' ? mergeSameHour(mine).length : mine.length) +
+      q.length +
+      (k === 'pending' ? liveGroups : 0)
+    )
   }
-  const shown = entries.filter((e) => inBucket(e, filter)).filter(keep)
   // Someone else's work only ever sits in the pending view — once acted on
   // it leaves the queue entirely.
   const queueShown = filter === 'pending' ? queue.filter(matchesTier) : []
+  // A record can be both MINE and WAITING ON ME (a tier reviewing work of
+  // its own rung). One row is enough — the review row, which opens in
+  // place, so a record never lists twice.
+  const queueIds = new Set(queueShown.map((e) => e.id))
+  const shownRaw = entries
+    .filter((e) => inBucket(e, filter))
+    .filter(keep)
+    .filter((e) => !queueIds.has(e.id))
+  const shown: MergedEntry[] = filter === 'approved' ? mergeSameHour(shownRaw) : shownRaw
 
   /**
    * The list, gathered under the station each record belongs to. Somebody
@@ -4542,8 +4648,12 @@ function MyWorkTab({
       queue: queueShown.filter((e) => e.station_id === st.id),
     }))
 
+  /** Photos behind a record — every folded piece counted together. */
+  const photosOf = (e: MergedEntry) =>
+    (e.merged_ids ?? [e.id]).reduce((n, id) => n + (photoCount.get(id) ?? 0), 0)
+
   /** This person's own records. */
-  const MyRecordCards = ({ list }: { list: ProductionEntry[] }) => (
+  const MyRecordCards = ({ list }: { list: MergedEntry[] }) => (
     <>
             {list.map((e) => (
               <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
@@ -4561,7 +4671,7 @@ function MyWorkTab({
                   </span>
                 </button>
                 <span className="perf-top">
-                  <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
+                  <PhotoChip n={photosOf(e)} onOpen={() => setViewPhotos(e)} />
                 </span>
                 {stat(e) === 'rejected' && e.rejected_reason && (
                   <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
@@ -4602,6 +4712,7 @@ function MyWorkTab({
           stationLabel={stationName(e.station_id)}
           jobName={jobName(e.job_id)}
           amount={amountFor(e.job_id, e.quantity)}
+          ladder={ladderFor(e.job_id)}
           photos={photoCount.get(e.id) ?? 0}
           canVerify={canVerify && reviewable(e)}
           canApprove={canApprove && reviewable(e)}
@@ -4625,6 +4736,7 @@ function MyWorkTab({
         tier2RateFor={tier2RateFor}
                   ladderFor={ladderFor}
         onBack={() => setDetail(null)}
+        ids={(detail as MergedEntry).merged_ids}
         // The submitter's OWN tag, always — showing the previewed tier
         // here made a record look as though it came from the rung doing
         // the looking.
@@ -4825,7 +4937,13 @@ function MyWorkTab({
         )}
       </div>
 
-      {viewPhotos && <PhotoSheet entry={viewPhotos} onClose={() => setViewPhotos(null)} />}
+      {viewPhotos && (
+        <PhotoSheet
+          entry={viewPhotos}
+          ids={(viewPhotos as MergedEntry).merged_ids}
+          onClose={() => setViewPhotos(null)}
+        />
+      )}
 
       {livePeek && (
         <div className="mob-photoview" onClick={() => setLivePeek(null)}>
