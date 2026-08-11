@@ -4394,7 +4394,7 @@ function MyNumbersSection({
   // the screen behind it.
   return (
     <>
-      <div className="mob-sectionhead">Payout record</div>
+      <div className="mob-sectionhead">Payout Record</div>
       <div className="mob-card">
         <div className="mob-field-label">This month earned</div>
         <div className="mob-stat">{RM(total)}</div>
@@ -4517,7 +4517,9 @@ function ContractSection({
   }
 
   return (
-    <div className="mob-card">
+    <>
+      <div className="mob-sectionhead">Piece Rate</div>
+      <div className="mob-card">
       <div className="mob-card-label">Piece rate contract</div>
 
       {/* One chip per rung this contract covers — your own first, then
@@ -4574,7 +4576,8 @@ function ContractSection({
           {untagged.map((j) => <JobRow key={j.id} job={j} />)}
         </div>
       )}
-    </div>
+      </div>
+    </>
   )
 }
 
