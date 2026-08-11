@@ -29,6 +29,9 @@ export default function App() {
           <Route path="/daily-job-record/add" element={<Navigate to="/operation/add" replace />} />
           <Route path="/station/:stationId" element={<StationDetail />} />
           <Route path="/demo-mobile" element={<DemoMobile />} />
+          {/* The REAL phone face: full screen, tier read from the signed-in
+              account — open #/mobile on an actual phone. */}
+          <Route path="/mobile" element={<DemoMobile real />} />
           <Route path="/operation" element={<Operation />} />
           <Route path="/operation/add" element={<AddJobRecord />} />
           <Route path="/workers" element={<WorkerManagement />} />

@@ -1612,6 +1612,16 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   width: 100%; height: 100%; border-radius: 34px; overflow: hidden;
   background: #f1f5f3; display: flex; flex-direction: column;
 }
+/* REAL mobile mode (#/mobile): the demo frame falls away and the phone
+   itself is the frame — the app face fills the viewport, above the app
+   shell, breathing around the notch and the home bar. */
+.mob-real {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; flex-direction: column;
+  height: 100dvh; background: #f1f5f3; overflow: hidden;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
 .mob-status {
   display: flex; justify-content: space-between; align-items: center;
   padding: 0.55rem 1.1rem 0.3rem; font-size: 0.7rem; color: var(--muted);

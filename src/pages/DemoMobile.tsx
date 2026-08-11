@@ -199,7 +199,7 @@ function clockHelp(message: string) {
     : `Clock in/out failed: ${message}`
 }
 
-export default function DemoMobile() {
+export default function DemoMobile({ real = false }: { real?: boolean }) {
   const { profile } = useAuth()
   const [grades, setGrades] = useState<Grade[]>([])
   const [tier, setTier] = useState<Grade | null>(null)
@@ -243,11 +243,22 @@ export default function DemoMobile() {
       setStations(s.data ?? [])
       setJobs(j.data ?? [])
       setRates(r.data ?? [])
-      if (g.data && g.data.length > 0) setTier((prev) => prev ?? g.data[0])
+      if (!real && g.data && g.data.length > 0) setTier((prev) => prev ?? g.data[0])
       setLoading(false)
     }
     load()
   }, [])
+
+  // REAL mode (#/mobile): the phone is not previewing a tier — it IS the
+  // signed-in account. The tier is the account's own tag, and an account
+  // not yet placed on the chart gets the new-sign-up welcome.
+  useEffect(() => {
+    if (!real) return
+    const mine = grades.find((g) => g.id === profile?.grade_id) ?? null
+    setTier(mine)
+    setSignupPreview(!profile?.tags_confirmed || !mine)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [real, grades, profile?.grade_id, profile?.tags_confirmed])
 
   // Latest rate in force per job (effective_from <= today). A tiered rate
   // (e.g. cage tipping) pays tier2Rate from the 5th unit onward, resetting
@@ -312,66 +323,8 @@ export default function DemoMobile() {
     return () => clearInterval(t)
   }, [profile?.id, jobColumnReady, hourlyStationIds])
 
-  return (
-    <div className="stack">
-      <header className="module-bar">
-        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
-      </header>
-      <h1 className="module-banner">Demo Mobile View</h1>
-
-      {error && <div className="error">{error}</div>}
-
-      <div className="demo-layout">
-        {/* Tier rail — mirrors the tier tags in Tags management. */}
-        <div className="card tier-rail">
-          <h3>View as</h3>
-          <div className="tag-list">
-            <button
-              className={`tag-row ${signupPreview ? 'active' : ''}`}
-              onClick={() => setSignupPreview(true)}
-            >
-              <span className="tag-dot dot-grey" />
-              <span>New sign up (just registered)</span>
-            </button>
-            {grades.map((g) => (
-              <button
-                key={g.id}
-                className={`tag-row ${!signupPreview && tier?.id === g.id ? 'active' : ''}`}
-                onClick={() => {
-                  setTier(g)
-                  setSignupPreview(false)
-                }}
-              >
-                <span className={`tag-dot dot-${g.color}`} />
-                <span>{g.sort_order}. {g.name}</span>
-              </button>
-            ))}
-            {!loading && grades.length === 0 && (
-              <p className="muted small">No tier tags yet — create them in Settings.</p>
-            )}
-          </div>
-        </div>
-
-        <div className="phone-wrap">
-          <div className="phone">
-            <div className="phone-screen">
-              <div className="mob-status">
-                <StatusClock />
-                <span>▮▮▮</span>
-              </div>
-
-              {signupPreview ? (
-                <div className="mob-tier-ribbon">
-                  <span className="tag-dot dot-grey" />
-                  <span>New sign up view</span>
-                </div>
-              ) : tier && (
-                <div className="mob-tier-ribbon">
-                  <span className={`tag-dot dot-${tier.color}`} />
-                  <span>{tier.name} view</span>
-                </div>
-              )}
-
+  const screenBody = (
+    <>
               <div className="mob-content">
                 {loading ? (
                   <div className="mob-body"><p className="muted small">Loading…</p></div>
@@ -448,6 +401,80 @@ export default function DemoMobile() {
                   onTab={setTab}
                 />
               )}
+    </>
+  )
+
+  // REAL mode: no rail, no demo frame — the phone itself is the frame.
+  if (real) {
+    return (
+      <div className="mob-real">
+        {error && <div className="error" style={{ margin: '0.5rem 0.9rem 0' }}>{error}</div>}
+        {screenBody}
+      </div>
+    )
+  }
+
+  return (
+    <div className="stack">
+      <header className="module-bar">
+        <Link to="/" className="btn ghost backlink-btn">← Back to main page</Link>
+      </header>
+      <h1 className="module-banner">Demo Mobile View</h1>
+
+      {error && <div className="error">{error}</div>}
+
+      <div className="demo-layout">
+        {/* Tier rail — mirrors the tier tags in Tags management. */}
+        <div className="card tier-rail">
+          <h3>View as</h3>
+          <div className="tag-list">
+            <button
+              className={`tag-row ${signupPreview ? 'active' : ''}`}
+              onClick={() => setSignupPreview(true)}
+            >
+              <span className="tag-dot dot-grey" />
+              <span>New sign up (just registered)</span>
+            </button>
+            {grades.map((g) => (
+              <button
+                key={g.id}
+                className={`tag-row ${!signupPreview && tier?.id === g.id ? 'active' : ''}`}
+                onClick={() => {
+                  setTier(g)
+                  setSignupPreview(false)
+                }}
+              >
+                <span className={`tag-dot dot-${g.color}`} />
+                <span>{g.sort_order}. {g.name}</span>
+              </button>
+            ))}
+            {!loading && grades.length === 0 && (
+              <p className="muted small">No tier tags yet — create them in Settings.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="phone-wrap">
+          <div className="phone">
+            <div className="phone-screen">
+              <div className="mob-status">
+                <StatusClock />
+                <span>▮▮▮</span>
+              </div>
+
+              {signupPreview ? (
+                <div className="mob-tier-ribbon">
+                  <span className="tag-dot dot-grey" />
+                  <span>New sign up view</span>
+                </div>
+              ) : tier && (
+                <div className="mob-tier-ribbon">
+                  <span className={`tag-dot dot-${tier.color}`} />
+                  <span>{tier.name} view</span>
+                </div>
+              )}
+
+              {screenBody}
             </div>
           </div>
           <p className="muted small">
