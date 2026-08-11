@@ -481,17 +481,25 @@ function addDays(dateStr: string, delta: number) {
   return d.toISOString().slice(0, 10)
 }
 
-/** A tiered rate shows both tiers stacked with a small tag; a flat rate
- *  shows its single number, same as before. Used everywhere a rate cell
- *  is rendered (Masterlist, Manage popout, History). */
+/** A tiered rate is two lines, each saying /hr right beside its number —
+ *  no extra pill line, so the cell stays short. A flat rate shows its
+ *  single number. Used everywhere a rate cell is rendered (Masterlist,
+ *  Manage popout, History). */
 function RateCell({ rate }: { rate: Rate | undefined }) {
   if (!rate) return <span className="muted">—</span>
   if (rate.tier2_rate == null) return <strong>{Number(rate.rate).toFixed(2)}</strong>
   return (
     <span className="rate-tiered">
-      <span className="rate-tier-line"><span className="rate-tier-lbl">1st–4th</span>{Number(rate.rate).toFixed(2)}</span>
-      <span className="rate-tier-line"><span className="rate-tier-lbl">5th+</span>{Number(rate.tier2_rate).toFixed(2)}</span>
-      <span className="tagbadge tag-blue rate-tiered-pill">Tiered / hour</span>
+      <span className="rate-tier-line">
+        <span className="rate-tier-lbl">1st–4th</span>
+        {Number(rate.rate).toFixed(2)}
+        <span className="rate-tier-unit">/hr</span>
+      </span>
+      <span className="rate-tier-line">
+        <span className="rate-tier-lbl">5th+</span>
+        {Number(rate.tier2_rate).toFixed(2)}
+        <span className="rate-tier-unit">/hr</span>
+      </span>
     </span>
   )
 }
@@ -945,6 +953,18 @@ function RatesList({
   const tagCols = tagColumns(grades, filtered)
   const colCount = 3 + tagCols.length + 1
 
+  // What the row's work is actually paid per: a tiered rate pays per hour
+  // whatever unit its row still carries, so derive the unit from the rates
+  // and name every distinct one — never just the first tier's column.
+  const groupUnit = (g: JobGroup) => {
+    const units = [
+      ...new Set(
+        g.jobs.map((j) => (currentRate.get(j.id)?.tier2_rate != null ? '/hour' : j.unit)),
+      ),
+    ]
+    return units.join(' · ')
+  }
+
   // Download the visible masterlist as CSV (opens directly in Excel).
   // Each tier carries its own effective date — the dates can differ, so
   // every rate column is followed by that tier's own date column.
@@ -961,7 +981,7 @@ function RatesList({
       const cells = [
         stationName(g.station_id),
         g.name,
-        g.jobs[0]?.unit ?? '',
+        groupUnit(g),
         ...tagCols.flatMap((c) => {
           const j = g.jobs.find((x) => (x.grade_id ?? NO_TAG) === c.key)
           const r = j ? currentRate.get(j.id) : undefined
@@ -1031,7 +1051,7 @@ function RatesList({
                 <tr key={groupKey(g)}>
                   <td>{stationName(g.station_id)}</td>
                   <td>{g.name}</td>
-                  <td className="muted">{g.jobs[0]?.unit}</td>
+                  <td className="muted">{groupUnit(g)}</td>
                   {/* Each tier keeps its own effective date under its own
                       rate — one shared date column cannot say three tiers
                       whose rates changed on different days. */}
