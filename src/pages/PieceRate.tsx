@@ -163,12 +163,13 @@ export default function PieceRate() {
   )
   const notYetApproved = jobs.filter((j) => j.approval_status !== 'approved')
 
-  // Managers/admins see every contract. Others are scoped two ways:
+  // Everyone with a tier tag is scoped two ways:
   // 1. Station — a user with station tags only sees those stations.
   // 2. Tier — the tags ticked under "View piece rate contract of" on their
   //    own tier tag (Settings → Tier Tag Access Manage → Piece Rate
   //    Module). A tag nobody has set falls back to its own rank and every
   //    rank below. Untagged rates belong to no rung and are open to all.
+  // Only an admin/manager ACCOUNT with no tier tag sees every contract.
   const myGrade = profile?.grade_id ? grades.find((g) => g.id === profile.grade_id) ?? null : null
   const myStations =
     profile?.station_ids && profile.station_ids.length > 0
@@ -177,7 +178,11 @@ export default function PieceRate() {
         ? [profile.station_id]
         : []
   const visibleTo = (j: Job) => {
-    if (canManage) return true
+    // Holding a tier tag means standing where it stands: the ticks under
+    // "View piece rate contract of" scope even an admin account, exactly
+    // as the mobile face reads them. Only an account with no tier tag at
+    // all keeps the role-based pass — there is no tag to read.
+    if (canManage && !myGrade) return true
     if (myStations.length > 0 && !myStations.includes(j.station_id)) return false
     return canViewTier(myGrade, grades, 'rate', j.grade_id)
   }
