@@ -883,70 +883,6 @@ function scoreOver(rows: ProductionEntry[]): Score {
   }
 }
 
-const statusOf = (e: ProductionEntry) => e.approval_status ?? 'approved'
-
-/** Approval completion per station, this month. Stations with no records drop out. */
-function approvalByStation(mtd: ProductionEntry[], stations: Station[]) {
-  return stations
-    .map((s) => {
-      const rows = mtd.filter((e) => e.station_id === s.id)
-      return {
-        id: s.id,
-        name: s.name,
-        pct: rows.length > 0
-          ? Math.round((rows.filter((e) => statusOf(e) === 'approved').length / rows.length) * 100)
-          : null,
-      }
-    })
-    .filter((r) => r.pct != null)
-}
-
-/** Only the exceptions that actually trigger: aging approvals first. */
-function exceptionFlags(
-  entries: ProductionEntry[],
-  mtd: ProductionEntry[],
-  stations: Station[],
-  weekStart: string,
-): { kind: 'red' | 'amber'; title: string; text: string }[] {
-  const flags: { kind: 'red' | 'amber'; title: string; text: string }[] = []
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? 'Station'
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3_600_000)
-  const aging = entries.filter(
-    (e) => ['pending', 'verified'].includes(statusOf(e)) && new Date(e.created_at) < threeDaysAgo,
-  )
-  if (aging.length > 0) {
-    flags.push({
-      kind: 'red',
-      title: 'Aging approval',
-      text: `${aging.length} record${aging.length === 1 ? '' : 's'} pending > 3 days`,
-    })
-  }
-  const rejectedWk = entries.filter((e) => statusOf(e) === 'rejected' && e.work_date >= weekStart)
-  const rejByStation = new Map<string, number>()
-  for (const e of rejectedWk) rejByStation.set(e.station_id, (rejByStation.get(e.station_id) ?? 0) + 1)
-  for (const [sid, n] of rejByStation) {
-    if (n >= 3) flags.push({
-      kind: 'amber',
-      title: 'Rejection spike',
-      text: `${stationName(sid)}: ${n} rejections this week`,
-    })
-  }
-  for (const s of stations) {
-    const rows = mtd.filter((e) => e.station_id === s.id)
-    if (rows.length < 5) continue
-    const rowsAvg = rows.reduce((sum, e) => sum + e.quantity, 0) / rows.length
-    const spike = rows.find((e) => e.work_date >= weekStart && e.quantity > 2 * rowsAvg)
-    if (spike) {
-      flags.push({
-        kind: 'amber',
-        title: 'High entry',
-        text: `${s.name}: ${spike.quantity} logged — above normal range`,
-      })
-      break
-    }
-  }
-  return flags
-}
 
 function ScoreMeter({
   label,
@@ -4186,99 +4122,6 @@ const DATE_MODES: { key: DateMode; label: string }[] = [
 ]
 
 
-/* ------------------------------------------------------------------ */
-/* The review, for the tiers that run the whole mill. Their Performance */
-/* tab reads the mill — output, the week, who is on, what it costs — so */
-/* the checking half lives here under My work: what is approved, what   */
-/* is going wrong, and how their own records are doing.                 */
-/* ------------------------------------------------------------------ */
-
-function ReviewSections({
-  stations,
-  profileId,
-  onError,
-}: {
-  stations: Station[]
-  profileId: string | null
-  onError: (m: string | null) => void
-}) {
-  const [entries, setEntries] = useState<ProductionEntry[]>([])
-  const [mine, setMine] = useState<ProductionEntry[]>([])
-
-  useEffect(() => {
-    const from = new Date()
-    from.setDate(from.getDate() - 40) // this month and this week, both covered
-    supabase
-      .from('operation_entries')
-      .select('*')
-      .gte('work_date', dayISO(from))
-      .then(({ data, error }) => {
-        if (error) return onError(error.message)
-        const rows = data ?? []
-        setEntries(rows)
-        setMine(profileId ? rows.filter((e) => e.user_id === profileId) : [])
-      })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId])
-
-  const monthStart = todayISO().slice(0, 8) + '01'
-  const mtd = entries.filter((e) => e.work_date >= monthStart)
-  const monday = new Date()
-  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7))
-  const weekStart = dayISO(monday)
-
-  const stationPct = approvalByStation(mtd, stations)
-  const flags = exceptionFlags(entries, mtd, stations, weekStart)
-  const myToday = scoreOver(mine.filter((e) => e.work_date === todayISO()))
-  const myThisWeek = scoreOver(mine.filter((e) => e.work_date >= weekStart))
-
-  return (
-    <>
-      {/* Block titles wear the KPI dashboard's card label — small, grey,
-          tracked out — so the two tabs read as one family. */}
-      {stationPct.length > 0 && (
-        <div className="mob-card">
-          <div className="mob-card-label">Approval completion by station</div>
-          <div className="mob-bars">
-            {stationPct.map((s) => (
-              <div className="mob-barrow" key={s.id}>
-                <span className="lbl station">{s.name}</span>
-                <span className="mob-bartrack">
-                  <div className={s.pct! < 80 ? 'best' : ''} style={{ width: `${s.pct}%` }} />
-                </span>
-                <span className="val">{s.pct}%</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="mob-card">
-        <div className="mob-card-label">Exception flags</div>
-        {flags.length === 0 && <div className="mob-sub">No exceptions this week.</div>}
-        {flags.map((f, i) => (
-          <div className={`mob-flag ${f.kind}`} key={i}>
-            <div className="mob-flag-title">{f.title}</div>
-            <div>{f.text}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mob-card">
-        <div className="mob-card-label">My work done</div>
-        <div className="mob-sub">Target 100% approved</div>
-        <ScoreMeter label="Today" score={myToday} />
-        <ScoreMeter label="This week" score={myThisWeek} />
-        <div className="mob-scorekey">
-          <span><i className="dot done" />Work done</span>
-          <span><i className="dot bad" />Rejected</span>
-          <span><i className="dot wait" />Waiting approval</span>
-        </div>
-      </div>
-    </>
-  )
-}
-
 function MyWorkTab({
   profileId,
   myName,
@@ -4338,10 +4181,6 @@ function MyWorkTab({
   // a tier and that tier verifies; tick approve and it approves. A tier
   // holding both sees both.
   const caps = effectiveCapabilities(tier)
-  // A tier whose Performance tab is given over to the mill dashboard reads
-  // the review here instead — the same entitlement, read the other way, so
-  // the review can never land on both tabs or on neither.
-  const showMill = isEntitled(tier, 'mill-dashboard', grades)
   const canVerify = caps.includes('verify')
   const canApprove = caps.includes('approve')
   // Whose work this tier may look at: the ticks under Operation Module →
@@ -4702,10 +4541,6 @@ function MyWorkTab({
         <div className="mob-pagehead">
           <div className="mob-role">My Work Done</div>
         </div>
-
-        {showMill && (
-          <ReviewSections stations={stations} profileId={profileId} onError={onError} />
-        )}
 
         <div className="mob-queue-chips">
           <button className={filter === 'pending' ? 'on' : ''} onClick={() => setFilter('pending')}>
