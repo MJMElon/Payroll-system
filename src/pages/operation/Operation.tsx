@@ -30,6 +30,9 @@ import { canViewTier, effectiveCapabilities, tagClass } from '../../lib/tags'
 import {
   profileName,
   supabase,
+  hourLadder,
+  ladderAmount,
+  ladderBreakdownFrom,
   todayISO,
   type Grade,
   type Job,
@@ -40,7 +43,6 @@ import {
   type Station,
 } from '../../lib/supabase'
 
-const TIER1_UNIT_CAP = 4 // tiered hourly rates: tier-1 price covers the first 4 units
 
 const DAY_START_HOUR = 7 // the mill day runs 07:00 → 07:00, same as the dashboard board
 
@@ -310,8 +312,7 @@ export default function Operation() {
   const amountFor = (jobId: string, qty: number) => {
     const r = bestRate.get(jobId)
     if (!r) return 0
-    if (r.tier2_rate == null) return r.rate * qty
-    return Math.min(qty, TIER1_UNIT_CAP) * r.rate + Math.max(0, qty - TIER1_UNIT_CAP) * r.tier2_rate
+    return ladderAmount(r, qty)
   }
 
   const jobOf = (id: string) => jobs.find((j) => j.id === id) ?? null
@@ -451,14 +452,21 @@ export default function Operation() {
   const RateBreak = ({ g }: { g: WorkGroup }) => {
     const r = bestRate.get(g.jobId)
     if (!r) return <span className="muted">—</span>
-    if (r.tier2_rate == null) return <>{Number(r.rate).toFixed(2)}</>
-    const t1 = g.entries.reduce((n, e) => n + Math.min(e.quantity, TIER1_UNIT_CAP), 0)
-    const t2 = g.entries.reduce((n, e) => n + Math.max(0, e.quantity - TIER1_UNIT_CAP), 0)
-    if (t2 === 0) return <>{Number(r.rate).toFixed(2)}</>
+    if (r.tier2_rate == null && (r.hour_rates?.length ?? 0) < 2) return <>{Number(r.rate).toFixed(2)}</>
+    // Each entry climbs the ladder on its own; merge equal-rate lines.
+    const merged = new Map<number, number>()
+    for (const e of g.entries) {
+      for (const step of ladderBreakdownFrom(hourLadder(r), e.quantity)) {
+        merged.set(step.rate, (merged.get(step.rate) ?? 0) + step.units)
+      }
+    }
+    const lines = [...merged.entries()]
+    if (lines.length === 1) return <>{lines[0][0].toFixed(2)}</>
     return (
       <span className="op-rate-break">
-        <span>{t1} × {Number(r.rate).toFixed(2)}</span>
-        <span>{t2} × {Number(r.tier2_rate).toFixed(2)}</span>
+        {lines.map(([lineRate, units]) => (
+          <span key={lineRate}>{Number.isInteger(units) ? units : units.toFixed(1)} × {lineRate.toFixed(2)}</span>
+        ))}
       </span>
     )
   }
@@ -990,9 +998,15 @@ function GroupModal({
   const timeOf = (e: ProductionEntry) =>
     new Date(e.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
 
-  // What the day's count is worth, price line by price line.
-  const t1Units = group.entries.reduce((n, e) => n + Math.min(e.quantity, TIER1_UNIT_CAP), 0)
-  const t2Units = group.entries.reduce((n, e) => n + Math.max(0, e.quantity - TIER1_UNIT_CAP), 0)
+  // What the day's count is worth, price line by price line — each entry
+  // climbs the rate's ladder on its own; equal-rate lines are merged.
+  const dayMerged = new Map<number, number>()
+  for (const e of group.entries) {
+    for (const step of ladderBreakdownFrom(hourLadder(rate), e.quantity)) {
+      dayMerged.set(step.rate, (dayMerged.get(step.rate) ?? 0) + step.units)
+    }
+  }
+  const dayLines = [...dayMerged.entries()]
 
   return (
     <div className="modal-overlay" {...overlay}>
@@ -1169,18 +1183,14 @@ function GroupModal({
                     </tr>
                   ) : (
                     <>
-                      <tr>
-                        <td>1st–4th unit of the hour</td>
-                        <td className="right">{t1Units}</td>
-                        <td className="right">{Number(rate.rate).toFixed(2)}</td>
-                        <td className="right">{(t1Units * Number(rate.rate)).toFixed(2)}</td>
-                      </tr>
-                      <tr>
-                        <td>5th unit onward</td>
-                        <td className="right">{t2Units}</td>
-                        <td className="right">{Number(rate.tier2_rate).toFixed(2)}</td>
-                        <td className="right">{(t2Units * Number(rate.tier2_rate)).toFixed(2)}</td>
-                      </tr>
+                      {dayLines.map(([lineRate, units], i) => (
+                        <tr key={i}>
+                          <td>{i === 0 ? 'First units of each hour' : 'Units further up the ladder'}</td>
+                          <td className="right">{units}</td>
+                          <td className="right">{lineRate.toFixed(2)}</td>
+                          <td className="right">{(units * lineRate).toFixed(2)}</td>
+                        </tr>
+                      ))}
                     </>
                   )}
                   <tr className="total-row">
@@ -1286,8 +1296,7 @@ function AddRecordModal({
 
   const qty = Number(quantity) || 0
   const amount = jobId ? amountFor(jobId, qty) : 0
-  const t1 = Math.min(qty, TIER1_UNIT_CAP)
-  const t2 = Math.max(0, qty - TIER1_UNIT_CAP)
+  const qtyLines = rate ? ladderBreakdownFrom(hourLadder(rate), qty) : []
 
   function pickPhoto(ev: ChangeEvent<HTMLInputElement>) {
     const file = ev.target.files?.[0]
@@ -1479,18 +1488,14 @@ function AddRecordModal({
                     </tr>
                   ) : (
                     <>
-                      <tr>
-                        <td>1st–4th unit of the hour</td>
-                        <td className="right">{t1}</td>
-                        <td className="right">{Number(rate.rate).toFixed(2)}</td>
-                        <td className="right">{(t1 * Number(rate.rate)).toFixed(2)}</td>
-                      </tr>
-                      <tr>
-                        <td>5th unit onward</td>
-                        <td className="right">{t2}</td>
-                        <td className="right">{Number(rate.tier2_rate).toFixed(2)}</td>
-                        <td className="right">{(t2 * Number(rate.tier2_rate)).toFixed(2)}</td>
-                      </tr>
+                      {qtyLines.map((step, i) => (
+                        <tr key={i}>
+                          <td>{i === 0 ? 'First units of the hour' : 'Units further up the ladder'}</td>
+                          <td className="right">{step.units}</td>
+                          <td className="right">{step.rate.toFixed(2)}</td>
+                          <td className="right">{(step.units * step.rate).toFixed(2)}</td>
+                        </tr>
+                      ))}
                     </>
                   )}
                   <tr className="total-row">

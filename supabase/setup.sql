@@ -1079,6 +1079,19 @@ alter table public.shared_profiles add column if not exists chart_pos int;
 -- ---------------------------------------------------------------------------
 alter table public.piece_rates add column if not exists tier2_rate numeric(12,4);
 
+-- How many records of each hour pay the FIRST tier of a tiered rate — the
+-- 5th-onward rule generalised, so one station can tier at 4 and another at
+-- 6. Null means the original 4. Both tiers pay PER RECORD in the job's own
+-- unit; the hour only resets the count.
+alter table public.piece_rates add column if not exists tier_threshold int;
+
+-- The full PRICE LADDER of a tiered rate: element i pays the (i+1)th work
+-- record of the hour, and the last element pays every record after it —
+-- so [4.2, 4.2, 4.2, 4.2, 6] reads "1st–4th RM4.20 each, 5th+ RM6 each".
+-- Authoritative when present; rate / tier2_rate / tier_threshold are kept
+-- in sync by the app for older readers.
+alter table public.piece_rates add column if not exists hour_rates numeric(12,4)[];
+
 -- One-time consolidation for the Sterilizer & Tippler Station cage-tipping
 -- rates: the Operator tag priced this as two separately-named jobs (a
 -- workaround for not having real tiering); fold them into one tiered job
@@ -2079,6 +2092,33 @@ as $$
          phone = nullif(btrim(coalesce(phone_no, '')), '')
    where id = auth.uid();
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Station preset coordinate (Settings → Station tags → the pin action).
+--
+-- Each station can hold WHERE it is, so a clock in / clock out stamp —
+-- which already records where the phone stood — can be checked against the
+-- preset. geofence_m is the allowed distance in metres; empty falls back
+-- to the app's default (300 m). The check is advisory: a stamp outside
+-- the fence still lands, marked as away, because refusing it would only
+-- teach people to switch their location off.
+-- ---------------------------------------------------------------------------
+alter table public.shared_stations add column if not exists latitude double precision;
+alter table public.shared_stations add column if not exists longitude double precision;
+alter table public.shared_stations add column if not exists geofence_m integer;
+
+-- ---------------------------------------------------------------------------
+-- Station targets (Settings → Station tags → the pin action).
+--
+-- Two numbers a station can carry — a target per HOUR and a target per
+-- MONTH — and two ticks under "Show on Add new work record" that decide
+-- which target dashboards the mobile Add-work-record screen draws.
+-- hourly_target itself is an older column, shared with the hourly photo
+-- stamp card; these ticks only govern the DISPLAY.
+-- ---------------------------------------------------------------------------
+alter table public.shared_stations add column if not exists monthly_target integer;
+alter table public.shared_stations add column if not exists show_hourly_target boolean not null default false;
+alter table public.shared_stations add column if not exists show_monthly_target boolean not null default false;
 
 -- ---------------------------------------------------------------------------
 -- How many work records a day a station is aiming for. It is the run of

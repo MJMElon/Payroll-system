@@ -14,6 +14,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { distanceLabel, stationLocationCheck } from '../lib/geo'
 import {
   canViewTier,
   effectiveCapabilities,
@@ -29,6 +30,11 @@ import {
   type Grade,
   type Job,
   type PayrollAdjustment,
+  hourLadder,
+  ladderAmount,
+  ladderBreakdownFrom,
+  ladderStepsFrom,
+  tier1Cap,
   type PayrollLine,
   type PayrollRun,
   type PhotoRecord,
@@ -69,33 +75,20 @@ function ordinal(n: number) {
   return `${n}${suffix}`
 }
 
-// A tiered piece rate (e.g. cage tipping) pays Tier 1 for the first N units
-// done in an hour and Tier 2 for the rest — this is that threshold.
-const TIER1_UNIT_CAP = 4
-
-// "RM 3.20/cage" for a flat job, "RM 3.20 → 5.00/cage" for a tiered one.
-function rateLabelFor(
-  rateFor: (jobId: string) => number,
-  tier2RateFor: (jobId: string) => number | null,
-  jobId: string,
-) {
-  const tier2 = tier2RateFor(jobId)
-  return tier2 == null ? RM(rateFor(jobId)) : `${RM(rateFor(jobId))} → ${tier2.toFixed(2)}`
-}
-
-// "3 × RM3.20" for a flat job or a tiered one still within its first tier;
-// "4 × RM3.20 + 2 × RM5.00" once the count crosses into the second tier.
+// "3 × RM3.20" for a flat job or a tiered one still on its first rung;
+// "4 × RM3.20 + 2 × RM5.00" once the count climbs the price ladder.
 function breakdownFor(
   rateFor: (jobId: string) => number,
   tier2RateFor: (jobId: string) => number | null,
+  ladderFor: (jobId: string) => number[],
   jobId: string,
   count: number,
 ) {
-  const tier2 = tier2RateFor(jobId)
-  const rate = rateFor(jobId)
-  if (tier2 == null || count <= TIER1_UNIT_CAP) return `${count} × ${RM(rate)}`
-  const tier2Count = count - TIER1_UNIT_CAP
-  return `${TIER1_UNIT_CAP} × ${RM(rate)} + ${tier2Count} × ${RM(tier2)}`
+  void rateFor
+  void tier2RateFor
+  return ladderBreakdownFrom(ladderFor(jobId), count)
+    .map((s) => `${Number.isInteger(s.units) ? s.units : s.units.toFixed(1)} × ${RM(s.rate)}`)
+    .join(' + ')
 }
 
 // Once an hour has fully elapsed, that hour's photos (taken by this user at
@@ -297,16 +290,15 @@ export default function DemoMobile() {
     () => (jobId: string) => bestRate.get(jobId)?.tier2_rate ?? null,
     [bestRate],
   )
+  // The rate's full price ladder — element i pays the (i+1)th record of
+  // the hour, the last element every record after.
+  const ladderFor = useMemo(
+    () => (jobId: string) => hourLadder(bestRate.get(jobId)),
+    [bestRate],
+  )
   const amountFor = useMemo(
-    () => (jobId: string, quantity: number) => {
-      const tier2 = tier2RateFor(jobId)
-      const rate = rateFor(jobId)
-      if (tier2 == null) return rate * quantity
-      const tier1Qty = Math.min(quantity, TIER1_UNIT_CAP)
-      const tier2Qty = Math.max(0, quantity - TIER1_UNIT_CAP)
-      return tier1Qty * rate + tier2Qty * tier2
-    },
-    [rateFor, tier2RateFor],
+    () => (jobId: string, quantity: number) => ladderAmount(bestRate.get(jobId), quantity),
+    [bestRate],
   )
 
   // The preview obeys the SELECTED tier's capabilities — only tiers with
@@ -426,6 +418,7 @@ export default function DemoMobile() {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
                     profile={profile}
                     profileId={profile?.id ?? null}
                     myStationIds={myStationIds}
@@ -444,6 +437,7 @@ export default function DemoMobile() {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
                     myEmail={profile?.email ?? 'unknown'}
                     initialFilter={workFilter}
                     onError={setError}
@@ -467,6 +461,7 @@ export default function DemoMobile() {
                     rateFor={rateFor}
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
                     canEntry={canEntry}
                     jobColumnReady={jobColumnReady}
                     onError={setError}
@@ -815,41 +810,6 @@ function hourLabel(h: number) {
   return `${h12}${h24 >= 12 ? 'PM' : 'AM'}`
 }
 
-// Records arrive newest-first; keep that order and bucket them per hour zone
-// (and per job, so switching jobs mid-hour never merges two jobs' counts).
-function groupByHour(records: PhotoRecord[]): Array<[number, string | null, PhotoRecord[]]> {
-  const groups: Array<[number, string | null, PhotoRecord[]]> = []
-  for (const r of records) {
-    const h = new Date(r.taken_at).getHours()
-    const jid = r.job_id ?? null
-    const last = groups[groups.length - 1]
-    if (last && last[0] === h && last[1] === jid) last[2].push(r)
-    else groups.push([h, jid, [r]])
-  }
-  return groups
-}
-
-function RecordRow({ record, url }: { record: PhotoRecord; url: string | null }) {
-  const t = new Date(record.taken_at)
-  return (
-    <div className="mob-row">
-      <span>
-        {t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        <span className="mob-station-meta">
-          {' '}· {t.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-        </span>
-      </span>
-      {url ? (
-        <a href={url} target="_blank" rel="noreferrer">
-          <img className="mob-thumb" src={url} alt="record" loading="lazy" />
-        </a>
-      ) : (
-        <span className="mob-chip">no photo</span>
-      )}
-    </div>
-  )
-}
-
 /**
  * One period of the "work done" target, read like a usage meter: the window
  * and the headline percentage on top, a single 100% track filled by what was
@@ -1011,6 +971,7 @@ function PerformanceTab({
   rateFor,
   amountFor,
   tier2RateFor,
+  ladderFor,
   profile,
   profileId,
   myStationIds,
@@ -1025,6 +986,7 @@ function PerformanceTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   profile: Profile | null
   profileId: string | null
   myStationIds: string[]
@@ -1180,7 +1142,7 @@ function PerformanceTab({
         jobs={jobs}
         rateFor={rateFor}
         amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
+        ladderFor={ladderFor}
         profileId={profileId}
         jobColumnReady={jobColumnReady}
         canEntry={canEntry}
@@ -1201,6 +1163,7 @@ function PerformanceTab({
         rateFor={rateFor}
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
         onBack={() => setDetail(null)}
       />
     )
@@ -1474,6 +1437,7 @@ function PerformanceTab({
               myStationIds={myStationIds}
               rateFor={rateFor}
               tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
             />
           </>
         )}
@@ -1637,7 +1601,7 @@ function StationScreen({
   jobs,
   rateFor,
   amountFor,
-  tier2RateFor,
+  ladderFor,
   profileId,
   jobColumnReady,
   canEntry,
@@ -1650,7 +1614,7 @@ function StationScreen({
   jobs: Job[]
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   profileId: string | null
   jobColumnReady: boolean
   canEntry: boolean
@@ -1678,7 +1642,7 @@ function StationScreen({
             jobs={jobs}
             rateFor={rateFor}
             amountFor={amountFor}
-            tier2RateFor={tier2RateFor}
+            ladderFor={ladderFor}
             profileId={profileId}
             jobColumnReady={jobColumnReady}
             canEntry={canEntry}
@@ -1693,6 +1657,114 @@ function StationScreen({
 /* Job picker + stamp card + photo capture + hour-grouped records — shared
    between the Performance tab's station drill-in and the Operator's merged
    Record tab. */
+/**
+ * The target dashboards the station's "Show on Add new work record" ticks
+ * switch on (Settings → Station tags → pin action). Draft faces — to be
+ * refined once real use shapes them.
+ *
+ * Per hour: one badge per unit of the hour's target, ticked as YOUR
+ * records land this hour. From the badge past the base-rate cap the
+ * colour changes — that work is already earning the second-tier rate.
+ * Per month: the station's work done this month against its target.
+ */
+function StationTargetCards({
+  station,
+  profileId,
+}: {
+  station: Station
+  profileId: string | null
+}) {
+  // The rate's own tier threshold decides where the badges turn blue; a
+  // station without a tiered rate keeps the default cap.
+  const capBadge = tier1Cap(null)
+  const showHour = station.show_hourly_target === true && (station.hourly_target ?? 0) > 0
+  const showMonth = station.show_monthly_target === true && (station.monthly_target ?? 0) > 0
+  const [hourCount, setHourCount] = useState(0)
+  const [monthQty, setMonthQty] = useState(0)
+
+  useEffect(() => {
+    if (!showHour && !showMonth) return
+    let alive = true
+    async function load() {
+      if (showHour && profileId) {
+        const hourStart = new Date()
+        hourStart.setMinutes(0, 0, 0)
+        const { data } = await supabase
+          .from('operation_entries')
+          .select('id')
+          .eq('station_id', station.id)
+          .eq('user_id', profileId)
+          .gte('created_at', hourStart.toISOString())
+        if (alive) setHourCount((data ?? []).length)
+      }
+      if (showMonth) {
+        const monthStart = todayISO().slice(0, 8) + '01'
+        const { data } = await supabase
+          .from('operation_entries')
+          .select('quantity')
+          .eq('station_id', station.id)
+          .gte('work_date', monthStart)
+        if (alive) {
+          setMonthQty((data ?? []).reduce((t, r) => t + Number((r as { quantity: number }).quantity ?? 0), 0))
+        }
+      }
+    }
+    load()
+    const t = setInterval(load, 60_000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [station.id, profileId, showHour, showMonth])
+
+  if (!showHour && !showMonth) return null
+  const hourTarget = station.hourly_target ?? 0
+  const monthTarget = station.monthly_target ?? 0
+  const pct = monthTarget > 0 ? Math.min(100, Math.round((monthQty / monthTarget) * 100)) : 0
+
+  return (
+    <>
+      {showHour && (
+        <div className="mob-card mob-highlight">
+          <div className="mob-card-label">Target per hour</div>
+          <div className="stamp-row">
+            {Array.from({ length: hourTarget }, (_, i) => (
+              <span
+                key={i}
+                className={`stamp ${i >= capBadge ? 'tier2' : ''} ${i < hourCount ? 'done' : ''}`}
+              >
+                ✓
+              </span>
+            ))}
+            {hourCount > hourTarget && (
+              <span className="stamp extra">+{hourCount - hourTarget}</span>
+            )}
+          </div>
+          <div className="mob-sub">
+            {hourCount} of {hourTarget} this hour
+            {hourTarget > capBadge
+              ? ` · blue from no. ${capBadge + 1}: the second-tier rate`
+              : ''}
+          </div>
+        </div>
+      )}
+      {showMonth && (
+        <div className="mob-card">
+          <div className="mob-card-label">Target per month</div>
+          <div className="mob-breakrow">
+            <span>Work done this month</span>
+            <span className="mob-entry-amt">{Number.isInteger(monthQty) ? monthQty : monthQty.toFixed(1)} / {monthTarget}</span>
+          </div>
+          <div className="mob-bartrack">
+            <div style={{ width: `${pct}%` }} />
+          </div>
+          <div className="mob-sub">{pct}% of this month's target</div>
+        </div>
+      )}
+    </>
+  )
+}
+
 function StationWorkPanel({
   station,
   tier,
@@ -1700,7 +1772,7 @@ function StationWorkPanel({
   jobs,
   rateFor,
   amountFor,
-  tier2RateFor,
+  ladderFor,
   profileId,
   jobColumnReady,
   canEntry,
@@ -1712,7 +1784,7 @@ function StationWorkPanel({
   jobs: Job[]
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   profileId: string | null
   jobColumnReady: boolean
   canEntry: boolean
@@ -1720,8 +1792,9 @@ function StationWorkPanel({
 }) {
   const [viewDate, setViewDate] = useState(() => new Date())
   const [records, setRecords] = useState<PhotoRecord[]>([])
-  const [stationEntries, setStationEntries] = useState<ProductionEntry[]>([])
   const [uploading, setUploading] = useState(false)
+  // Today's hours, behind the "i" beside the hour being worked.
+  const [showHours, setShowHours] = useState(false)
   const [jobId, setJobId] = useState('')
   const [, forceTick] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -1780,15 +1853,6 @@ function StationWorkPanel({
     if (error) onError(error.message)
     else setRecords(data ?? [])
 
-    if (hourlyPieceWork) {
-      const { data: entryRows, error: entryErr } = await supabase
-        .from('operation_entries')
-        .select('*')
-        .eq('station_id', station.id)
-        .eq('work_date', dayISO(viewDate))
-      if (entryErr) onError(entryErr.message)
-      else setStationEntries(entryRows ?? [])
-    }
   }
 
   // Runs the shared conversion for just this station, then refreshes the
@@ -1861,23 +1925,59 @@ function StationWorkPanel({
     }
   }
 
-  function shiftDay(delta: number) {
-    const next = new Date(viewDate)
-    next.setDate(next.getDate() + delta)
-    if (dayISO(next) > dayISO(new Date())) return // no future days
-    setViewDate(next)
-  }
 
-  const photoUrl = (path: string | null) =>
-    path ? supabase.storage.from('records').getPublicUrl(path).data.publicUrl : null
 
-  const rateLabel = (jobId: string) => rateLabelFor(rateFor, tier2RateFor, jobId)
-  const hourBreakdown = (jobId: string, count: number) => breakdownFor(rateFor, tier2RateFor, jobId, count)
+  /**
+   * Today's hours, priced. A tiered rate counts within the hour — that is
+   * what the tier threshold means — so each hour is priced on its own and
+   * the day is their sum. Empty hours are left out; the hour being worked
+   * is kept whether or not it holds anything yet.
+   */
+  const hourRows = (() => {
+    if (!isToday) return [] as { hour: number; count: number; breakdown: string; amount: number; current: boolean }[]
+    const nowHour = new Date().getHours()
+    const counts = new Map<number, number>()
+    for (const r of records) {
+      if (jobId && r.job_id !== jobId) continue
+      const h = new Date(r.taken_at).getHours()
+      counts.set(h, (counts.get(h) ?? 0) + 1)
+    }
+    const hours = [...new Set([...counts.keys(), nowHour])].sort((a, b) => a - b)
+    return hours.map((hour) => {
+      const count = counts.get(hour) ?? 0
+      return {
+        hour,
+        count,
+        breakdown: jobId
+          ? ladderBreakdownFrom(ladderFor(jobId), count)
+              .map((step) => `${step.units} × ${RM(step.rate)}`)
+              .join(' + ')
+          : `${count}`,
+        amount: jobId ? amountFor(jobId, count) : 0,
+        current: hour === nowHour,
+      }
+    })
+  })()
+  const hoursTotal = hourRows.reduce((n, h) => n + h.amount, 0)
+
+  // Kept on the props so every screen taking a price ladder takes the same
+  // set; the hour sheet reads the ladder itself.
+  void rateFor
+
+  // What the station asks for each hour. Null means it asks for nothing in
+  // particular, so there is no row of stamps to draw against.
+  const hourlyTarget = station.hourly_target ?? null
+
 
   return (
     <>
-        {/* 1 — status stamp card */}
+        <StationTargetCards station={station} profileId={profileId} />
+
+        {/* 1 — the day and the hour in one block: what has been recorded
+               today, then the hour being worked right now. */}
         <div className="mob-card mob-highlight">
+          <div className="mob-card-label">Work done today</div>
+          <WorkDoneCard bare profileId={profileId} station={station} reloadKey={records.length} />
           {station.hourly_count ? (
             <>
               {!jobColumnReady && (
@@ -1893,11 +1993,7 @@ function StationWorkPanel({
                       ? `No approved piece rate for the ${tier.name} tier at this station yet.`
                       : 'No approved piece rate at this station yet.'}
                   </div>
-                ) : approvedJobs.length === 1 ? (
-                  <div className="mob-field-label">
-                    Job: {approvedJobs[0].name} · {rateLabel(approvedJobs[0].id)}{approvedJobs[0].unit}
-                  </div>
-                ) : (
+                ) : approvedJobs.length === 1 ? null : (
                   <>
                     <div className="mob-field-label">Job</div>
                     <select className="mob-select" value={jobId} onChange={(e) => setJobId(e.target.value)}>
@@ -1909,37 +2005,54 @@ function StationWorkPanel({
                   </>
                 )
               )}
-              <div className="mob-title mob-zone-title">{hourZone}</div>
-              <div className="stamp-row">
-                {Array.from({ length: target }, (_, i) => (
-                  <span
-                    key={i}
-                    className={`stamp ${i < stampsThisHour ? (rewardActive ? 'done reward' : 'done') : ''}`}
-                  >
-                    ✓
-                  </span>
-                ))}
-                {stampsThisHour > target && (
-                  <span className={`stamp extra ${rewardActive ? 'reward' : ''}`}>
-                    +{stampsThisHour - target}
-                  </span>
-                )}
+              <div className="mob-zone-row">
+                <span className="mob-title mob-zone-title">{hourZone}</span>
+                <button
+                  type="button"
+                  className="mob-info-btn"
+                  onClick={() => setShowHours(true)}
+                  aria-label="Today's hours"
+                  title="Today's hours"
+                >
+                  i
+                </button>
               </div>
-              <div className="mob-sub">
-                {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
-                {rewardActive && ' · bonus hour ✨'}
-              </div>
+              {/* One stamp per unit the station asks for this hour, filled
+                  as records come in. A station with no hourly target has
+                  nothing to draw a row of stamps against, so it counts. */}
+              {hourlyTarget == null ? (
+                <div className="mob-sub">
+                  {stampsThisHour} recorded this hour · {minutesLeft} min left
+                  {rewardActive && ' · bonus hour ✨'}
+                </div>
+              ) : (
+                <>
+                  <div className="stamp-row">
+                    {Array.from({ length: target }, (_, i) => (
+                      <span
+                        key={i}
+                        className={`stamp ${i < stampsThisHour ? (rewardActive ? 'done reward' : 'done') : ''}`}
+                      >
+                        ✓
+                      </span>
+                    ))}
+                    {stampsThisHour > target && (
+                      <span className={`stamp extra ${rewardActive ? 'reward' : ''}`}>
+                        +{stampsThisHour - target}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mob-sub">
+                    {Math.min(stampsThisHour, target)} of {target} stamped · {minutesLeft} min left this hour
+                    {rewardActive && ' · bonus hour ✨'}
+                  </div>
+                </>
+              )}
               {minPrev > 0 && (
                 <div className="mob-sub">
                   {nextHourBonus
                     ? `Minimum met (${stampsThisHour}/${minPrev}) — next hour is a bonus hour ✨`
                     : `${minPrev - stampsThisHour} more this hour to make ${hourLabel(now.getHours() + 1)} a bonus hour`}
-                </div>
-              )}
-              {hourlyPieceWork && jobId && (
-                <div className="mob-sub">
-                  {hourBreakdown(jobId, stampsThisHour)} ={' '}
-                  <strong>{RM(amountFor(jobId, stampsThisHour))}</strong> so far this hour · pending approval
                 </div>
               )}
             </>
@@ -1982,50 +2095,49 @@ function StationWorkPanel({
           )}
         </div>
 
-        {/* 3 — records with day navigation */}
-        <div className="mob-card">
-          <div className="mob-daynav">
-            <button className="mob-mini" onClick={() => shiftDay(-1)}>‹</button>
-            <span className="mob-title">
-              {isToday
-                ? "Today's records"
-                : viewDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
-            </span>
-            <button className="mob-mini" onClick={() => shiftDay(1)} disabled={isToday}>›</button>
-          </div>
-          {records.length === 0 && <div className="mob-sub">No records this day.</div>}
-          {station.hourly_count ? (
-            groupByHour(records).map(([hour, jid, rows]) => {
-              const entryId = rows[0]?.entry_id
-              const entry = entryId ? stationEntries.find((e) => e.id === entryId) : undefined
-              const jobName = jid ? jobs.find((j) => j.id === jid)?.name : undefined
-              return (
-                <div key={`${hour}-${jid ?? 'x'}`}>
-                  <div className="mob-hour-head">
-                    <span>
-                      {hourLabel(hour)} – {hourLabel(hour + 1)}{jobName ? ` · ${jobName}` : ''}
+        {showHours && (
+          <div className="mob-modal-wrap" role="dialog" aria-modal="true">
+            <div className="mob-modal">
+              <div className="mob-card-label">
+                <span>Today's hours</span>
+                <button className="mob-icon-btn corner" onClick={() => setShowHours(false)} aria-label="Close">×</button>
+              </div>
+              {/* Midnight to midnight, every hour listed whether or not
+                  anything was recorded in it — a blank hour is an answer. */}
+              {/* Only the hours that hold something, plus the one being
+                  worked — a fixed run of twenty-four rows is mostly empty
+                  and pushes the total off the screen. */}
+              <div className="mob-hourlist">
+                {hourRows.length === 0 && (
+                  <div className="mob-sub">Nothing recorded yet today.</div>
+                )}
+                {hourRows.map((h) => (
+                  <div className={`mob-hourrow ${h.current ? 'now' : ''}`} key={h.hour}>
+                    <span className="mob-hourrow-when">
+                      {hourLabel(h.hour)} – {hourLabel(h.hour + 1)}
+                      {h.current && <span className="mob-chip">now</span>}
                     </span>
-                    {entry ? (
-                      <span className="mob-entry-side">
-                        <span className="mob-entry-amt">{RM(amountFor(entry.job_id, entry.quantity))}</span>
-                        {statusChip(entry.approval_status)}
-                      </span>
-                    ) : (
-                      <span className={`mob-chip ${rows.length >= target ? 'ok' : ''}`}>
-                        {rows.length >= target ? `${rows.length} of ${target} ✓` : `${rows.length} of ${target}`}
-                      </span>
-                    )}
+                    <span className="mob-hourrow-sum">
+                      {h.count === 0 ? (
+                        <span className="muted">·</span>
+                      ) : (
+                        <>
+                          <span className="mob-station-meta">{h.breakdown}</span>
+                          <span className="mob-entry-amt">{RM(h.amount)}</span>
+                        </>
+                      )}
+                    </span>
                   </div>
-                  {rows.map((r) => (
-                    <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />
-                  ))}
+                ))}
+                <div className="mob-breakrow total">
+                  <span>Today total · {hourRows.reduce((n, h) => n + h.count, 0)} recorded</span>
+                  <span className="mob-entry-amt">{RM(hoursTotal)}</span>
                 </div>
-              )
-            })
-          ) : (
-            records.map((r) => <RecordRow key={r.id} record={r} url={photoUrl(r.photo_path)} />)
-          )}
-        </div>
+                            </div>
+            </div>
+          </div>
+        )}
+
     </>
   )
 }
@@ -2091,13 +2203,14 @@ function spanLabel(fromISO: string, toISO: string) {
 
 function ClockCard({
   profileId,
-  stationId,
+  station,
   onError,
 }: {
   profileId: string | null
-  stationId: string | null
+  station: Station | null
   onError: (m: string | null) => void
 }) {
+  const stationId = station?.id ?? null
   // Every stamp of the last seven days, so today's card and the week
   // strip read from one load.
   const [shifts, setShifts] = useState<Shift[]>([])
@@ -2430,6 +2543,24 @@ function ClockCard({
             <span>±{Math.round(pending.coords.accuracy)} m</span>
           </div>
         )}
+        {/* The stamp against the station's preset coordinate (set in
+            Settings → Station tags). Advisory: an away stamp still lands,
+            marked as away — refusing it only teaches people to switch
+            location off. */}
+        {(() => {
+          const check = stationLocationCheck(station, pending.coords)
+          if (!check) return null
+          return (
+            <div className="mob-row">
+              <span className="mob-field-label">Station check</span>
+              <span style={{ color: check.ok ? '#15803d' : '#b45309', fontWeight: 700 }}>
+                {check.ok
+                  ? `✓ At ${station!.name} (${distanceLabel(check.distance)} away)`
+                  : `⚠ ${distanceLabel(check.distance)} from ${station!.name}`}
+              </span>
+            </div>
+          )
+        })()}
         {pending.locationError && <div className="mob-sub">{pending.locationError}</div>}
         <div className="mob-actions">
           <button className="mob-mini ghost" onClick={discard} disabled={busy}>Retake</button>
@@ -2581,10 +2712,13 @@ function ClockCard({
 const TICK_LIMIT = 12
 
 function WorkDoneCard({
+  bare = false,
   profileId,
   station,
   reloadKey,
 }: {
+  /** Render the figures alone, to sit inside another card. */
+  bare?: boolean
   profileId: string | null
   station: Station | null
   reloadKey: number
@@ -2621,10 +2755,8 @@ function WorkDoneCard({
   const pct = target ? Math.min(100, (done / target) * 100) : 0
   const met = target != null && done >= target
 
-  return (
-    <div className="mob-card">
-      <div className="mob-card-label">Work done today</div>
-
+  const body = (
+    <>
       {target == null ? (
         <div className="mob-stat">{done}</div>
       ) : target <= TICK_LIMIT ? (
@@ -2642,13 +2774,21 @@ function WorkDoneCard({
         </div>
       )}
 
-      <div className="mob-sub">
-        {target == null
-          ? `record${done === 1 ? '' : 's'} today · no target set for ${station.name}`
-          : met
-            ? `${done} of ${target} — target met ✨`
-            : `${done} of ${target} recorded today`}
-      </div>
+      {/* With no target there is nothing to say that the figure above
+          does not already say. */}
+      {target != null && (
+        <div className="mob-sub">
+          {met ? `${done} of ${target} — target met ✨` : `${done} of ${target} recorded today`}
+        </div>
+      )}
+    </>
+  )
+
+  if (bare) return body
+  return (
+    <div className="mob-card">
+      <div className="mob-card-label">Work done today</div>
+      {body}
     </div>
   )
 }
@@ -2668,6 +2808,7 @@ function RecordTab({
   rateFor,
   amountFor,
   tier2RateFor,
+  ladderFor,
   canEntry,
   jobColumnReady,
   onError,
@@ -2682,6 +2823,7 @@ function RecordTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   canEntry: boolean
   jobColumnReady: boolean
   onError: (m: string | null) => void
@@ -2860,6 +3002,7 @@ function RecordTab({
         rateFor={rateFor}
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
         onBack={() => setDetail(null)}
       />
     )
@@ -2911,12 +3054,16 @@ function RecordTab({
           {isEntitled(tier, 'clock-in-out', grades) && (
             <ClockCard
               profileId={profileId}
-              stationId={myStation?.id ?? null}
+              station={myStation ?? null}
               onError={onError}
             />
           )}
 
-          <WorkDoneCard profileId={profileId} station={myStation} reloadKey={recorded} />
+          {/* "Work done today" now heads the work panel itself, so it is
+              only drawn here when there is no panel to head. */}
+          {(!canEntry || myStations.length === 0) && (
+            <WorkDoneCard profileId={profileId} station={myStation} reloadKey={recorded} />
+          )}
 
           {!canEntry ? (
             <div className="mob-card">
@@ -2952,7 +3099,7 @@ function RecordTab({
                   jobs={jobs}
                   rateFor={rateFor}
                   amountFor={amountFor}
-                  tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
                   profileId={profileId}
                   jobColumnReady={jobColumnReady}
                   canEntry={canEntry}
@@ -2988,10 +3135,14 @@ function RecordTab({
         {isEntitled(tier, 'clock-in-out', grades) && (
           <ClockCard
             profileId={profileId}
-            stationId={ownStation?.id ?? null}
+            station={ownStation ?? null}
             onError={onError}
           />
         )}
+
+{/* The target dashboards this station's ticks switch on — the
+            plain record form gets them just like the hourly panel. */}
+        {ownStation && <StationTargetCards station={ownStation} profileId={profileId} />}
 
         <WorkDoneCard
           profileId={profileId}
@@ -3080,7 +3231,7 @@ function RecordTab({
                     <span>
                       {tier2Rate == null
                         ? `${pulledQty} × ${RM(rate)}${job.unit}`
-                        : breakdownFor(rateFor, tier2RateFor, jobId, pulledQty)}
+                        : breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, pulledQty)}
                     </span>
                     <span>{RM(ashAmount)}</span>
                   </div>
@@ -3105,7 +3256,7 @@ function RecordTab({
                       <span>
                         {tier2Rate == null
                           ? `${qty} × ${RM(rate)}${job.unit}`
-                          : breakdownFor(rateFor, tier2RateFor, jobId, Number(qty))}
+                          : breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, Number(qty))}
                       </span>
                       <span>{RM(amount)}</span>
                     </div>
@@ -3152,7 +3303,7 @@ function RecordTab({
                 </div>
                 {atStationLevel && job && (
                   <div className="mob-breakrow total">
-                    <span>{breakdownFor(rateFor, tier2RateFor, jobId, photos.length)}{job.unit}</span>
+                    <span>{breakdownFor(rateFor, tier2RateFor, ladderFor, jobId, photos.length)}{job.unit}</span>
                     <span>{RM(amountFor(jobId, photos.length))}</span>
                   </div>
                 )}
@@ -3502,6 +3653,7 @@ function EntryDetail({
   rateFor,
   amountFor,
   tier2RateFor,
+  ladderFor,
   onBack,
   workerTier,
   decide,
@@ -3514,6 +3666,7 @@ function EntryDetail({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   onBack: () => void
   /** The tier tag of whoever submitted it — the viewer's own by default. */
   workerTier?: Grade | null
@@ -3544,12 +3697,13 @@ function EntryDetail({
   const hhmm = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const rate1 = rateFor(entry.job_id)
   const rate2 = tier2RateFor(entry.job_id)
+  const L = ladderFor(entry.job_id)
 
   // One row per photo where the work was stamped hour by hour, otherwise
   // the entry is the single row. The rate on a row is the tier that unit
   // actually earned.
   const rateAt = (index: number) =>
-    rate2 != null && index >= TIER1_UNIT_CAP ? rate2 : rate1
+    rate2 != null ? L[Math.min(index, L.length - 1)] : rate1
   const rows =
     photos.length > 0
       ? photos
@@ -3573,15 +3727,12 @@ function EntryDetail({
   // The sum, said the way it was worked out: each rate against the units
   // that earned it.
   const calcLines =
-    rate2 == null || entry.quantity <= TIER1_UNIT_CAP
+    rate2 == null
       ? [{ label: `${fmtQty(entry.quantity)} × ${RM(rate1)}`, value: entry.quantity * rate1 }]
-      : [
-          { label: `${TIER1_UNIT_CAP} × ${RM(rate1)}`, value: TIER1_UNIT_CAP * rate1 },
-          {
-            label: `${fmtQty(entry.quantity - TIER1_UNIT_CAP)} × ${RM(rate2)}`,
-            value: (entry.quantity - TIER1_UNIT_CAP) * rate2,
-          },
-        ]
+      : ladderBreakdownFrom(L, entry.quantity).map((s) => ({
+          label: `${fmtQty(s.units)} × ${RM(s.rate)}`,
+          value: s.units * s.rate,
+        }))
 
   return (
     <>
@@ -3915,6 +4066,7 @@ function MyWorkTab({
   rateFor,
   amountFor,
   tier2RateFor,
+  ladderFor,
   myEmail,
   initialFilter = 'pending',
   onError,
@@ -3928,6 +4080,7 @@ function MyWorkTab({
   rateFor: (jobId: string) => number
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
   myEmail: string
   /** The bucket to open on, when the Performance tab named one. */
   initialFilter?: WorkFilter
@@ -4303,6 +4456,7 @@ function MyWorkTab({
         rateFor={rateFor}
         amountFor={amountFor}
         tier2RateFor={tier2RateFor}
+                  ladderFor={ladderFor}
         onBack={() => setDetail(null)}
         // The submitter's OWN tag, always — showing the previewed tier
         // here made a record look as though it came from the rung doing
@@ -4896,6 +5050,7 @@ function ContractSection({
   myStationIds,
   rateFor,
   tier2RateFor,
+  ladderFor,
 }: {
   tier: Grade | null
   grades: Grade[]
@@ -4904,6 +5059,7 @@ function ContractSection({
   myStationIds: string[]
   rateFor: (jobId: string) => number
   tier2RateFor: (jobId: string) => number | null
+  ladderFor: (jobId: string) => number[]
 }) {
   const scoped =
     myStationIds.length === 0 ? jobs : jobs.filter((j) => myStationIds.includes(j.station_id))
@@ -4954,27 +5110,32 @@ function ContractSection({
   const JobRow = ({ job }: { job: Job }) => {
     const unit = job.unit.replace('/', '')
     const tier2 = tier2RateFor(job.id)
+    const steps = ladderStepsFrom(ladderFor(job.id))
     return (
       <div className="mob-contract-job">
         <div className="mob-contract-name">
           <span className="mob-person-name">{job.name}</span>
           {manyStations && <span className="mob-station-meta">{stationName(job.station_id)}</span>}
         </div>
-        {tier2 == null ? (
+        {tier2 == null && steps.length < 2 ? (
           <div className="mob-contract-term">
             <span>Every {unit}</span>
             <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
           </div>
         ) : (
           <>
-            <div className="mob-contract-term">
-              <span>1st – {ordinal(TIER1_UNIT_CAP)}/hr</span>
-              <span className="mob-entry-amt">{RM(rateFor(job.id))}{job.unit}</span>
-            </div>
-            <div className="mob-contract-term">
-              <span>{ordinal(TIER1_UNIT_CAP + 1)} onward/hr</span>
-              <span className="mob-entry-amt">{RM(tier2)}{job.unit}</span>
-            </div>
+            {steps.map((step) => (
+              <div className="mob-contract-term" key={step.from}>
+                <span>
+                  {step.to == null
+                    ? `${ordinal(step.from)} onward/hr`
+                    : step.from === step.to
+                      ? `${ordinal(step.from)}/hr`
+                      : `${ordinal(step.from)} – ${ordinal(step.to)}/hr`}
+                </span>
+                <span className="mob-entry-amt">{RM(step.rate)}{job.unit}</span>
+              </div>
+            ))}
             <div className="mob-contract-note">Resets every hour.</div>
           </>
         )}

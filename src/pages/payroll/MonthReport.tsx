@@ -11,13 +11,12 @@ import {
   profileName,
   type Grade,
   type Job,
+  ladderAmount,
   type PieceRate,
   type ProductionEntry,
   type Profile,
   type Station,
 } from '../../lib/supabase'
-
-const TIER1_UNIT_CAP = 4
 
 const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -53,7 +52,7 @@ export default function MonthReport() {
         supabase.from('shared_grades').select('*').order('sort_order'),
         supabase.from('shared_stations').select('*').order('sort_order'),
         supabase.from('piece_rate_jobs').select('id, station_id, grade_id, name, unit, active, approval_status, verified_by, approved_by'),
-        supabase.from('piece_rates').select('id, job_id, rate, effective_from, tier2_rate').lte('effective_from', end),
+        supabase.from('piece_rates').select('*').lte('effective_from', end),
       ])
       const err = e.error || p.error || g.error || s.error || j.error || r.error
       if (err) setError(err.message)
@@ -82,9 +81,8 @@ export default function MonthReport() {
   const amountOf = (jobId: string, qty: number) => {
     const r = bestRate.get(jobId)
     if (!r) return 0
-    const t1 = Number(r.rate)
-    if (r.tier2_rate == null) return qty * t1
-    return Math.min(qty, TIER1_UNIT_CAP) * t1 + Math.max(0, qty - TIER1_UNIT_CAP) * Number(r.tier2_rate)
+    // Each unit pays its row on the rate's price ladder.
+    return ladderAmount(r, qty)
   }
 
   const gradeName = (id: string | null) =>

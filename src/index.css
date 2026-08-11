@@ -1948,10 +1948,26 @@ button.mob-title.spread { cursor: pointer; }
   animation: metal-shine 5s linear infinite;
 }
 .mob-zone-title { font-size: 1.02rem; letter-spacing: 0.03em; }
-.mob-daynav { display: flex; justify-content: space-between; align-items: center; }
-.mob-thumb {
-  width: 40px; height: 40px; object-fit: cover; border-radius: 8px; display: block;
+/* The hour being worked, with the way into the whole day beside it. */
+.mob-zone-row { display: flex; align-items: center; justify-content: center; gap: 0.45rem; }
+.mob-info-btn {
+  appearance: none; cursor: pointer; width: 20px; height: 20px; flex: none;
+  border-radius: 50%; border: 1px solid currentColor; background: none;
+  color: inherit; opacity: 0.75; font-size: 0.72rem; font-weight: 800;
+  font-family: Georgia, 'Times New Roman', serif; line-height: 1;
 }
+.mob-info-btn:hover { opacity: 1; }
+
+/* Midnight to midnight, one row an hour. */
+.mob-hourlist { display: flex; flex-direction: column; gap: 0.1rem; max-height: 60vh; overflow-y: auto; }
+.mob-hourrow {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.3rem 0.4rem; border-radius: 8px; font-size: 0.76rem; color: var(--muted);
+}
+.mob-hourrow.now { background: #f1f5f9; color: var(--text); font-weight: 700; }
+.mob-hourrow-when { display: flex; align-items: center; gap: 0.35rem; white-space: nowrap; }
+/* The hour's sum: how it was worked out, then what it comes to. */
+.mob-hourrow-sum { display: flex; align-items: baseline; gap: 0.5rem; white-space: nowrap; }
 
 /* Stamp card (hexagon stamps like a loyalty card). Undone stamps show a
    faint tick waiting to light up; done stamps and their tick turn gold. */
@@ -1981,6 +1997,14 @@ button.mob-title.spread { cursor: pointer; }
   font-size: 0.85rem; transform: rotate(8deg);
 }
 .stamp.extra.reward { background: rgba(125, 211, 252, 0.18); color: #bae6fd; }
+/* Badges past the base-rate cap on the "Target per hour" card: blue —
+   work landing there is already earning the second-tier rate. */
+.stamp.tier2 { background: rgba(125, 211, 252, 0.12); color: rgba(186, 230, 253, 0.35); }
+.stamp.tier2.done {
+  background: linear-gradient(150deg, #e0f2fe 5%, #ffffff 45%, #7dd3fc);
+  color: #0369a1;
+  box-shadow: inset 0 0 0 3px rgba(3, 105, 161, 0.22), 0 0 10px rgba(125, 211, 252, 0.8);
+}
 
 /* The same stamps on a white card rather than the dark hourly panel:
    smaller, so a target of ten still reads as one row on a 360px screen,
@@ -2625,6 +2649,7 @@ button.mob-title.spread { cursor: pointer; }
   padding: 0 0.1rem; min-height: 0; font: inherit;
 }
 .modal-manage .quiet-input.num { width: 6ch; font-weight: 700; }
+.modal-manage .quiet-input.num.tiny { width: 2.8ch; text-align: center; font-weight: 700; }
 .modal-manage .quiet-input.date { width: auto; font-size: inherit; }
 .modal-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
 
@@ -2637,9 +2662,15 @@ button.mob-title.spread { cursor: pointer; }
 .pr-block .view-row:last-child { border-bottom: none; }
 /* Every block shares ONE label column, so the fill-in values of all
    three blocks start on the same vertical line: Station's name, the
-   work, the Show ticks and each tier's rate and date all line up. */
-.pr-block .view-row { gap: 0; padding: 0.3rem 0.6rem; }
-.pr-block .view-label { flex: 0 0 16rem; }
+   work, the Show ticks and each tier's rate and date all line up. The
+   labels also share the section-heading face (small caps, muted) so the
+   first block reads like its neighbours. */
+.pr-block .view-row { gap: 0; padding: 0.55rem 0.6rem; }
+.pr-block .view-label {
+  flex: 0 0 16rem;
+  color: var(--muted); font-weight: 600; font-size: 0.72rem;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
 .pr-manage tbody th,
 .pr-manage th.pr-manage-corner { width: 16rem; min-width: 16rem; }
 .pr-block .quiet-input { width: min(100%, 32ch); font: inherit; }
@@ -2663,6 +2694,31 @@ button.mob-title.spread { cursor: pointer; }
 /* Masterlist: each tier's own effective date rides under its rate. */
 .pr-rate-date { font-size: 0.72rem; margin-top: 0.15rem; }
 .pr-manage-edit.row { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
+
+/* "Tiered by hour" is a pay shape the row opts into, next to its unit. */
+.checkbox.pr-tiered-flag { margin: 0; font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+.checkbox.pr-tiered-flag input { width: auto; }
+/* In the Details window's edit face the unit picker and the tiered flag
+   each take their own line under the number — a table cell grows to its
+   content, so left in one row three tier columns would push past the
+   window edge. */
+.pr-manage-edit.row .ui-select.block { flex-basis: 100%; max-width: 11rem; }
+.pr-manage-edit.row .pr-tiered-flag { flex-basis: 100%; }
+/* The price ladder: one numbered row per work record of the hour, the
+   rate keyed beside each; the last row prices its record and all after. */
+.pr-ladder { display: inline-flex; flex-direction: column; gap: 0.25rem; align-items: flex-start; }
+.pr-ladder .rate-tier-line { display: inline-flex; align-items: baseline; }
+.pr-ladder .rate-tier-lbl { min-width: 2.2ch; text-align: right; }
+.pr-ladder-tools { display: inline-flex; gap: 0.5rem; }
+.pr-ladder-btn {
+  appearance: none; border: none; background: none; cursor: pointer; padding: 0;
+  font-size: 0.72rem; font-weight: 700; color: var(--accent);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.pr-ladder-btn:hover { color: var(--accent-strong); }
+.pr-ladder-note { font-size: 0.68rem; color: var(--muted); max-width: 15rem; }
+/* In the create grid the ladder's boxes match the grid's quiet inputs. */
+.pr-grid .pr-ladder input { min-height: 28px; width: 7ch; padding: 0.1rem 0.4rem; }
 
 /* Take a just-added tier column back out. */
 .pr-newtier-x {

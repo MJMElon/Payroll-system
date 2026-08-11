@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase, type Grade, type Station } from '../lib/supabase'
+import { DEFAULT_GEOFENCE_M } from '../lib/geo'
 import {
   ALL_CAPABILITIES,
   ALL_ENTITLEMENTS,
@@ -125,6 +126,12 @@ const TrashIcon = () => (
     <path d="M10 11v6M14 11v6" />
   </svg>
 )
+const PinIcon = () => (
+  <svg {...iconProps}>
+    <path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0Z" />
+    <circle cx="12" cy="10" r="3" />
+  </svg>
+)
 
 export default function Settings() {
   const { profile } = useAuth()
@@ -182,6 +189,8 @@ function TagsTab() {
   // pop-out: this is the row being edited, and the name being typed.
   const [editStationId, setEditStationId] = useState<string | null>(null)
   const [stationDraft, setStationDraft] = useState('')
+// The station whose preset coordinate is being set (the pin action).
+  const [coordStation, setCoordStation] = useState<Station | null>(null)
   // How many work records a day this station is aiming for. It is what
   // the mobile Record tab ticks off, so it lives with the station rather
   // than being guessed at per tier.
@@ -498,13 +507,14 @@ function TagsTab() {
               {canManageStations && <th></th>}
               <th>#</th>
               <th>Station</th>
+<th>Coordinate</th>
               <th className="right">Daily target</th>
               <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {stations.length === 0 && !addingStation && (
-              <tr><td colSpan={5} className="muted">No station tags yet.</td></tr>
+              <tr><td colSpan={6} className="muted">No station tags yet.</td></tr>
             )}
             {stations.map((st, i) => {
               const editing = editStationId === st.id
@@ -544,6 +554,11 @@ function TagsTab() {
                       st.name
                     )}
                   </td>
+                  <td className="muted">
+                    {st.latitude != null && st.longitude != null
+                      ? `${st.latitude.toFixed(5)}, ${st.longitude.toFixed(5)} · ±${st.geofence_m ?? DEFAULT_GEOFENCE_M} m`
+                      : '—'}
+                  </td>
                   <td className="right">
                     {editing ? (
                       <input
@@ -577,6 +592,14 @@ function TagsTab() {
                       ) : (
                         canManageStations && (
                           <>
+                            <button
+                              className="icon-btn sm"
+                              title="Station setting — coordinate & targets"
+                              aria-label={`Station setting for ${st.name}`}
+                              onClick={() => setCoordStation(st)}
+                            >
+                              <PinIcon />
+                            </button>
                             <button
                               className="icon-btn sm"
                               title="Edit station"
@@ -618,6 +641,7 @@ function TagsTab() {
                     autoFocus
                   />
                 </td>
+                <td className="muted">—</td>
                 {/* The target is set once the station exists — a name is
                     the only thing needed to create one. */}
                 <td className="right muted">—</td>
@@ -661,6 +685,226 @@ function TagsTab() {
           }}
         />
       )}
+
+      {coordStation && (
+        <StationCoordModal
+          station={coordStation}
+          onClose={() => setCoordStation(null)}
+          onSaved={() => {
+            setCoordStation(null)
+            load()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * One station's own settings: the preset coordinate every clock in / out
+ * stamp is checked against ("Use my current location" fills it from the
+ * device standing at the station), and the two targets with their "Show
+ * on Add new work record" ticks.
+ */
+function StationCoordModal({
+  station,
+  onClose,
+  onSaved,
+}: {
+  station: Station
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [lat, setLat] = useState(station.latitude != null ? String(station.latitude) : '')
+  const [lng, setLng] = useState(station.longitude != null ? String(station.longitude) : '')
+  const [fence, setFence] = useState(station.geofence_m != null ? String(station.geofence_m) : '')
+  // The "Show on Add new work record" block: two targets, each with its
+  // own tick deciding whether its dashboard is drawn on the record screen.
+  const [showHourly, setShowHourly] = useState(station.show_hourly_target === true)
+  const [hourTarget, setHourTarget] = useState(
+    station.hourly_target != null ? String(station.hourly_target) : '',
+  )
+  const [showMonthly, setShowMonthly] = useState(station.show_monthly_target === true)
+  const [monthTarget, setMonthTarget] = useState(
+    station.monthly_target != null ? String(station.monthly_target) : '',
+  )
+  const [locating, setLocating] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const overlayProps = useOverlayClose(onClose)
+
+  function useMyLocation() {
+    if (!navigator.geolocation) return setError('This browser has no location service.')
+    setLocating(true)
+    setError(null)
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        setLat(p.coords.latitude.toFixed(6))
+        setLng(p.coords.longitude.toFixed(6))
+        setLocating(false)
+      },
+      () => {
+        setLocating(false)
+        setError('Location unavailable — allow location access and try again.')
+      },
+      { enableHighAccuracy: true, timeout: 10_000 },
+    )
+  }
+
+  async function save() {
+    setError(null)
+    const clearing = lat.trim() === '' && lng.trim() === ''
+    const la = Number(lat)
+    const ln = Number(lng)
+    if (!clearing) {
+      if (lat.trim() === '' || lng.trim() === '' || !Number.isFinite(la) || !Number.isFinite(ln)) {
+        return setError('A coordinate needs both numbers — or clear both to remove the preset.')
+      }
+      if (la < -90 || la > 90 || ln < -180 || ln > 180) {
+        return setError('Latitude runs -90 to 90 and longitude -180 to 180.')
+      }
+    }
+    const f = fence.trim() === '' ? null : Math.round(Number(fence))
+    if (f != null && (!Number.isFinite(f) || f <= 0)) {
+      return setError('The allowed distance must be a positive number of metres.')
+    }
+    const hr = hourTarget.trim() === '' ? null : Math.round(Number(hourTarget))
+    if (hr != null && (!Number.isFinite(hr) || hr <= 0)) {
+      return setError('The target per hour must be a positive number.')
+    }
+    if (showHourly && hr == null) {
+      return setError('Ticking "Target per hour" needs the hourly number filled in.')
+    }
+    const mo = monthTarget.trim() === '' ? null : Math.round(Number(monthTarget))
+    if (mo != null && (!Number.isFinite(mo) || mo <= 0)) {
+      return setError('The target per month must be a positive number.')
+    }
+    if (showMonthly && mo == null) {
+      return setError('Ticking "Target per month" needs the monthly number filled in.')
+    }
+    setSaving(true)
+    const { data, error: err } = await supabase
+      .from('shared_stations')
+      .update({
+        latitude: clearing ? null : la,
+        longitude: clearing ? null : ln,
+        geofence_m: clearing ? null : f,
+        hourly_target: hr,
+        monthly_target: mo,
+        show_hourly_target: showHourly,
+        show_monthly_target: showMonthly,
+      })
+      .eq('id', station.id)
+      .select('id')
+    setSaving(false)
+    if (err) {
+      return setError(
+        /latitude|longitude|geofence_m|monthly_target|show_hourly_target|show_monthly_target/.test(err.message)
+          ? 'The database is missing the new station columns — run the latest supabase/setup.sql.'
+          : err.message,
+      )
+    }
+    if (!data || data.length === 0) return setError('The database would not let you set this.')
+    onSaved()
+  }
+
+  return (
+    <div className="modal-backdrop" {...overlayProps}>
+      <div className="modal">
+        <div className="modal-head">
+          <h2>Station setting — {station.name}</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        {error && <div className="error">{error}</div>}
+
+        <h3 style={{ marginTop: '0.4rem' }}>Coordinate</h3>
+        <p className="muted small">
+          Clock in and clock out locations are checked against this point. Leave both
+          fields empty to remove the preset — with no preset, stamps are not checked.
+        </p>
+        <div className="form-grid">
+          <label>
+            Latitude
+            <input value={lat} onChange={(e) => setLat(e.target.value)} placeholder="e.g. 3.139003" inputMode="decimal" />
+          </label>
+          <label>
+            Longitude
+            <input value={lng} onChange={(e) => setLng(e.target.value)} placeholder="e.g. 101.686855" inputMode="decimal" />
+          </label>
+          <label>
+            Allowed distance (m)
+            <input
+              value={fence}
+              onChange={(e) => setFence(e.target.value)}
+              placeholder={`${DEFAULT_GEOFENCE_M} if empty`}
+              inputMode="numeric"
+            />
+          </label>
+        </div>
+        <button
+          className="btn ghost"
+          style={{ marginTop: '0.6rem' }}
+          onClick={useMyLocation}
+          disabled={locating}
+        >
+          {locating ? 'Finding…' : '📍 Use my current location'}
+        </button>
+
+        <h3 style={{ marginTop: '1.1rem' }}>Show on Add new work record</h3>
+        <p className="muted small">
+          Each tick draws that target's dashboard on the mobile Add-work-record screen
+          for this station.
+        </p>
+        <div className="stack" style={{ gap: '0.5rem' }}>
+          <div className="row-form" style={{ alignItems: 'center', gap: '0.6rem' }}>
+            <label className="checkbox" style={{ margin: 0, flex: '1' }}>
+              <input
+                type="checkbox"
+                checked={showHourly}
+                onChange={(e) => setShowHourly(e.target.checked)}
+              />
+              <span>Target per hour</span>
+            </label>
+            <input
+              className="row-input"
+              style={{ maxWidth: '7rem' }}
+              value={hourTarget}
+              onChange={(e) => setHourTarget(e.target.value)}
+              placeholder="e.g. 6"
+              inputMode="numeric"
+              aria-label="Target per hour"
+            />
+          </div>
+          <div className="row-form" style={{ alignItems: 'center', gap: '0.6rem' }}>
+            <label className="checkbox" style={{ margin: 0, flex: '1' }}>
+              <input
+                type="checkbox"
+                checked={showMonthly}
+                onChange={(e) => setShowMonthly(e.target.checked)}
+              />
+              <span>Target per month</span>
+            </label>
+            <input
+              className="row-input"
+              style={{ maxWidth: '7rem' }}
+              value={monthTarget}
+              onChange={(e) => setMonthTarget(e.target.value)}
+              placeholder="e.g. 900"
+              inputMode="numeric"
+              aria-label="Target per month"
+            />
+          </div>
+        </div>
+
+        <div className="row-form" style={{ marginTop: '1rem', justifyContent: 'flex-end', gap: '0.5rem' }}>
+          <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
