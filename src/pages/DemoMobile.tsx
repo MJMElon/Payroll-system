@@ -2942,6 +2942,13 @@ function RecordTab({
   // directly into this tab — no manual station/job/quantity form.
   const isOperator = tier?.name === 'Operator'
   const myStation = myStations.find((s) => s.id === myStationId) ?? myStations[0] ?? null
+  // The photo-per-hour panel belongs to stations that COUNT by the hour —
+  // there a photo is one tick and the record is written when the hour
+  // closes. At any other station an operator submits the ordinary work
+  // record (job, one photo, straight into Pending), so routing every
+  // operator to the hourly panel left their submissions never becoming
+  // records at all.
+  const operatorHourly = isOperator && myStation?.hourly_count === true && jobColumnReady
 
   if (view === 'history') {
     return (
@@ -2959,7 +2966,7 @@ function RecordTab({
     )
   }
 
-  if (isOperator) {
+  if (operatorHourly) {
     return (
       <>
         <div className="mob-header">
@@ -4174,6 +4181,10 @@ function MyWorkTab({
   const [submitters, setSubmitters] = useState<Map<string, Profile>>(new Map())
   const [photoCount, setPhotoCount] = useState<Map<string, number>>(new Map())
   const [viewPhotos, setViewPhotos] = useState<ProductionEntry | null>(null)
+  // Photos taken in the hour still running at an hourly station — they
+  // become a pending record only when the hour closes, so until then they
+  // are listed as work in progress rather than left invisible.
+  const [livePhotos, setLivePhotos] = useState<PhotoRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [filter, setFilter] = useState<WorkFilter>(initialFilter)
@@ -4204,6 +4215,30 @@ function MyWorkTab({
 
   async function load() {
     if (!profileId) return
+    // My own row first: the ladder test needs it, and the hourly sweep
+    // below needs to know which stations are mine.
+    let me: Profile | null = null
+    {
+      const { data } = await supabase
+        .from('shared_profiles')
+        .select('id, full_name, email, grade_id, station_id, station_ids')
+        .eq('id', profileId)
+        .maybeSingle()
+      if (data) {
+        me = data as Profile
+        setSubmitters((prev) => new Map(prev).set(profileId, me as Profile))
+      }
+    }
+    // An hourly station writes its record only when the hour CLOSES. Catch
+    // up any hour that has closed since the sweep last ran, so Pending is
+    // never missing work that already finished converting.
+    const myIds =
+      me?.station_ids && me.station_ids.length > 0
+        ? me.station_ids
+        : me?.station_id ? [me.station_id] : []
+    const hourlyMine = stations.filter((s) => s.hourly_count && myIds.includes(s.id))
+    for (const s of hourlyMine) await autoSubmitElapsedHoursForStation(s.id, profileId)
+
     const mine = await supabase
       .from('operation_entries')
       .select('*')
@@ -4213,15 +4248,22 @@ function MyWorkTab({
     if (mine.error) onError(mine.error.message)
     const own = (mine.data ?? []) as ProductionEntry[]
     setEntries(own)
-    // The signed-in person submitted these, so place them on the ladder
-    // too — otherwise their own records fall through the rung test.
-    if (profileId) {
-      const { data: me } = await supabase
-        .from('shared_profiles')
-        .select('id, full_name, email, grade_id, station_id, station_ids')
-        .eq('id', profileId)
-        .maybeSingle()
-      if (me) setSubmitters((prev) => new Map(prev).set(profileId, me as Profile))
+
+    // Photos of the RUNNING hour have no record yet — the hour has not
+    // closed. Shown under Pending as work still recording, so a fresh
+    // photo does not look lost between the shutter and the hour's end.
+    if (hourlyMine.length > 0) {
+      const { data: ph } = await supabase
+        .from('operation_photos')
+        .select('id, station_id, photo_path, taken_at, job_id, entry_id')
+        .eq('created_by', profileId)
+        .is('entry_id', null)
+        .not('job_id', 'is', null)
+        .in('station_id', hourlyMine.map((s) => s.id))
+        .order('taken_at', { ascending: false })
+      setLivePhotos((ph ?? []) as PhotoRecord[])
+    } else {
+      setLivePhotos([])
     }
 
     // Never your own work — nobody verifies themselves.
@@ -4406,6 +4448,15 @@ function MyWorkTab({
     dateFrom === null || (e.work_date >= dateFrom && e.work_date <= dateTo)
 
   const keep = (e: ProductionEntry) => matchesTier(e) && inDates(e)
+  // Each station + job + hour of live photos will close into ONE record,
+  // so that is what the Pending chip counts them as.
+  const liveGroups = new Set(
+    livePhotos.map((r) => {
+      const t = new Date(r.taken_at)
+      t.setMinutes(0, 0, 0)
+      return `${r.station_id}-${r.job_id}-${t.toISOString()}`
+    }),
+  ).size
   // The chips count what their tab would show, date window included, so a
   // number on a chip and the list behind it can never disagree.
   const count = (k: WorkFilter) => {
@@ -4413,7 +4464,7 @@ function MyWorkTab({
     // Work waiting on YOU is listed under Pending too, so it is counted
     // there — a chip reading (0) above a card that is plainly pending is
     // the sort of thing that makes a screen untrustworthy.
-    return mine.length + (k === 'pending' ? queue.filter(matchesTier).length : 0)
+    return mine.length + (k === 'pending' ? queue.filter(matchesTier).length + liveGroups : 0)
   }
   const shown = entries.filter((e) => inBucket(e, filter)).filter(keep)
   // Someone else's work only ever sits in the pending view — once acted on
@@ -4628,10 +4679,33 @@ function MyWorkTab({
           </>
         )}
 
+        {/* The hour still running at an hourly station: its photos are
+            real submitted work but the record is only written when the
+            hour closes, so until then they sit here as in-progress. */}
+        {!loading && filter === 'pending' && livePhotos.length > 0 && (
+          <div className="mob-card">
+            <div className="mob-card-label">This hour — still recording</div>
+            {[...new Set(livePhotos.map((r) => r.station_id))].map((sid) => (
+              <div className="perf-top" key={sid}>
+                <span className="mob-person-name">{stationName(sid)}</span>
+                <span className="mob-station-meta">
+                  {livePhotos.filter((r) => r.station_id === sid).length} photo
+                  {livePhotos.filter((r) => r.station_id === sid).length === 1 ? '' : 's'}
+                </span>
+              </div>
+            ))}
+            <div className="mob-sub">
+              These photos become a pending work record when the hour ends.
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <p className="muted small">Loading…</p>
         ) : shown.length === 0 && queueShown.length === 0 ? (
-          <div className="mob-card"><div className="mob-empty">Nothing in list</div></div>
+          (filter !== 'pending' || livePhotos.length === 0) && (
+            <div className="mob-card"><div className="mob-empty">Nothing in list</div></div>
+          )
         ) : grouped ? (
           stationBlocks.map((b) => {
             const total = b.mine.length + b.queue.length
