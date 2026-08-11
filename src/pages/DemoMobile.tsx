@@ -207,9 +207,11 @@ function clockTime(iso: string) {
  * yet, which is a migration to run rather than anything the user did wrong.
  */
 function clockHelp(message: string) {
-  return /attendance/i.test(message) && /(does not exist|schema cache|relation)/i.test(message)
-    ? 'Clock in/out has nowhere to save yet — run supabase/setup.sql to create the attendance table.'
-    : `Clock in/out failed: ${message}`
+  if (/attendance/i.test(message) && /(does not exist|schema cache|relation)/i.test(message))
+    return 'Clock in/out has nowhere to save yet — run supabase/setup.sql to create the attendance table.'
+  if (/attendance_one_open_shift_idx/i.test(message))
+    return 'You still have an open shift — clock out of it before clocking in again.'
+  return `Clock in/out failed: ${message}`
 }
 
 export default function DemoMobile({ real = false }: { real?: boolean }) {
@@ -2267,7 +2269,10 @@ function ClockCard({
       // A stamp the database never took has no row to close, so it is
       // closed where it lives — on screen.
       if (id && !id.startsWith(LOCAL_SHIFT)) {
-        const { error } = await supabase
+        // A refused update returns no error and no rows — a shift shown as
+        // closed while the row stays open blocks every later clock in, so
+        // the screen only closes when the database really did.
+        const { data: closed, error } = await supabase
           .from('operation_attendance')
           .update({
             clock_out: pending.at,
@@ -2277,22 +2282,55 @@ function ClockCard({
             out_accuracy_m: where.accuracy_m,
           })
           .eq('id', id)
-        if (error) onError(clockHelp(error.message))
+          .select('id')
+        if (error || !closed?.length) {
+          onError(clockHelp(error?.message ?? 'the shift could not be closed — please try again.'))
+          discard()
+          setBusy(false)
+          return
+        }
       }
       setShifts((rows) => rows.map((r) => (r.id === id ? { ...r, clock_out: pending.at } : r)))
     } else {
-      const { data, error } = await supabase
-        .from('operation_attendance')
-        .insert({
-          user_id: profileId,
-          station_id: stationId,
-          work_date: today,
-          clock_in: pending.at,
-          photo_path: photoPath,
-          ...where,
-        })
-        .select('id, work_date, clock_in, clock_out')
-        .single()
+      const stampIn = () =>
+        supabase
+          .from('operation_attendance')
+          .insert({
+            user_id: profileId,
+            station_id: stationId,
+            work_date: today,
+            clock_in: pending.at,
+            photo_path: photoPath,
+            ...where,
+          })
+          .select('id, work_date, clock_in, clock_out')
+          .single()
+      let { data, error } = await stampIn()
+      // The database allows one open shift per person, and the one in the
+      // way may be invisible here — yesterday's shift that never got its
+      // clock out, or a stamp from another phone. Look it up and heal:
+      // today's open shift IS this person clocked in, so adopt it; an
+      // older one is closed at the end of its own day and the stamp retried.
+      if (error && /attendance_one_open_shift_idx/i.test(error.message)) {
+        const { data: openShift } = await supabase
+          .from('operation_attendance')
+          .select('id, work_date, clock_in, clock_out')
+          .eq('user_id', profileId)
+          .is('clock_out', null)
+          .maybeSingle()
+        if (openShift && (openShift.work_date ?? today) === today) {
+          data = openShift
+          error = null
+        } else if (openShift) {
+          const dayEnd = new Date(`${openShift.work_date}T23:59:59`)
+          const started = new Date(openShift.clock_in)
+          await supabase
+            .from('operation_attendance')
+            .update({ clock_out: (dayEnd > started ? dayEnd : started).toISOString() })
+            .eq('id', openShift.id)
+          ;({ data, error } = await stampIn())
+        }
+      }
       // Not saved is still worth showing: the card stamps so the screen
       // can be walked through, and the message says exactly why.
       if (error) {
@@ -2302,7 +2340,8 @@ function ClockCard({
           { id: `${LOCAL_SHIFT}-${rows.length}`, work_date: today, clock_in: pending.at, clock_out: null },
         ])
       } else {
-        setShifts((rows) => [...rows, data as Shift])
+        const row = data as Shift
+        setShifts((rows) => (rows.some((r) => r.id === row.id) ? rows : [...rows, row]))
       }
     }
     discard()
