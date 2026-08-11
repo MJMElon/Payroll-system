@@ -11,15 +11,17 @@
 // My work, Team and Profile are identical for everyone — they just read that
 // person's own data.
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { distanceLabel, stationLocationCheck } from '../lib/geo'
 import {
+  canViewTier,
   effectiveCapabilities,
   effectiveModules,
   isEntitled,
   tagClass,
+  viewableTierIds,
 } from '../lib/tags'
 import {
   profileName,
@@ -221,8 +223,19 @@ export default function DemoMobile() {
   // drilled into. Bumping this remounts the tab, so every screen it was
   // holding open falls away with it.
   const [tabPress, setTabPress] = useState(0)
+  // Which bucket My work opens on when something else sends you there.
+  // Pressing the tab itself always means "Pending", the tab's own front
+  // door; only a card that named a bucket changes it.
+  const [workFilter, setWorkFilter] = useState<WorkFilter>('pending')
   const goTab = (t: Tab) => {
     setTab(t)
+    if (t === 'mywork') setWorkFilter('pending')
+    setTabPress((n) => n + 1)
+  }
+  /** Open My work on a named bucket — from the Performance tab's cards. */
+  const goMyWork = (f: WorkFilter = 'pending') => {
+    setWorkFilter(f)
+    setTab('mywork')
     setTabPress((n) => n + 1)
   }
   const [signupPreview, setSignupPreview] = useState(false)
@@ -298,18 +311,28 @@ export default function DemoMobile() {
   )
 
   // The preview obeys the SELECTED tier's capabilities — only tiers with
-  // the data-entry capability may submit records. Tiers holding verify or
-  // approve (Engineer / Manager / Management) get the management dashboards
-  // and see ALL stations; lower tiers see only their own station tags.
+  // the data-entry capability may submit records.
   const tierCaps = effectiveCapabilities(tier)
   const canEntry = tierCaps.includes('data-entry')
-  const isUpper =
+  /**
+   * Who reads the WHOLE mill rather than their own station tags.
+   *
+   * Ticking the Mill dashboard is the plainest way of saying so, and it
+   * comes first: a tier given the mill's output, workforce, wages and
+   * cost trend is being asked to read the mill, and a "mill" drawn over
+   * the one station that tier happens to be tagged to is not that.
+   *
+   * The rest are older, looser signals kept so nothing that reached every
+   * station before starts reaching fewer.
+   */
+  const readsWholeMill =
+    isEntitled(tier, 'mill-dashboard', grades) ||
     effectiveModules(tier?.modules).includes('report') ||
     tierCaps.includes('verify') ||
     tierCaps.includes('approve')
   const myStationIds = profile?.station_ids ?? []
   const scopedStations =
-    isUpper || myStationIds.length === 0
+    readsWholeMill || myStationIds.length === 0
       ? stations
       : stations.filter((s) => myStationIds.includes(s.id))
 
@@ -407,9 +430,8 @@ export default function DemoMobile() {
                     profile={profile}
                     profileId={profile?.id ?? null}
                     myStationIds={myStationIds}
-                    myEmail={profile?.email ?? 'unknown'}
                     jobColumnReady={jobColumnReady}
-                    onMyWork={() => setTab('mywork')}
+                    onMyWork={goMyWork}
                     onError={setError}
                   />
                 ) : tab === 'mywork' ? (
@@ -424,6 +446,7 @@ export default function DemoMobile() {
                     amountFor={amountFor}
                     tier2RateFor={tier2RateFor}
                     myEmail={profile?.email ?? 'unknown'}
+                    initialFilter={workFilter}
                     onError={setError}
                   />
                 ) : tab === 'team' ? (
@@ -552,12 +575,177 @@ function TabBar({
  * different on each screen, and the page's own name sat somewhere else
  * again. One arrow, one title, one place.
  */
+/* ------------------------------------------------------------------ */
+/* A filter behind one button, rather than a row of chips across the    */
+/* screen. Picking is ADDITIVE — tap a tier to tick it, tap another to  */
+/* read both side by side, tap again to untick. An empty set is ALL,    */
+/* not none: that is what the list does before anybody touches it, so   */
+/* "All" needs no state of its own.                                     */
+/* ------------------------------------------------------------------ */
+
+function FilterMenu({
+  title,
+  allLabel,
+  options,
+  picked,
+  onToggle,
+  onAll,
+}: {
+  title: string
+  allLabel: string
+  options: { key: string; name: string; color?: string | null }[]
+  picked: Set<string>
+  onToggle: (key: string) => void
+  onAll: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement | null>(null)
+  // The box the list scrolls in, and what it looked like when the menu
+  // was opened: how far it was scrolled, its natural bottom padding, and
+  // how tall it was.
+  const box = useRef<HTMLElement | null>(null)
+  const keep = useRef<number | null>(null)
+  const basePad = useRef(0)
+  const reserve = useRef<number | null>(null)
+  const extraPad = useRef(0)
+  const narrowed = picked.size > 0
+
+  function scrollBox(): HTMLElement | null {
+    let node: HTMLElement | null = root.current?.parentElement ?? null
+    while (node) {
+      const oy = getComputedStyle(node).overflowY
+      if (oy === 'auto' || oy === 'scroll') return node
+      node = node.parentElement
+    }
+    return null
+  }
+
+  /**
+   * Hold the list still while it is being filtered.
+   *
+   * Two things move it. Ticking a tier re-renders the list, and the scroll
+   * box settles somewhere else. Unticking makes the list SHORTER, and if
+   * you were near the bottom there is no longer anywhere to be scrolled
+   * to — the browser clamps, and the block you are working slides.
+   *
+   * So while the menu is open the box keeps the height it had when the
+   * menu opened, held there by padding underneath the list. Nothing can
+   * clamp, so nothing moves; the block grows and shrinks above padding
+   * that gives way in step with it. Closing the menu hands the space
+   * back.
+   */
+  function hold(change: () => void) {
+    box.current = scrollBox()
+    keep.current = box.current ? box.current.scrollTop : null
+    change()
+  }
+
+  function openMenu() {
+    const node = scrollBox()
+    box.current = node
+    if (node) {
+      basePad.current = parseFloat(getComputedStyle(node).paddingBottom) || 0
+      extraPad.current = 0
+      reserve.current = node.scrollHeight
+      keep.current = node.scrollTop
+    }
+    setOpen(true)
+  }
+
+  function closeMenu() {
+    const node = box.current
+    if (node) {
+      node.style.paddingBottom = ''
+      const top = Math.min(node.scrollTop, Math.max(0, node.scrollHeight - node.clientHeight))
+      node.scrollTop = top
+    }
+    reserve.current = null
+    extraPad.current = 0
+    keep.current = null
+    setOpen(false)
+  }
+
+  useLayoutEffect(() => {
+    const node = box.current
+    if (!node) return
+    if (open && reserve.current != null) {
+      // What the list would measure with the reserved space taken out.
+      const natural = node.scrollHeight - extraPad.current
+      const extra = Math.max(0, reserve.current - natural)
+      extraPad.current = extra
+      node.style.paddingBottom = `${basePad.current + extra}px`
+    }
+    const top = keep.current
+    keep.current = null
+    if (top != null) {
+      node.scrollTop = Math.min(top, Math.max(0, node.scrollHeight - node.clientHeight))
+    }
+  })
+
+  // Leaving the tab with the menu still open must not leave the reserved
+  // space behind on a box the next screen will use.
+  useEffect(() => () => {
+    if (box.current) box.current.style.paddingBottom = ''
+  }, [])
+
+  return (
+    <div className="mob-filter" ref={root}>
+      <button
+        type="button"
+        className={`mob-filter-btn ${narrowed ? 'on' : ''}`}
+        onClick={() => (open ? closeMenu() : openMenu())}
+        aria-label={title}
+        aria-expanded={open}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M3 5h18l-7 8v6l-4 2v-8Z" />
+        </svg>
+        {narrowed && <span className="mob-filter-count">{picked.size}</span>}
+      </button>
+
+      {open && (
+        <>
+          {/* Anywhere else closes it — a filter should not need its own
+              close button to get out of the way. */}
+          <button type="button" className="mob-filter-scrim" aria-label="Close filter" onClick={closeMenu} />
+          <div className="mob-filter-menu" role="menu">
+            <div className="mob-filter-title">{title}</div>
+            <button
+              type="button"
+              className={`mob-filter-row ${picked.size === 0 ? 'on' : ''}`}
+              onClick={() => hold(onAll)}
+            >
+              <span className="mob-filter-tick">{picked.size === 0 ? '✓' : ''}</span>
+              <span>{allLabel}</span>
+            </button>
+            {options.map((o) => (
+              <button
+                type="button"
+                key={o.key}
+                className={`mob-filter-row ${picked.has(o.key) ? 'on' : ''}`}
+                onClick={() => hold(() => onToggle(o.key))}
+              >
+                <span className="mob-filter-tick">{picked.has(o.key) ? '✓' : ''}</span>
+                {o.color && <span className={`tag-dot dot-${o.color}`} aria-hidden="true" />}
+                <span>{o.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 /** Today / 7 days / 30 days — the windows every record screen offers. */
 const DAY_RANGES = [
   { key: 'today', label: 'Today', days: 0 },
   { key: '7d', label: '7 days', days: 6 },
   { key: '30d', label: '30 days', days: 29 },
 ] as const
+
+type DayRange = (typeof DAY_RANGES)[number]['key']
 
 function MobSubHeader({ title, onBack }: { title: string; onBack: () => void }) {
   return (
@@ -777,7 +965,6 @@ function PerformanceTab({
   profile,
   profileId,
   myStationIds,
-  myEmail,
   jobColumnReady,
   onMyWork,
   onError,
@@ -792,18 +979,21 @@ function PerformanceTab({
   profile: Profile | null
   profileId: string | null
   myStationIds: string[]
-  myEmail: string
   jobColumnReady: boolean
-  onMyWork: () => void
+  /** Send the viewer to My work, optionally straight to one bucket. */
+  onMyWork: (filter?: WorkFilter) => void
   onError: (m: string | null) => void
 }) {
   const [station, setStation] = useState<Station | null>(null)
   // The screens this tab drills into: the work record behind "My work
   // done", and the two queues behind the cards under it.
-  const [sub, setSub] = useState<null | 'history' | 'pending' | 'rejected' | 'output'>(null)
+  const [sub, setSub] = useState<null | 'history' | 'output'>(null)
   // Set by the › beside a station on the Output record: the history that
   // opens is that station's, and Back returns to the Output record.
   const [historyStation, setHistoryStation] = useState<Station | null>(null)
+  // Which window that history opens on — carried over from the Output
+  // record, so clicking through from "30 days" stays on 30 days.
+  const [historyRange, setHistoryRange] = useState<DayRange>('today')
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const tierCaps = effectiveCapabilities(tier)
@@ -976,6 +1166,8 @@ function PerformanceTab({
         amountFor={amountFor}
         canEdit={tierCaps.includes('edit-entry')}
         station={historyStation}
+        myStations={stations.filter((s) => myStationIds.includes(s.id))}
+        initialRange={historyStation ? historyRange : 'today'}
         onOpen={setDetail}
         onBack={() => {
           // A station's history was entered from the Output record, so
@@ -993,34 +1185,12 @@ function PerformanceTab({
         stations={stations}
         jobs={jobs}
         entries={entries}
-        onStation={(st) => {
+        onStation={(st, range) => {
           setHistoryStation(st)
+          setHistoryRange(range)
           setSub('history')
         }}
         onBack={() => setSub(null)}
-      />
-    )
-  }
-
-  if (sub === 'pending' || sub === 'rejected') {
-    return (
-      <QueueScreen
-        kind={sub}
-        profileId={profileId}
-        myName={profileName(profile)}
-        myEmail={myEmail}
-        tier={tier}
-        grades={grades}
-        stations={stations}
-        jobs={jobs}
-        rateFor={rateFor}
-        amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
-        onBack={() => {
-          setSub(null)
-          loadEntries()
-        }}
-        onError={onError}
       />
     )
   }
@@ -1134,6 +1304,21 @@ function PerformanceTab({
               </div>
             </div>
 
+            {/* Wages are a mill number, so they answer to the mill
+                dashboard setting and nothing else. This card used to need
+                Verify or Approve as well — a hangover from when it sat in
+                a "Management dashboard" block — which quietly hid it from
+                any tier that reads the mill without reviewing work. */}
+            <div className="mob-card">
+              <div className="mob-card-label">Avg wage / worker</div>
+              <div className="mob-breakrow">
+                <span>RM / Worker</span>
+                <span className="mob-entry-amt">
+                  {mgmtWorkers > 0 ? Math.round(cost / mgmtWorkers).toLocaleString() : '—'}
+                </span>
+              </div>
+            </div>
+
             <div className="mob-card">
               <div className="mob-card-label">Payroll cost trend</div>
               <div className="mob-barhead"><span className="val">RM</span></div>
@@ -1199,7 +1384,7 @@ function PerformanceTab({
         )}
 
         {canEntry && needsFix > 0 && (
-          <button className="mob-alert" onClick={onMyWork}>
+          <button className="mob-alert" onClick={() => onMyWork('rejected')}>
             ⚠ {needsFix} entr{needsFix === 1 ? 'y' : 'ies'} rejected — tap to fix & resubmit →
           </button>
         )}
@@ -1208,11 +1393,14 @@ function PerformanceTab({
             tab ends here: this is the day's own work, not the mill's. */}
         {showKpi && (
           <div className="mob-grid2">
-            <button className="mob-card tapcard" onClick={() => setSub('pending')}>
+            {/* The same records My work already lists under Pending, so
+                this opens THAT rather than a second screen saying the
+                same thing in different words. */}
+            <button className="mob-card tapcard" onClick={() => onMyWork('pending')}>
               <span className="mob-field-label">Pending Approval</span>
               <span className="mob-stat">{(reviews > 0 ? awaiting.length : 0) + myWaiting}</span>
             </button>
-            <button className="mob-card tapcard" onClick={() => setSub('rejected')}>
+            <button className="mob-card tapcard" onClick={() => onMyWork('rejected')}>
               <span className="mob-field-label">Rejected</span>
               <span className="mob-stat">{(reviews > 0 ? rejectedWk.length : 0) + myRejectedWk}</span>
             </button>
@@ -1239,18 +1427,6 @@ function PerformanceTab({
               tier2RateFor={tier2RateFor}
             />
           </>
-        )}
-
-        {(canVerify || canFinal) && showMill && (
-          <div className="mob-card">
-            <div className="mob-card-label">Avg wage / worker</div>
-            <div className="mob-breakrow">
-              <span>RM / Worker</span>
-              <span className="mob-entry-amt">
-                {mgmtWorkers > 0 ? Math.round(cost / mgmtWorkers).toLocaleString() : '—'}
-              </span>
-            </div>
-          </div>
         )}
 
       </div>
@@ -1301,7 +1477,8 @@ function OutputRecordScreen({
   stations: Station[]
   jobs: Job[]
   entries: ProductionEntry[]
-  onStation: (s: Station) => void
+  /** The station, and the window it was being read over. */
+  onStation: (s: Station, range: DayRange) => void
   onBack: () => void
 }) {
   const [range, setRange] = useState<(typeof DAY_RANGES)[number]['key']>('today')
@@ -1316,6 +1493,10 @@ function OutputRecordScreen({
 
   return (
     <>
+      <div className="mob-header">
+        <span className="mob-brand">MJM</span>
+      </div>
+
       <div className="mob-body">
         <MobSubHeader title="Output record" onBack={onBack} />
         <div className="mob-queue-chips">
@@ -1333,7 +1514,7 @@ function OutputRecordScreen({
         ) : (
           record.map((r) => (
             <div className="mob-card" key={r.station.id}>
-              <button className="mob-cardhead" onClick={() => onStation(r.station)}>
+              <button className="mob-cardhead" onClick={() => onStation(r.station, range)}>
                 <span className="mob-card-label">{r.station.name}</span>
                 <span className="mob-caret" aria-hidden="true">›</span>
               </button>
@@ -2461,6 +2642,95 @@ function ClockCard({
 }
 
 /* ------------------------------------------------------------------ */
+/* WORK DONE TODAY — the run of ticks under the clock card.            */
+/*                                                                      */
+/* One tick per work record submitted today at this station, filling    */
+/* left to right against the station's daily target (Settings → Station */
+/* tags → Daily target). A record counts the moment it is submitted,    */
+/* approved or not: this says how much work has been DONE, and waiting  */
+/* on somebody else's verification is not a reason to have done less.   */
+/*                                                                      */
+/* No target set is a fair answer too — then it simply counts, with     */
+/* nothing to fill up.                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Past this many, a row of ticks stops reading as a count. */
+const TICK_LIMIT = 12
+
+function WorkDoneCard({
+  profileId,
+  station,
+  reloadKey,
+}: {
+  profileId: string | null
+  station: Station | null
+  reloadKey: number
+}) {
+  const [done, setDone] = useState(0)
+
+  useEffect(() => {
+    if (!profileId || !station) return
+    let cancelled = false
+    const load = () =>
+      supabase
+        .from('operation_entries')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', profileId)
+        .eq('station_id', station.id)
+        .eq('work_date', todayISO())
+        .then(({ count }) => {
+          if (!cancelled) setDone(count ?? 0)
+        })
+    load()
+    // An hourly station's records are not written when the photo is taken
+    // — they are made when the hour closes, by the sweep running at the
+    // top of this view. Nothing tells this card when that happens, so it
+    // asks again rather than sitting on a stale count.
+    const t = setInterval(load, 30_000)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+  }, [profileId, station?.id, reloadKey])
+
+  if (!station) return null
+  const target = station.daily_target ?? null
+  const pct = target ? Math.min(100, (done / target) * 100) : 0
+  const met = target != null && done >= target
+
+  return (
+    <div className="mob-card">
+      <div className="mob-card-label">Work done today</div>
+
+      {target == null ? (
+        <div className="mob-stat">{done}</div>
+      ) : target <= TICK_LIMIT ? (
+        <div className="stamp-row light">
+          {Array.from({ length: target }, (_, i) => (
+            <span className={`stamp ${i < done ? 'done' : ''}`} key={i}>✓</span>
+          ))}
+          {done > target && <span className="stamp extra">+{done - target}</span>}
+        </div>
+      ) : (
+        /* Forty ticks is a wall, not a count — the same number said as a
+           bar instead. */
+        <div className="mob-bartrack">
+          <div className={met ? 'best' : ''} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      <div className="mob-sub">
+        {target == null
+          ? `record${done === 1 ? '' : 's'} today · no target set for ${station.name}`
+          : met
+            ? `${done} of ${target} — target met ✨`
+            : `${done} of ${target} recorded today`}
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* TAB 2 — RECORD: submit a work record → pending → verify → approve  */
 /* ------------------------------------------------------------------ */
 
@@ -2505,6 +2775,9 @@ function RecordTab({
   // there is nothing to type.
   const [photos, setPhotos] = useState<File[]>([])
   const [submitting, setSubmitting] = useState(false)
+  // Bumped by anything that lands a record, so the tick card counts again
+  // without the whole tab being rebuilt around a shared list.
+  const [recorded, setRecorded] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Assistant Station Head is paid on the shift's actual output, not a
@@ -2645,6 +2918,7 @@ function RecordTab({
       setQty('')
       setDutyShift('')
       setPhotos([])
+      setRecorded((n) => n + 1)
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -2681,6 +2955,7 @@ function RecordTab({
         jobs={jobs}
         amountFor={amountFor}
         canEdit={effectiveCapabilities(tier).includes('edit-entry')}
+        myStations={myStations}
         onOpen={setDetail}
         onBack={() => setView('form')}
       />
@@ -2717,6 +2992,8 @@ function RecordTab({
               onError={onError}
             />
           )}
+
+          <WorkDoneCard profileId={profileId} station={myStation} reloadKey={recorded} />
 
           {!canEntry ? (
             <div className="mob-card">
@@ -2793,9 +3070,15 @@ function RecordTab({
           />
         )}
 
-        {/* The target dashboards this station's ticks switch on — the
+{/* The target dashboards this station's ticks switch on — the
             plain record form gets them just like the hourly panel. */}
         {ownStation && <StationTargetCards station={ownStation} profileId={profileId} />}
+
+        <WorkDoneCard
+          profileId={profileId}
+          station={stations.find((x) => x.id === stationId) ?? ownStation}
+          reloadKey={recorded}
+        />
 
         {!canEntry ? (
           <div className="mob-card">
@@ -2998,6 +3281,8 @@ function RecordHistory({
   amountFor,
   canEdit,
   station = null,
+  myStations = [],
+  initialRange = 'today',
   onOpen,
   onBack,
 }: {
@@ -3014,10 +3299,23 @@ function RecordHistory({
    * and the screen is headed with the station's name.
    */
   station?: Station | null
+  /**
+   * The viewer's OWN station tags, for when the records cannot say where
+   * they were done — a day with nothing submitted has no station in it,
+   * and that is exactly the day the question gets asked.
+   */
+  myStations?: Station[]
+  /**
+   * The window to open on. Coming from the Output record it is the one
+   * that was being read there — clicking through from "30 days" and
+   * landing on "Today" throws the question away and makes the numbers
+   * look wrong.
+   */
+  initialRange?: DayRange
   onOpen: (e: ProductionEntry) => void
   onBack: () => void
 }) {
-  const [rangeKey, setRangeKey] = useState<(typeof DAY_RANGES)[number]['key']>('today')
+  const [rangeKey, setRangeKey] = useState<DayRange>(initialRange)
   const [rows, setRows] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(true)
   // The entry whose pencil was tapped, and the number being retyped.
@@ -3088,6 +3386,27 @@ function RecordHistory({
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
 
+  /**
+   * Which station these records are from. A station's own history knows
+   * already; YOUR history did not say at all, and "Work Record History"
+   * over a list of jobs left the question hanging — so it is read off the
+   * records themselves. Most people work one station and get its name;
+   * anyone who does not gets the count, which is the honest answer.
+   */
+  const spanned = [...new Set(rows.map((e) => e.station_id))]
+  const named = (n: number, one: () => string) =>
+    n === 1 ? one() : n > 1 ? `${n} stations` : null
+  const headStation = station
+    ? station.name
+    : // The records first — they are what is on the screen. An empty
+      // range says nothing about where you work, so the station tags
+      // answer instead, and only a person with no tag at all gets silence.
+      named(spanned.length, () => stationName(spanned[0])) ??
+      named(myStations.length, () => myStations[0].name) ??
+      // Nobody tagged to a station is not scoped to one, which the
+      // Profile tab already words this way.
+      'All Stations'
+
   return (
     <>
       <div className="mob-header">
@@ -3096,9 +3415,11 @@ function RecordHistory({
 
       <div className="mob-body">
         <MobSubHeader title="Work Record History" onBack={onBack} />
-        {station && <div className="mob-card-label centred">{station.name}</div>}
+        {headStation && <div className="mob-card-label centred">{headStation}</div>}
 
-        <div className="mob-seg" role="tablist">
+        {/* The same picker as the Output record — one window question,
+            asked the same way wherever it is asked. */}
+        <div className="mob-queue-chips" role="tablist">
           {DAY_RANGES.map((r) => (
             <button
               key={r.key}
@@ -3146,8 +3467,10 @@ function RecordHistory({
                   <button className="mob-entry" onClick={() => onOpen(e)}>
                     <span className="mob-entry-main">
                       <span className="mob-entry-name">{jobName(e.job_id)}</span>
+                      {/* The station is named once, over the list. Saying
+                          it again on every row only squeezes the job. */}
                       <span className="mob-station-meta">
-                        {stationName(e.station_id)} ·{' '}
+                        {spanned.length > 1 ? `${stationName(e.station_id)} · ` : ''}
                         {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
                           day: '2-digit', month: 'short',
                         })}
@@ -3516,6 +3839,15 @@ function PhotoSheet({ entry, onClose }: { entry: ProductionEntry; onClose: () =>
 
 type WorkFilter = 'pending' | 'approved' | 'rejected'
 
+/** How far back the approved / rejected history reaches. */
+type DateMode = 'today' | 'month' | 'range'
+
+const DATE_MODES: { key: DateMode; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: 'month', label: 'This month' },
+  { key: 'range', label: 'Date range' },
+]
+
 
 /* ------------------------------------------------------------------ */
 /* The review, for the tiers that run the whole mill. Their Performance */
@@ -3621,6 +3953,7 @@ function MyWorkTab({
   amountFor,
   tier2RateFor,
   myEmail,
+  initialFilter = 'pending',
   onError,
 }: {
   profileId: string | null
@@ -3633,6 +3966,8 @@ function MyWorkTab({
   amountFor: (jobId: string, quantity: number) => number
   tier2RateFor: (jobId: string) => number | null
   myEmail: string
+  /** The bucket to open on, when the Performance tab named one. */
+  initialFilter?: WorkFilter
   onError: (m: string | null) => void
 }) {
   const [entries, setEntries] = useState<ProductionEntry[]>([])
@@ -3646,8 +3981,19 @@ function MyWorkTab({
   const [viewPhotos, setViewPhotos] = useState<ProductionEntry | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-  const [filter, setFilter] = useState<WorkFilter>('pending')
+  const [filter, setFilter] = useState<WorkFilter>(initialFilter)
   const [detail, setDetail] = useState<ProductionEntry | null>(null)
+  // Narrow the list by the submitter's tier — only worth offering when
+  // this tier may look at more than its own. Empty is ALL, not none.
+  const [tierFilter, setTierFilter] = useState<Set<string>>(new Set())
+  // Which station blocks are open. Collapsed is the default: a station
+  // head with six stations wants the shape first, the records second.
+  const [openStations, setOpenStations] = useState<Set<string>>(new Set())
+  // Approved and rejected are a history, so they open on today and widen
+  // from there. Pending is a queue and always shows all of it.
+  const [dateMode, setDateMode] = useState<DateMode>('today')
+  const [fromDate, setFromDate] = useState(todayISO())
+  const [toDate, setToDate] = useState(todayISO())
 
   // Which buttons show is decided by the tag, not the rung: tick verify on
   // a tier and that tier verifies; tick approve and it approves. A tier
@@ -3659,6 +4005,11 @@ function MyWorkTab({
   const showMill = isEntitled(tier, 'mill-dashboard', grades)
   const canVerify = caps.includes('verify')
   const canApprove = caps.includes('approve')
+  // Whose work this tier may look at: the ticks under Operation Module →
+  // "View work record of" (Settings → Tier Tag Access Manage). One tier —
+  // its own — means there is nothing to filter between.
+  const viewableIds = viewableTierIds(tier, grades, 'entry')
+  const viewableTiers = grades.filter((g) => viewableIds.includes(g.id))
 
   async function load() {
     if (!profileId) return
@@ -3705,16 +4056,21 @@ function MyWorkTab({
           .in('id', submitterIds)
         byId = new Map(((p ?? []) as Profile[]).map((x) => [x.id, x]))
       }
-      const tierOf = (userId: string | null | undefined) => {
-        const who = userId ? byId.get(userId) : undefined
-        return who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order ?? null : null
-      }
+      /**
+       * Whose work this tier may look at is one setting, read in one place:
+       * Operation Module → "View work record of".
+       *
+       * There is no exception for the signed-in account's own records. The
+       * queue used to let those through whatever tier they came from, so
+       * that a demo driven from one login always had something to review —
+       * but that put work from ABOVE the previewed tier into its queue,
+       * which is the one thing the ladder is there to prevent. A quiet
+       * queue is the correct answer when nothing below has been submitted.
+       */
       const below = (e: ProductionEntry) => {
         if (tier == null) return false
-        if (e.user_id === profileId) return true // previewing — see above
-        const order = tierOf(e.user_id)
-        if (order == null) return true
-        return order > tier.sort_order
+        const who = e.user_id ? byId.get(e.user_id) : undefined
+        return canViewTier(tier, grades, 'entry', who?.grade_id ?? null)
       }
       waiting = all.filter(
         (e) =>
@@ -3838,11 +4194,140 @@ function MyWorkTab({
   // AND verified but waiting for the final approval.
   const inBucket = (e: ProductionEntry, k: WorkFilter) =>
     k === 'pending' ? ['pending', 'verified'].includes(stat(e)) : stat(e) === k
-  const count = (k: WorkFilter) => entries.filter((e) => inBucket(e, k)).length
-  const shown = entries.filter((e) => inBucket(e, filter))
+  /** The tier tag of whoever submitted a record. */
+  const tierIdOf = (e: ProductionEntry) =>
+    (e.user_id ? submitters.get(e.user_id)?.grade_id : null) ?? null
+  const matchesTier = (e: ProductionEntry) => {
+    if (tierFilter.size === 0) return true
+    const id = tierIdOf(e)
+    return id != null && tierFilter.has(id)
+  }
+
+  // Pending is a queue — all of it, always. Approved and rejected are a
+  // history, so they open on today and widen only when asked.
+  const dateFrom =
+    filter === 'pending' ? null
+      : dateMode === 'today' ? todayISO()
+        : dateMode === 'month' ? todayISO().slice(0, 8) + '01'
+          : fromDate
+  const dateTo = filter === 'pending' || dateMode !== 'range' ? todayISO() : toDate
+  const inDates = (e: ProductionEntry) =>
+    dateFrom === null || (e.work_date >= dateFrom && e.work_date <= dateTo)
+
+  const keep = (e: ProductionEntry) => matchesTier(e) && inDates(e)
+  // The chips count what their tab would show, date window included, so a
+  // number on a chip and the list behind it can never disagree.
+  const count = (k: WorkFilter) => {
+    const mine = entries.filter((e) => inBucket(e, k)).filter((x) => matchesTier(x) && (k === 'pending' || inDates(x)))
+    // Work waiting on YOU is listed under Pending too, so it is counted
+    // there — a chip reading (0) above a card that is plainly pending is
+    // the sort of thing that makes a screen untrustworthy.
+    return mine.length + (k === 'pending' ? queue.filter(matchesTier).length : 0)
+  }
+  const shown = entries.filter((e) => inBucket(e, filter)).filter(keep)
   // Someone else's work only ever sits in the pending view — once acted on
   // it leaves the queue entirely.
-  const queueShown = filter === 'pending' ? queue : []
+  const queueShown = filter === 'pending' ? queue.filter(matchesTier) : []
+
+  /**
+   * The list, gathered under the station each record belongs to. Somebody
+   * standing at one station has no grouping to do, so their records are
+   * listed flat; more than one and each station folds, showing its name
+   * and how many records are under it until it is opened.
+   */
+  const stationsInList = [...new Set([...shown, ...queueShown].map((e) => e.station_id))]
+  const grouped = stationsInList.length > 1
+  const stationBlocks = stations
+    .filter((st) => stationsInList.includes(st.id))
+    .map((st) => ({
+      station: st,
+      mine: shown.filter((e) => e.station_id === st.id),
+      queue: queueShown.filter((e) => e.station_id === st.id),
+    }))
+
+  /** This person's own records. */
+  const MyRecordCards = ({ list }: { list: ProductionEntry[] }) => (
+    <>
+            {list.map((e) => (
+              <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
+                <button type="button" className="mob-plainbtn" onClick={() => setDetail(e)}>
+                  <span className="perf-top">
+                    <span>{jobName(e.job_id)}</span>
+                    <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
+                  </span>
+                  <span className="perf-top">
+                    <span className="mob-station-meta">
+                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                      {' · '}{stationName(e.station_id)} · {e.quantity}
+                    </span>
+                    {statusChip(e.approval_status)}
+                  </span>
+                </button>
+                <span className="perf-top">
+                  <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
+                </span>
+                {stat(e) === 'rejected' && e.rejected_reason && (
+                  <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
+                    Rejected: {e.rejected_reason}
+                  </span>
+                )}
+                {stat(e) === 'rejected' && (
+                  <button
+                    type="button"
+                    className="mob-mini"
+                    style={{ alignSelf: 'flex-start' }}
+                    disabled={busy === e.id}
+                    onClick={() => fixResubmit(e)}
+                  >
+                    ✎ Fix &amp; resubmit
+                  </button>
+                )}
+              </div>
+            ))}
+    </>
+  )
+
+  /** Somebody else's work, waiting on this person to verify or approve. */
+  const ReviewQueueCards = ({ list }: { list: ProductionEntry[] }) => (
+    <>
+            {list.map((e) => {
+              const who = e.user_id ? submitters.get(e.user_id) : undefined
+              const grade = who?.grade_id ? grades.find((g) => g.id === who.grade_id) : undefined
+              const tags = who
+                ? who.station_ids && who.station_ids.length > 0
+                  ? who.station_ids
+                  : who.station_id
+                    ? [who.station_id]
+                    : []
+                : []
+              return (
+                <button type="button" className="mob-review" key={e.id} onClick={() => setDetail(e)}>
+                  <span className="mob-review-tags">
+                    {tags.length === 0 ? (
+                      <span className="tagbadge tag-grey">All stations</span>
+                    ) : (
+                      tags.map((id) => (
+                        <span className="tagbadge tag-grey" key={id}>{stationName(id)}</span>
+                      ))
+                    )}
+                    {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
+                  </span>
+                  <span className="mob-review-name">{names.get(e.user_id ?? '') ?? 'Unknown'}</span>
+                  <span className="mob-review-line">
+                    <span className="mob-station-meta">
+                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
+                      {' · '}{jobName(e.job_id)} · {e.quantity}
+                    </span>
+                    {statusChip(e.approval_status)}
+                  </span>
+                  <span className="mob-review-go">
+                    {(e.approval_status ?? 'pending') === 'pending' ? 'To verify' : 'To approve'} ›
+                  </span>
+                </button>
+              )
+            })}
+    </>
+  )
 
   if (detail) {
     return (
@@ -3880,10 +4365,15 @@ function MyWorkTab({
     )
   }
 
+  // On the history tabs the answer depends on the window being looked at,
+  // so it says so — "no approved work yet" would read as a verdict on all
+  // of it when only today is on screen.
+  const windowLabel =
+    dateMode === 'today' ? 'today' : dateMode === 'month' ? 'this month' : 'in that date range'
   const emptyText: Record<WorkFilter, string> = {
     pending: 'Nothing waiting for approval right now.',
-    approved: 'No approved work yet.',
-    rejected: 'Nothing rejected — good work ✅',
+    approved: `No approved work ${windowLabel}.`,
+    rejected: dateMode === 'today' ? 'Nothing rejected today — good work ✅' : `Nothing rejected ${windowLabel}.`,
   }
 
   return (
@@ -3895,7 +4385,7 @@ function MyWorkTab({
       <div className="mob-body">
         {/* Same head as the KPI dashboard: the title alone, no strapline. */}
         <div className="mob-pagehead">
-          <div className="mob-role">My work</div>
+          <div className="mob-role">My Work Done</div>
         </div>
 
         {showMill && (
@@ -3912,89 +4402,109 @@ function MyWorkTab({
           <button className={filter === 'rejected' ? 'on' : ''} onClick={() => setFilter('rejected')}>
             Rejected ({count('rejected')})
           </button>
+          {/* Only worth offering when this tier may look past its own rank
+              — one tier means nothing to choose between. */}
+          {viewableTiers.length > 1 && (
+            <FilterMenu
+              title="Tier"
+              allLabel="All tiers"
+              options={viewableTiers.map((g) => ({ key: g.id, name: g.name, color: g.color }))}
+              picked={tierFilter}
+              onToggle={(key) =>
+                setTierFilter((cur) => {
+                  const next = new Set(cur)
+                  if (!next.delete(key)) next.add(key)
+                  return next
+                })
+              }
+              onAll={() => setTierFilter(new Set())}
+            />
+          )}
         </div>
+
+        {/* Approved and rejected are a history and open on today. Pending
+            is a queue — every item in it is waiting now, so a date window
+            would only hide work somebody is waiting on. */}
+        {filter !== 'pending' && (
+          <>
+            <div className="mob-queue-chips wrap">
+              {DATE_MODES.map((m) => (
+                <button
+                  key={m.key}
+                  className={dateMode === m.key ? 'on' : ''}
+                  onClick={() => setDateMode(m.key)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            {dateMode === 'range' && (
+              <div className="mob-daterange">
+                <label>
+                  <span className="mob-field-label">From</span>
+                  <input
+                    className="mob-input"
+                    type="date"
+                    value={fromDate}
+                    max={toDate}
+                    onChange={(e) => setFromDate(e.target.value)}
+                  />
+                </label>
+                <label>
+                  <span className="mob-field-label">To</span>
+                  <input
+                    className="mob-input"
+                    type="date"
+                    value={toDate}
+                    min={fromDate}
+                    onChange={(e) => setToDate(e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
+          </>
+        )}
 
         {loading ? (
           <p className="muted small">Loading…</p>
-        ) : (
-          <>
-            {shown.length === 0 && queueShown.length === 0 && (
-              <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
-            )}
-
-            {shown.map((e) => (
-              <div className="mob-station perf" key={e.id} style={{ cursor: 'default' }}>
-                <button type="button" className="mob-plainbtn" onClick={() => setDetail(e)}>
-                  <span className="perf-top">
-                    <span>{jobName(e.job_id)}</span>
-                    <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-                  </span>
-                  <span className="perf-top">
-                    <span className="mob-station-meta">
-                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                      {' · '}{stationName(e.station_id)} · {e.quantity}
-                    </span>
-                    {statusChip(e.approval_status)}
-                  </span>
+        ) : shown.length === 0 && queueShown.length === 0 ? (
+          <div className="mob-card"><div className="mob-sub">{emptyText[filter]}</div></div>
+        ) : grouped ? (
+          stationBlocks.map((b) => {
+            const total = b.mine.length + b.queue.length
+            if (total === 0) return null
+            const open = openStations.has(b.station.id)
+            return (
+              <div className="mob-stationgroup" key={b.station.id}>
+                <button
+                  type="button"
+                  className="mob-stationgroup-head"
+                  onClick={() =>
+                    setOpenStations((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(b.station.id)) next.delete(b.station.id)
+                      else next.add(b.station.id)
+                      return next
+                    })
+                  }
+                >
+                  <span className="mob-caret">{open ? '⌄' : '›'}</span>
+                  <span className="mob-entry-name">{b.station.name}</span>
+                  <span className="mob-entry-amt">{total}</span>
                 </button>
-                <span className="perf-top">
-                  <PhotoChip n={photoCount.get(e.id) ?? 0} onOpen={() => setViewPhotos(e)} />
-                </span>
-                {stat(e) === 'rejected' && e.rejected_reason && (
-                  <span className="mob-station-meta" style={{ color: '#b91c1c' }}>
-                    Rejected: {e.rejected_reason}
-                  </span>
-                )}
-                {stat(e) === 'rejected' && (
-                  <button
-                    type="button"
-                    className="mob-mini"
-                    style={{ alignSelf: 'flex-start' }}
-                    disabled={busy === e.id}
-                    onClick={() => fixResubmit(e)}
-                  >
-                    ✎ Fix &amp; resubmit
-                  </button>
+                {open && (
+                  <>
+                    <MyRecordCards list={b.mine} />
+                    <ReviewQueueCards list={b.queue} />
+                  </>
                 )}
               </div>
-            ))}
-
-            {queueShown.map((e) => {
-              const who = e.user_id ? submitters.get(e.user_id) : undefined
-              const grade = who?.grade_id ? grades.find((g) => g.id === who.grade_id) : undefined
-              const tags = who
-                ? who.station_ids && who.station_ids.length > 0
-                  ? who.station_ids
-                  : who.station_id
-                    ? [who.station_id]
-                    : []
-                : []
-              return (
-                <button type="button" className="mob-review" key={e.id} onClick={() => setDetail(e)}>
-                  <span className="mob-review-tags">
-                    {tags.length === 0 ? (
-                      <span className="tagbadge tag-grey">All stations</span>
-                    ) : (
-                      tags.map((id) => (
-                        <span className="tagbadge tag-grey" key={id}>{stationName(id)}</span>
-                      ))
-                    )}
-                    {grade && <span className={tagClass(grade.color)}>{grade.name}</span>}
-                  </span>
-                  <span className="mob-review-name">{names.get(e.user_id ?? '') ?? 'Unknown'}</span>
-                  <span className="mob-review-line">
-                    <span className="mob-station-meta">
-                      {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })}
-                      {' · '}{jobName(e.job_id)} · {e.quantity}
-                    </span>
-                    {statusChip(e.approval_status)}
-                  </span>
-                  <span className="mob-review-go">
-                    {(e.approval_status ?? 'pending') === 'pending' ? 'To verify' : 'To approve'} ›
-                  </span>
-                </button>
-              )
-            })}
+            )
+          })
+        ) : (
+          <>
+            <MyRecordCards list={shown} />
+            <ReviewQueueCards list={queueShown} />
           </>
         )}
       </div>
@@ -4059,270 +4569,6 @@ function SignupWelcome({ myName }: { myName: string }) {
         <div className="mob-sub" style={{ textAlign: 'center' }}>
           Nothing else to do — this screen unlocks by itself once you are added.
         </div>
-      </div>
-    </>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* PENDING VERIFY and REJECTED — the two sub-screens of Performance.    */
-/*                                                                      */
-/* Each reads the same way, in two sections: what is waiting on ME      */
-/* first, then what is waiting on somebody else. Both sides come from   */
-/* the LADDER, so the same screen serves every tier without a rung      */
-/* named anywhere:                                                      */
-/*                                                                      */
-/*   Pending   1  work from below me that my tag says I verify/approve  */
-/*             2  my own submissions, still waiting on my upper         */
-/*                                                                      */
-/*   Rejected  1  my work, sent back to me by my upper                  */
-/*             2  work from below me that went back down                */
-/*                                                                      */
-/* A section with nothing in it is not drawn. An Operator has nobody    */
-/* below, so an Operator simply gets one section — no empty half, and   */
-/* no tier test in the code that says so.                               */
-/* ------------------------------------------------------------------ */
-
-function QueueScreen({
-  kind,
-  profileId,
-  myName,
-  myEmail,
-  tier,
-  grades,
-  stations,
-  jobs,
-  rateFor,
-  amountFor,
-  tier2RateFor,
-  onBack,
-  onError,
-}: {
-  kind: 'pending' | 'rejected'
-  profileId: string | null
-  myName: string
-  myEmail: string
-  tier: Grade | null
-  grades: Grade[]
-  stations: Station[]
-  jobs: Job[]
-  rateFor: (jobId: string) => number
-  amountFor: (jobId: string, quantity: number) => number
-  tier2RateFor: (jobId: string) => number | null
-  onBack: () => void
-  onError: (m: string | null) => void
-}) {
-  const [mine, setMine] = useState<ProductionEntry[]>([])
-  const [theirs, setTheirs] = useState<ProductionEntry[]>([])
-  const [people, setPeople] = useState<Map<string, Profile>>(new Map())
-  const [loading, setLoading] = useState(true)
-  const [detail, setDetail] = useState<ProductionEntry | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
-
-  const caps = effectiveCapabilities(tier)
-  const canVerify = caps.includes('verify')
-  const canApprove = caps.includes('approve')
-  const reviews = canVerify || canApprove
-
-  async function load() {
-    if (!profileId) return
-    setLoading(true)
-    const wanted = kind === 'pending' ? ['pending', 'verified'] : ['rejected']
-    const [mineRes, allRes, peopleRes] = await Promise.all([
-      supabase
-        .from('operation_entries')
-        .select('*')
-        .eq('user_id', profileId)
-        .in('approval_status', wanted)
-        .order('created_at', { ascending: false })
-        .limit(100),
-      // Somebody else's work is only worth loading for a tag that acts on
-      // it — for the pending screen that is verify/approve, and for the
-      // rejected screen it is the same tags looking back at what they sent
-      // down.
-      reviews
-        ? supabase
-            .from('operation_entries')
-            .select('*')
-            .in('approval_status', wanted)
-            .neq('user_id', profileId)
-            .order('created_at', { ascending: true })
-            .limit(200)
-        : Promise.resolve({ data: [] as ProductionEntry[], error: null }),
-      supabase.from('shared_profiles').select('id, full_name, email, grade_id'),
-    ])
-    if (mineRes.error) onError(mineRes.error.message)
-    const byId = new Map(((peopleRes.data ?? []) as Profile[]).map((p) => [p.id, p]))
-    setPeople(byId)
-    setMine((mineRes.data ?? []) as ProductionEntry[])
-
-    // Strictly DOWN the ladder — verify and approve never reach sideways
-    // or up, and neither does looking at what you sent back.
-    const below = (e: ProductionEntry) => {
-      if (tier == null) return false
-      const who = e.user_id ? byId.get(e.user_id) : undefined
-      const order = who?.grade_id ? grades.find((g) => g.id === who.grade_id)?.sort_order : null
-      // Somebody with no tier tag cannot be placed, so they count as below
-      // rather than disappearing from every queue there is.
-      return order == null || order > tier.sort_order
-    }
-    const all = ((allRes.data ?? []) as ProductionEntry[]).filter(below)
-    setTheirs(
-      kind === 'pending'
-        ? all.filter(
-            (e) =>
-              (canVerify && e.approval_status === 'pending') ||
-              (canApprove && e.approval_status === 'verified'),
-          )
-        : // Whoever sent it back, if it was recorded. Rows rejected before
-          // the column existed name nobody, and are kept rather than lost.
-          all.filter((e) => !e.rejected_by || e.rejected_by === myEmail),
-    )
-    setLoading(false)
-  }
-  useEffect(() => {
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profileId, kind])
-
-  /** Move someone else's entry along the flow, or send it back. */
-  async function act(e: ProductionEntry, next: 'verified' | 'approved' | 'rejected') {
-    let reason: string | null = null
-    if (next === 'rejected') {
-      reason = window.prompt('Reason for rejecting (shown to the worker):') ?? null
-      if (reason === null) return
-    }
-    setBusy(e.id)
-    onError(null)
-    const now = new Date().toISOString()
-    const fields: Record<string, unknown> = { approval_status: next }
-    if (next === 'verified') Object.assign(fields, { verified_by: myEmail, verified_at: now })
-    if (next === 'approved') Object.assign(fields, { approved_by: myEmail, approved_at: now })
-    if (next === 'rejected') {
-      Object.assign(fields, {
-        rejected_reason: reason || null,
-        rejected_by: myEmail,
-        verified_by: null,
-        verified_at: null,
-        approved_by: null,
-        approved_at: null,
-      })
-    }
-    const { error } = await supabase.from('operation_entries').update(fields).eq('id', e.id)
-    setBusy(null)
-    if (error) return onError(error.message)
-    load()
-  }
-
-  const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? 'Work'
-  const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
-  const nameOf = (e: ProductionEntry) => {
-    const p = e.user_id ? people.get(e.user_id) : undefined
-    return p ? profileName(p) : '?'
-  }
-  const tierOf = (e: ProductionEntry) => {
-    const p = e.user_id ? people.get(e.user_id) : undefined
-    return grades.find((g) => g.id === p?.grade_id) ?? null
-  }
-
-  if (detail) {
-    const isMine = detail.user_id === profileId
-    return (
-      <EntryDetail
-        entry={detail}
-        myName={isMine ? myName : nameOf(detail)}
-        tier={tier}
-        stations={stations}
-        jobs={jobs}
-        rateFor={rateFor}
-        amountFor={amountFor}
-        tier2RateFor={tier2RateFor}
-        onBack={() => setDetail(null)}
-        workerTier={isMine ? tier : tierOf(detail)}
-        // Your own record is never yours to wave through, and a record
-        // already sent back is not at a step anybody acts on.
-        decide={
-          !isMine && kind === 'pending' && reviews
-            ? {
-                canVerify,
-                canApprove,
-                busy: busy === detail.id,
-                act: (next) => {
-                  const e = detail
-                  setDetail(null)
-                  act(e, next)
-                },
-              }
-            : undefined
-        }
-      />
-    )
-  }
-
-  const Row = ({ e, who }: { e: ProductionEntry; who?: string }) => (
-    <button className="mob-station perf" key={e.id} onClick={() => setDetail(e)}>
-      <span className="perf-top">
-        <span>{who ?? jobName(e.job_id)}</span>
-        <span className="mob-entry-amt">{amountFor(e.job_id, e.quantity).toFixed(2)}</span>
-      </span>
-      <span className="perf-top">
-        <span className="mob-station-meta">
-          {who ? `${jobName(e.job_id)} · ` : ''}
-          {stationName(e.station_id)} ·{' '}
-          {new Date(e.work_date + 'T00:00:00').toLocaleDateString(undefined, {
-            day: '2-digit', month: 'short',
-          })}
-        </span>
-        {statusChip(e.approval_status)}
-      </span>
-    </button>
-  )
-
-  // Section 1 is always the half that is about ME — waiting on my action
-  // when pending, sent back to me when rejected.
-  const sections =
-    kind === 'pending'
-      ? [
-          { title: 'Waiting on me', rows: theirs, named: true },
-          { title: 'My work waiting on my upper', rows: mine, named: false },
-        ]
-      : [
-          { title: 'My work sent back to me', rows: mine, named: false },
-          { title: 'Work I sent back', rows: theirs, named: true },
-        ]
-  const filled = sections.filter((s) => s.rows.length > 0)
-
-  return (
-    <>
-      <div className="mob-header">
-        <span className="mob-brand">MJM</span>
-      </div>
-
-      <div className="mob-body">
-        <MobSubHeader title={kind === 'pending' ? 'Pending Approval' : 'Rejected'} onBack={onBack} />
-
-        {loading ? (
-          <p className="muted small">Loading…</p>
-        ) : filled.length === 0 ? (
-          <div className="mob-card">
-            <div className="mob-sub">
-              {kind === 'pending'
-                ? 'Nothing waiting — all caught up ✅'
-                : 'Nothing rejected — good work ✅'}
-            </div>
-          </div>
-        ) : (
-          filled.map((s) => (
-            <div key={s.title}>
-              <div className="mob-card-label" style={{ padding: '0 0.2rem 0.35rem' }}>
-                {s.title} <span className="mob-station-meta">({s.rows.length})</span>
-              </div>
-              {s.rows.map((e) => (
-                <Row key={e.id} e={e} who={s.named ? nameOf(e) : undefined} />
-              ))}
-            </div>
-          ))
-        )}
       </div>
     </>
   )
@@ -4662,7 +4908,7 @@ function MyNumbersSection({
   // the screen behind it.
   return (
     <>
-      <div className="mob-sectionhead">Payout record</div>
+      <div className="mob-sectionhead">Payout Record</div>
       <div className="mob-card">
         <div className="mob-field-label">This month earned</div>
         <div className="mob-stat">{RM(total)}</div>
@@ -4680,6 +4926,9 @@ function MyNumbersSection({
     </>
   )
 }
+
+/** Stands in for a grade id in the contract filter: rates tagged to none. */
+const UNTAGGED_KEY = 'untagged'
 
 /* ------------------------------------------------------------------ */
 /* PIECE-RATE CONTRACT: what each job pays, YOUR tier first and then   */
@@ -4727,6 +4976,25 @@ function ContractSection({
     .filter((x) => x.rows.length > 0 || x.grade.id === tier?.id)
 
   /**
+   * Which rungs are showing. Empty is ALL — not "none" — because that is
+   * what the block does before anybody touches it, and it means the All
+   * chip needs no state of its own: it is simply the empty set.
+   *
+   * Picking is additive, so two rungs can be read side by side. Picking
+   * the last one off falls back to All rather than leaving a blank card.
+   */
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const toggle = (key: string) =>
+    setPicked((cur) => {
+      const next = new Set(cur)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  const showing = (key: string) => picked.size === 0 || picked.has(key)
+  const shownGroups = groups.filter((g) => showing(g.grade.id))
+  const showUntagged = untagged.length > 0 && showing(UNTAGGED_KEY)
+
+  /**
    * One job's terms. A tiered rate is two prices depending on how much is
    * done inside the hour, so it is two lines — but each line is as short
    * as the thing it says: "1st – 4th/hr", not a sentence about it.
@@ -4763,12 +5031,33 @@ function ContractSection({
   }
 
   return (
-    <div className="mob-card">
-      <div className="mob-card-label">Piece rate contract</div>
+    <>
+      <div className="mob-sectionhead">Piece Rate</div>
+      <div className="mob-card">
+      {/* The filter sits in the block's own heading rather than as a row
+          of chips beneath it — only the rungs actually here are offered,
+          so it never filters to nothing. */}
+      <div className="mob-card-label spread">
+        <span>Piece rate contract</span>
+        {groups.length + (untagged.length > 0 ? 1 : 0) > 1 && (
+          <FilterMenu
+            title="Tier"
+            allLabel="All tiers"
+            options={[
+              ...groups.map(({ grade }) => ({ key: grade.id, name: grade.name, color: grade.color })),
+              ...(untagged.length > 0 ? [{ key: UNTAGGED_KEY, name: 'Any tier' }] : []),
+            ]}
+            picked={picked}
+            onToggle={toggle}
+            onAll={() => setPicked(new Set())}
+          />
+        )}
+      </div>
+
       {groups.length === 0 && untagged.length === 0 && (
         <div className="mob-sub">No approved piece rate at your station yet.</div>
       )}
-      {groups.map(({ grade, rows }) => (
+      {shownGroups.map(({ grade, rows }) => (
         <div key={grade.id}>
           <div className="mob-contract-tier">
             <span className={`tag-dot dot-${grade.color}`} aria-hidden="true" />
@@ -4782,7 +5071,7 @@ function ContractSection({
           )}
         </div>
       ))}
-      {untagged.length > 0 && (
+      {showUntagged && (
         <div>
           <div className="mob-contract-tier">
             <span className="tag-dot dot-grey" aria-hidden="true" />
@@ -4791,7 +5080,8 @@ function ContractSection({
           {untagged.map((j) => <JobRow key={j.id} job={j} />)}
         </div>
       )}
-    </div>
+      </div>
+    </>
   )
 }
 

@@ -593,6 +593,7 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 .rate-tiered { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 0.1rem; }
 .rate-tier-line { font-weight: 700; white-space: nowrap; font-size: 0.85rem; }
 .rate-tier-lbl { font-weight: 500; color: var(--muted); font-size: 0.68rem; margin-right: 0.3rem; }
+.rate-tier-unit { font-weight: 500; color: var(--muted); font-size: 0.68rem; margin-left: 0.2rem; }
 .rate-tiered-pill { margin-top: 0.1rem; font-size: 0.62rem; padding: 0.05rem 0.4rem; }
 
 /* Station status hour board */
@@ -985,6 +986,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* A subtitle belongs to the heading above it, so it goes where it goes. */
 .mob-card > .mob-card-label + .mob-sub,
 .mob-card > .mob-title + .mob-sub { text-align: center; }
+/* …and a caption reading off a centred figure goes with the figure. */
+.mob-card > .mob-stat + .mob-sub,
+.mob-card > .stamp-row + .mob-sub,
+.mob-card > .mob-bartrack + .mob-sub { text-align: center; }
 /* Tap cards pack to the left so their contents hug; centring the text
    needs the children to span the card first. */
 .mob-card.tapcard { align-items: stretch; }
@@ -1279,16 +1284,79 @@ button.mob-cardhead {
 
 /* Approvals queue chips + action buttons */
 .mob-queue-chips { display: flex; gap: 0.35rem; }
+/* A second or third row of chips (tier, then date window) wraps rather
+   than shrinking every chip until the labels stop being readable. */
+.mob-queue-chips.wrap { flex-wrap: wrap; }
+
+/* A filter kept behind one button. The panel hangs off the button and
+   closes on any tap outside it, so it never costs the page a row. */
+.mob-filter { position: relative; margin-left: auto; flex: none; }
+.mob-filter-btn {
+  appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 0.25rem;
+  border: 1px solid #e2e8ef; background: #fff; color: var(--muted);
+  border-radius: 999px; padding: 0.35rem 0.6rem; line-height: 1;
+}
+.mob-filter-btn.on { border-color: #2b323b; background: #2b323b; color: #fff; }
+.mob-filter-count { font-size: 0.68rem; font-weight: 800; }
+/* Covers the phone frame so a tap anywhere else dismisses the panel. */
+.mob-filter-scrim {
+  position: fixed; inset: 0; z-index: 6;
+  appearance: none; border: none; background: transparent; cursor: default;
+}
+.mob-filter-menu {
+  position: absolute; top: calc(100% + 0.35rem); right: 0; z-index: 7;
+  min-width: 13rem; max-height: 15rem; overflow-y: auto;
+  background: #fff; border-radius: 12px; padding: 0.3rem;
+  box-shadow: 0 2px 6px rgba(10, 40, 28, 0.08), 0 12px 28px rgba(10, 60, 40, 0.16);
+  display: flex; flex-direction: column; gap: 0.1rem;
+}
+.mob-filter-title {
+  font-size: 0.62rem; font-weight: 800; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted); padding: 0.3rem 0.5rem 0.15rem;
+}
+.mob-filter-row {
+  appearance: none; border: none; background: none; cursor: pointer;
+  display: flex; align-items: center; gap: 0.45rem; width: 100%;
+  padding: 0.45rem 0.5rem; border-radius: 8px; text-align: left;
+  font: inherit; font-size: 0.82rem; color: var(--text);
+}
+.mob-filter-row:hover { background: #f4f6f8; }
+.mob-filter-row.on { font-weight: 700; }
+/* Reserved whether ticked or not, so the labels never shuffle sideways. */
+.mob-filter-tick { width: 0.9rem; flex: none; color: #1d7a45; font-weight: 800; }
+
+/* A card heading that carries its filter button on the right. */
+.mob-card-label.spread { display: flex; align-items: center; gap: 0.5rem; }
+
+/* One station's fold on My Work Done: its name and how many records sit
+   under it, opening to the records themselves. */
+.mob-stationgroup { display: flex; flex-direction: column; gap: 0.5rem; }
+.mob-stationgroup-head {
+  appearance: none; border: none; cursor: pointer; width: 100%;
+  display: flex; align-items: center; gap: 0.5rem;
+  background: #fff; border-radius: 14px; padding: 0.7rem 0.9rem;
+  box-shadow: 0 1px 2px rgba(10, 40, 28, 0.05);
+  font: inherit; text-align: left;
+}
+.mob-stationgroup-head .mob-entry-name { flex: 1; }
+.mob-stationgroup-head .mob-caret { width: 0.9rem; }
+
+/* From / To, side by side under the date chips. */
+.mob-daterange { display: flex; gap: 0.5rem; }
+.mob-daterange label { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
 /* One row, the three states sharing the width evenly — they are a tally,
    so an even split says none of them is the odd one out. */
-.mob-queue-chips button {
+/* Direct children only: the filter's panel hangs inside this row, and its
+   rows are a list, not chips. */
+.mob-queue-chips > button {
   appearance: none; border: none; cursor: pointer;
   flex: 1 1 0; min-width: 0;
   background: #eef0f4; color: var(--muted); border-radius: 999px;
   padding: 0.35rem 0.4rem; font-size: 0.72rem; font-weight: 700;
   white-space: nowrap; text-align: center;
 }
-.mob-queue-chips button.on { background: var(--accent-strong); color: #fff; }
+.mob-queue-chips > button.on { background: var(--accent-strong); color: #fff; }
+
 .mob-btn.approve {
   background: linear-gradient(180deg, #22a755, #15803d);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 5px 14px rgba(21, 128, 61, 0.30);
@@ -1756,7 +1824,13 @@ button.mob-breakrow {
   font-size: 0.7rem; font-weight: 700; letter-spacing: 0.02em;
   max-width: 42%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.mob-body { flex: 1; overflow-y: auto; padding: 0 0.9rem 0.9rem; display: flex; flex-direction: column; gap: 0.7rem; }
+/* overflow-anchor is off because the filter holds the scroll position
+   itself: with both at work the browser's own compensation fights the
+   restore and the list twitches. */
+.mob-body {
+  flex: 1; overflow-y: auto; overflow-anchor: none;
+  padding: 0 0.9rem 0.9rem; display: flex; flex-direction: column; gap: 0.7rem;
+}
 .mob-card {
   background: #fff; border-radius: 16px; padding: 0.85rem 0.95rem;
   box-shadow: 0 1px 2px rgba(10, 40, 28, 0.05), 0 6px 18px rgba(10, 60, 40, 0.07);
@@ -1896,6 +1970,23 @@ button.mob-title.spread { cursor: pointer; }
   background: linear-gradient(150deg, #e0f2fe 5%, #ffffff 45%, #7dd3fc);
   color: #0369a1;
   box-shadow: inset 0 0 0 3px rgba(3, 105, 161, 0.22), 0 0 10px rgba(125, 211, 252, 0.8);
+}
+
+/* The same stamps on a white card rather than the dark hourly panel:
+   smaller, so a target of ten still reads as one row on a 360px screen,
+   and outlined rather than lit from within. */
+.stamp-row.light { gap: 0.3rem; justify-content: center; }
+.stamp-row.light .stamp {
+  width: 30px; height: 34px; font-size: 0.8rem;
+  background: #eef1f5; color: #c2cad4;
+}
+.stamp-row.light .stamp.done {
+  background: linear-gradient(160deg, #fde68a 5%, #f5b93f 55%, #d98f06);
+  color: #6b4703; box-shadow: inset 0 0 0 2px rgba(120, 80, 5, 0.22);
+}
+.stamp-row.light .stamp.extra {
+  width: 26px; height: 30px; font-size: 0.7rem;
+  background: #fdf1d6; color: #a16207;
 }
 
 /* Hour-zone headers inside the day's record list */
@@ -2492,7 +2583,7 @@ button.mob-title.spread { cursor: pointer; }
    read as three columns rather than as one crowded block. */
 .modal.modal-manage { max-width: min(1180px, 96vw); }
 .pr-manage { min-width: max-content; }
-.pr-manage th, .pr-manage td { vertical-align: top; padding: 0.85rem 1.4rem; }
+.pr-manage th, .pr-manage td { vertical-align: top; padding: 0.85rem 0.6rem; }
 /* The row labels down the left are quieter than the tier names on top —
    they name the line, the tier columns are what is being compared. */
 .pr-manage tbody th {
@@ -2527,24 +2618,40 @@ button.mob-title.spread { cursor: pointer; }
 .modal-manage .quiet-input.date { width: auto; font-size: inherit; }
 .modal-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
 
-/* The work reads as a title above everything it prices; its box reads at
-   the title's own length, not a dashed line across the window. */
-.pr-work-title {
-  display: flex; align-items: center; gap: 0.6rem;
-  font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.1rem;
+/* Each section of the window is its own block, so the sheet reads in
+   three clear pieces: what the work is, its functions, its tiers. */
+.pr-block {
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 0.7rem 1rem; background: var(--bg);
 }
-.pr-work-title .quiet-input { width: min(100%, 32ch); font: inherit; }
+.pr-block .view-row:last-child { border-bottom: none; }
+/* Every block shares ONE label column, so the fill-in values of all
+   three blocks start on the same vertical line: Station's name, the
+   work, the Show ticks and each tier's rate and date all line up. */
+.pr-block .view-row { gap: 0; padding: 0.3rem 0.6rem; }
+.pr-block .view-label { flex: 0 0 16rem; }
+.pr-manage tbody th,
+.pr-manage th.pr-manage-corner { width: 16rem; min-width: 16rem; }
+.pr-block .quiet-input { width: min(100%, 32ch); font: inherit; }
 
-/* Function sheet: the function's name on the left, then a tick under
-   Show or under No show. */
-.table.pr-func { width: auto; }
-.pr-func th:first-child { min-width: 15rem; }
-.pr-func th.pr-func-tick, .pr-func td.pr-func-tick { width: 6.5rem; text-align: center; }
+/* Function sheet: the function's name on the left, its ticks right beside
+   it under Show / No show, and a filler column so the block reads at the
+   same full width as its neighbours. */
+.pr-func th:first-child { width: 16rem; min-width: 16rem; }
+.pr-func th.pr-func-tick, .pr-func td.pr-func-tick { width: 6rem; text-align: center; }
 .pr-func input[type='checkbox'] { width: auto; }
+.pr-func tr:last-child td { border-bottom: none; }
+
+/* The ＋ column at the right end of the tier sheet: click, and it expands
+   into the picker for the next tier's column. */
+.pr-manage th.pr-addcol { vertical-align: middle; }
+.pr-addcol .icon-btn { font-size: 1rem; font-weight: 800; }
 
 /* The read face's rate line — amount with its unit right beside it — and
    the edit face mirroring it: number box, unit picker beside. */
 .pr-rate-inline { display: inline-flex; align-items: baseline; gap: 0.4rem; }
+/* Masterlist: each tier's own effective date rides under its rate. */
+.pr-rate-date { font-size: 0.72rem; margin-top: 0.15rem; }
 .pr-manage-edit.row { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
 
 /* Take a just-added tier column back out. */

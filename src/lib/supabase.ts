@@ -119,6 +119,10 @@ export interface Station {
   monthly_target?: number | null
   show_hourly_target?: boolean
   show_monthly_target?: boolean
+  // How many work records a day this station aims for — the run of ticks
+  // on the mobile Record tab. Null means no target is set, and the card
+  // simply counts what has been recorded.
+  daily_target?: number | null
 }
 
 export interface PhotoRecord {

@@ -189,8 +189,12 @@ function TagsTab() {
   // pop-out: this is the row being edited, and the name being typed.
   const [editStationId, setEditStationId] = useState<string | null>(null)
   const [stationDraft, setStationDraft] = useState('')
-  // The station whose preset coordinate is being set (the pin action).
+// The station whose preset coordinate is being set (the pin action).
   const [coordStation, setCoordStation] = useState<Station | null>(null)
+  // How many work records a day this station is aiming for. It is what
+  // the mobile Record tab ticks off, so it lives with the station rather
+  // than being guessed at per tier.
+  const [targetDraft, setTargetDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -328,24 +332,40 @@ function TagsTab() {
     setAddingStation(false)
     setEditStationId(st.id)
     setStationDraft(st.name)
+    setTargetDraft(st.daily_target == null ? '' : String(st.daily_target))
   }
 
   function cancelStationEdit() {
     setEditStationId(null)
     setStationDraft('')
+    setTargetDraft('')
     setError(null)
   }
 
-  async function saveStationName() {
+  async function saveStation() {
     const st = stations.find((x) => x.id === editStationId)
     if (!st) return
     const next = stationDraft.trim()
     if (next === '') return setError('A station tag needs a name.')
-    if (next === st.name) return cancelStationEdit()
     if (stations.some((x) => x.id !== st.id && sameName(x.name, next))) {
       return setError(`A station tag called "${next}" already exists.`)
     }
-    const { error } = await supabase.from('shared_stations').update({ name: next }).eq('id', st.id)
+    // Blank is a real answer — it means no target, and the mobile Record
+    // tab simply counts instead of ticking towards anything.
+    const raw = targetDraft.trim()
+    let target: number | null = null
+    if (raw !== '') {
+      const n = Number(raw)
+      if (!Number.isInteger(n) || n <= 0) {
+        return setError('Daily target must be a whole number above zero, or blank for none.')
+      }
+      target = n
+    }
+    if (next === st.name && target === (st.daily_target ?? null)) return cancelStationEdit()
+    const { error } = await supabase
+      .from('shared_stations')
+      .update({ name: next, daily_target: target })
+      .eq('id', st.id)
     if (error) return setError(saveError(error, 'station tag', next))
     cancelStationEdit()
     load()
@@ -487,13 +507,14 @@ function TagsTab() {
               {canManageStations && <th></th>}
               <th>#</th>
               <th>Station</th>
-              <th>Coordinate</th>
+<th>Coordinate</th>
+              <th className="right">Daily target</th>
               <th className="right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {stations.length === 0 && !addingStation && (
-              <tr><td colSpan={5} className="muted">No station tags yet.</td></tr>
+              <tr><td colSpan={6} className="muted">No station tags yet.</td></tr>
             )}
             {stations.map((st, i) => {
               const editing = editStationId === st.id
@@ -525,7 +546,7 @@ function TagsTab() {
                         className="row-input"
                         value={stationDraft}
                         onChange={(e) => setStationDraft(e.target.value)}
-                        onKeyDown={(e) => rowKeys(e, saveStationName, cancelStationEdit)}
+                        onKeyDown={(e) => rowKeys(e, saveStation, cancelStationEdit)}
                         aria-label="Station name"
                         autoFocus
                       />
@@ -539,13 +560,32 @@ function TagsTab() {
                       : '—'}
                   </td>
                   <td className="right">
+                    {editing ? (
+                      <input
+                        className="row-input right"
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="none"
+                        value={targetDraft}
+                        onChange={(e) => setTargetDraft(e.target.value)}
+                        onKeyDown={(e) => rowKeys(e, saveStation, cancelStationEdit)}
+                        aria-label={`Daily work target for ${st.name}`}
+                      />
+                    ) : (
+                      <span className={st.daily_target == null ? 'muted' : ''}>
+                        {st.daily_target ?? '—'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="right">
                     <span className="row-actions">
                       {editing ? (
                         <>
                           <button className="btn ghost row-btn" onClick={cancelStationEdit}>
                             Cancel
                           </button>
-                          <button className="btn row-btn" onClick={saveStationName}>
+                          <button className="btn row-btn" onClick={saveStation}>
                             Save
                           </button>
                         </>
@@ -602,6 +642,9 @@ function TagsTab() {
                   />
                 </td>
                 <td className="muted">—</td>
+                {/* The target is set once the station exists — a name is
+                    the only thing needed to create one. */}
+                <td className="right muted">—</td>
                 <td className="right">
                   <span className="row-actions">
                     <button className="btn ghost row-btn" onClick={cancelAddStation}>
