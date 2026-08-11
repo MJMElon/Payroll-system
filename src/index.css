@@ -985,6 +985,10 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 /* A subtitle belongs to the heading above it, so it goes where it goes. */
 .mob-card > .mob-card-label + .mob-sub,
 .mob-card > .mob-title + .mob-sub { text-align: center; }
+/* …and a caption reading off a centred figure goes with the figure. */
+.mob-card > .mob-stat + .mob-sub,
+.mob-card > .stamp-row + .mob-sub,
+.mob-card > .mob-bartrack + .mob-sub { text-align: center; }
 /* Tap cards pack to the left so their contents hug; centring the text
    needs the children to span the card first. */
 .mob-card.tapcard { align-items: stretch; }
@@ -1842,6 +1846,23 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
   font-size: 0.85rem; transform: rotate(8deg);
 }
 .stamp.extra.reward { background: rgba(125, 211, 252, 0.18); color: #bae6fd; }
+
+/* The same stamps on a white card rather than the dark hourly panel:
+   smaller, so a target of ten still reads as one row on a 360px screen,
+   and outlined rather than lit from within. */
+.stamp-row.light { gap: 0.3rem; justify-content: center; }
+.stamp-row.light .stamp {
+  width: 30px; height: 34px; font-size: 0.8rem;
+  background: #eef1f5; color: #c2cad4;
+}
+.stamp-row.light .stamp.done {
+  background: linear-gradient(160deg, #fde68a 5%, #f5b93f 55%, #d98f06);
+  color: #6b4703; box-shadow: inset 0 0 0 2px rgba(120, 80, 5, 0.22);
+}
+.stamp-row.light .stamp.extra {
+  width: 26px; height: 30px; font-size: 0.7rem;
+  background: #fdf1d6; color: #a16207;
+}
 
 /* Hour-zone headers inside the day's record list */
 .mob-hour-head {

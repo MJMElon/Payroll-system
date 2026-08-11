@@ -2332,6 +2332,95 @@ function ClockCard({
 }
 
 /* ------------------------------------------------------------------ */
+/* WORK DONE TODAY — the run of ticks under the clock card.            */
+/*                                                                      */
+/* One tick per work record submitted today at this station, filling    */
+/* left to right against the station's daily target (Settings → Station */
+/* tags → Daily target). A record counts the moment it is submitted,    */
+/* approved or not: this says how much work has been DONE, and waiting  */
+/* on somebody else's verification is not a reason to have done less.   */
+/*                                                                      */
+/* No target set is a fair answer too — then it simply counts, with     */
+/* nothing to fill up.                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Past this many, a row of ticks stops reading as a count. */
+const TICK_LIMIT = 12
+
+function WorkDoneCard({
+  profileId,
+  station,
+  reloadKey,
+}: {
+  profileId: string | null
+  station: Station | null
+  reloadKey: number
+}) {
+  const [done, setDone] = useState(0)
+
+  useEffect(() => {
+    if (!profileId || !station) return
+    let cancelled = false
+    const load = () =>
+      supabase
+        .from('production_entries')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', profileId)
+        .eq('station_id', station.id)
+        .eq('work_date', todayISO())
+        .then(({ count }) => {
+          if (!cancelled) setDone(count ?? 0)
+        })
+    load()
+    // An hourly station's records are not written when the photo is taken
+    // — they are made when the hour closes, by the sweep running at the
+    // top of this view. Nothing tells this card when that happens, so it
+    // asks again rather than sitting on a stale count.
+    const t = setInterval(load, 30_000)
+    return () => {
+      cancelled = true
+      clearInterval(t)
+    }
+  }, [profileId, station?.id, reloadKey])
+
+  if (!station) return null
+  const target = station.daily_target ?? null
+  const pct = target ? Math.min(100, (done / target) * 100) : 0
+  const met = target != null && done >= target
+
+  return (
+    <div className="mob-card">
+      <div className="mob-card-label">Work done today</div>
+
+      {target == null ? (
+        <div className="mob-stat">{done}</div>
+      ) : target <= TICK_LIMIT ? (
+        <div className="stamp-row light">
+          {Array.from({ length: target }, (_, i) => (
+            <span className={`stamp ${i < done ? 'done' : ''}`} key={i}>✓</span>
+          ))}
+          {done > target && <span className="stamp extra">+{done - target}</span>}
+        </div>
+      ) : (
+        /* Forty ticks is a wall, not a count — the same number said as a
+           bar instead. */
+        <div className="mob-bartrack">
+          <div className={met ? 'best' : ''} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      <div className="mob-sub">
+        {target == null
+          ? `record${done === 1 ? '' : 's'} today · no target set for ${station.name}`
+          : met
+            ? `${done} of ${target} — target met ✨`
+            : `${done} of ${target} recorded today`}
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /* TAB 2 — RECORD: submit a work record → pending → verify → approve  */
 /* ------------------------------------------------------------------ */
 
@@ -2376,6 +2465,9 @@ function RecordTab({
   // there is nothing to type.
   const [photos, setPhotos] = useState<File[]>([])
   const [submitting, setSubmitting] = useState(false)
+  // Bumped by anything that lands a record, so the tick card counts again
+  // without the whole tab being rebuilt around a shared list.
+  const [recorded, setRecorded] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Assistant Station Head is paid on the shift's actual output, not a
@@ -2516,6 +2608,7 @@ function RecordTab({
       setQty('')
       setDutyShift('')
       setPhotos([])
+      setRecorded((n) => n + 1)
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -2588,6 +2681,8 @@ function RecordTab({
               onError={onError}
             />
           )}
+
+          <WorkDoneCard profileId={profileId} station={myStation} reloadKey={recorded} />
 
           {!canEntry ? (
             <div className="mob-card">
@@ -2663,6 +2758,12 @@ function RecordTab({
             onError={onError}
           />
         )}
+
+        <WorkDoneCard
+          profileId={profileId}
+          station={stations.find((x) => x.id === stationId) ?? ownStation}
+          reloadKey={recorded}
+        />
 
         {!canEntry ? (
           <div className="mob-card">

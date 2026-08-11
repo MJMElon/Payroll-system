@@ -1773,3 +1773,20 @@ as $$
          phone = nullif(btrim(coalesce(phone_no, '')), '')
    where id = auth.uid();
 $$;
+
+-- ---------------------------------------------------------------------------
+-- How many work records a day a station is aiming for. It is the run of
+-- ticks at the top of the mobile Work Record tab: one tick per record
+-- submitted there today, filling towards this number.
+--
+-- Set per station in Settings -> Station tags, because a target belongs to
+-- the work rather than to the person doing it — two stations tipping cages
+-- and pressing fruit do not aim for the same count.
+--
+-- Null is a real answer: no target, and the card simply counts.
+-- ---------------------------------------------------------------------------
+alter table public.stations add column if not exists daily_target int;
+
+alter table public.stations drop constraint if exists stations_daily_target_positive;
+alter table public.stations add constraint stations_daily_target_positive
+  check (daily_target is null or daily_target > 0);
