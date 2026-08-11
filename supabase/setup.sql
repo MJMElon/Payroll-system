@@ -1079,6 +1079,12 @@ alter table public.shared_profiles add column if not exists chart_pos int;
 -- ---------------------------------------------------------------------------
 alter table public.piece_rates add column if not exists tier2_rate numeric(12,4);
 
+-- How many records of each hour pay the FIRST tier of a tiered rate — the
+-- 5th-onward rule generalised, so one station can tier at 4 and another at
+-- 6. Null means the original 4. Both tiers pay PER RECORD in the job's own
+-- unit; the hour only resets the count.
+alter table public.piece_rates add column if not exists tier_threshold int;
+
 -- One-time consolidation for the Sterilizer & Tippler Station cage-tipping
 -- rates: the Operator tag priced this as two separately-named jobs (a
 -- workaround for not having real tiering); fold them into one tiered job

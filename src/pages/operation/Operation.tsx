@@ -30,6 +30,7 @@ import { canViewTier, effectiveCapabilities, tagClass } from '../../lib/tags'
 import {
   profileName,
   supabase,
+  tier1Cap,
   todayISO,
   type Grade,
   type Job,
@@ -40,7 +41,6 @@ import {
   type Station,
 } from '../../lib/supabase'
 
-const TIER1_UNIT_CAP = 4 // tiered hourly rates: tier-1 price covers the first 4 units
 
 const DAY_START_HOUR = 7 // the mill day runs 07:00 → 07:00, same as the dashboard board
 
@@ -311,7 +311,8 @@ export default function Operation() {
     const r = bestRate.get(jobId)
     if (!r) return 0
     if (r.tier2_rate == null) return r.rate * qty
-    return Math.min(qty, TIER1_UNIT_CAP) * r.rate + Math.max(0, qty - TIER1_UNIT_CAP) * r.tier2_rate
+    const cap = tier1Cap(r)
+    return Math.min(qty, cap) * r.rate + Math.max(0, qty - cap) * r.tier2_rate
   }
 
   const jobOf = (id: string) => jobs.find((j) => j.id === id) ?? null
@@ -452,8 +453,9 @@ export default function Operation() {
     const r = bestRate.get(g.jobId)
     if (!r) return <span className="muted">—</span>
     if (r.tier2_rate == null) return <>{Number(r.rate).toFixed(2)}</>
-    const t1 = g.entries.reduce((n, e) => n + Math.min(e.quantity, TIER1_UNIT_CAP), 0)
-    const t2 = g.entries.reduce((n, e) => n + Math.max(0, e.quantity - TIER1_UNIT_CAP), 0)
+    const cap = tier1Cap(r)
+    const t1 = g.entries.reduce((n, e) => n + Math.min(e.quantity, cap), 0)
+    const t2 = g.entries.reduce((n, e) => n + Math.max(0, e.quantity - cap), 0)
     if (t2 === 0) return <>{Number(r.rate).toFixed(2)}</>
     return (
       <span className="op-rate-break">
@@ -990,9 +992,11 @@ function GroupModal({
   const timeOf = (e: ProductionEntry) =>
     new Date(e.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
 
-  // What the day's count is worth, price line by price line.
-  const t1Units = group.entries.reduce((n, e) => n + Math.min(e.quantity, TIER1_UNIT_CAP), 0)
-  const t2Units = group.entries.reduce((n, e) => n + Math.max(0, e.quantity - TIER1_UNIT_CAP), 0)
+  // What the day's count is worth, price line by price line — the tier
+  // crossover is the rate's own first-of-the-hour count.
+  const dayCap = tier1Cap(rate)
+  const t1Units = group.entries.reduce((n, e) => n + Math.min(e.quantity, dayCap), 0)
+  const t2Units = group.entries.reduce((n, e) => n + Math.max(0, e.quantity - dayCap), 0)
 
   return (
     <div className="modal-overlay" {...overlay}>
@@ -1286,8 +1290,8 @@ function AddRecordModal({
 
   const qty = Number(quantity) || 0
   const amount = jobId ? amountFor(jobId, qty) : 0
-  const t1 = Math.min(qty, TIER1_UNIT_CAP)
-  const t2 = Math.max(0, qty - TIER1_UNIT_CAP)
+  const t1 = Math.min(qty, tier1Cap(rate))
+  const t2 = Math.max(0, qty - tier1Cap(rate))
 
   function pickPhoto(ev: ChangeEvent<HTMLInputElement>) {
     const file = ev.target.files?.[0]

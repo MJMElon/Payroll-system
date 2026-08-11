@@ -2607,6 +2607,7 @@ button.mob-title.spread { cursor: pointer; }
   padding: 0 0.1rem; min-height: 0; font: inherit;
 }
 .modal-manage .quiet-input.num { width: 6ch; font-weight: 700; }
+.modal-manage .quiet-input.num.tiny { width: 2.8ch; text-align: center; font-weight: 700; }
 .modal-manage .quiet-input.date { width: auto; font-size: inherit; }
 .modal-manage .quiet-input:focus { outline: none; border-bottom: 1px solid var(--accent-strong); }
 
@@ -2619,9 +2620,15 @@ button.mob-title.spread { cursor: pointer; }
 .pr-block .view-row:last-child { border-bottom: none; }
 /* Every block shares ONE label column, so the fill-in values of all
    three blocks start on the same vertical line: Station's name, the
-   work, the Show ticks and each tier's rate and date all line up. */
-.pr-block .view-row { gap: 0; padding: 0.3rem 0.6rem; }
-.pr-block .view-label { flex: 0 0 16rem; }
+   work, the Show ticks and each tier's rate and date all line up. The
+   labels also share the section-heading face (small caps, muted) so the
+   first block reads like its neighbours. */
+.pr-block .view-row { gap: 0; padding: 0.55rem 0.6rem; }
+.pr-block .view-label {
+  flex: 0 0 16rem;
+  color: var(--muted); font-weight: 600; font-size: 0.72rem;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
 .pr-manage tbody th,
 .pr-manage th.pr-manage-corner { width: 16rem; min-width: 16rem; }
 .pr-block .quiet-input { width: min(100%, 32ch); font: inherit; }
@@ -2645,6 +2652,23 @@ button.mob-title.spread { cursor: pointer; }
 /* Masterlist: each tier's own effective date rides under its rate. */
 .pr-rate-date { font-size: 0.72rem; margin-top: 0.15rem; }
 .pr-manage-edit.row { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
+
+/* "Tiered by hour" is a pay shape the row opts into, next to its unit. */
+.checkbox.pr-tiered-flag { margin: 0; font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+.checkbox.pr-tiered-flag input { width: auto; }
+/* In the Details window's edit face the unit picker and the tiered flag
+   each take their own line under the number — a table cell grows to its
+   content, so left in one row three tier columns would push past the
+   window edge. */
+.pr-manage-edit.row .ui-select.block { flex-basis: 100%; max-width: 11rem; }
+.pr-manage-edit.row .pr-tiered-flag { flex-basis: 100%; }
+/* Create grid: the first-of-hour count rides beside its rate box. */
+.pr-tierN-row { display: flex; align-items: center; gap: 0.35rem; }
+.pr-tierN {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-size: 0.72rem; color: var(--muted); white-space: nowrap;
+}
+.pr-tierN input { width: 3.2ch; min-height: 40px; text-align: center; }
 
 /* Take a just-added tier column back out. */
 .pr-newtier-x {
