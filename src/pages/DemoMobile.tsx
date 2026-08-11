@@ -1074,7 +1074,7 @@ function PerformanceTab({
             broken rather than configured. Say which setting emptied it. */}
         {!showMill && !showKpi && (
           <div className="mob-card">
-            <div className="mob-title">No dashboard switched on</div>
+            <div className="mob-card-label">No dashboard switched on</div>
             <div className="mob-sub">
               This tier has neither the mill output nor the KPI dashboard ticked under
               Settings → Tags management → Entitled Function.
@@ -1091,12 +1091,11 @@ function PerformanceTab({
                 days — for the stations this tier may see, which is the
                 list it was handed. */}
             <button className="mob-card mob-card-tap" onClick={() => setSub('output')}>
-              {/* The caret is mirrored by an invisible one on the left, so
-                  the heading sits centred rather than pushed off by it. */}
-              <div className="mob-title spread">
-                <span className="mob-caret" aria-hidden="true" style={{ visibility: 'hidden' }}>›</span>
-                <span>{shortMonth} Output Record</span>
-                <span className="mob-caret">›</span>
+              {/* The same head as the KPI dashboard's cards: the label
+                  small and grey, the caret on the right. */}
+              <div className="mob-cardhead">
+                <span className="mob-card-label">{shortMonth} Output Record</span>
+                <span className="mob-caret" aria-hidden="true">›</span>
               </div>
               {outputRecord.length === 0 ? (
                 <div className="mob-sub">
@@ -1119,7 +1118,7 @@ function PerformanceTab({
             </button>
 
             <div className="mob-card">
-              <div className="mob-title">Workforce</div>
+              <div className="mob-card-label">Workforce</div>
               <div className="mob-breakrow">
                 <span>Active workers today</span>
                 <span className="mob-entry-amt">{activeToday}</span>
@@ -1135,7 +1134,7 @@ function PerformanceTab({
             </div>
 
             <div className="mob-card">
-              <div className="mob-title">Payroll cost trend</div>
+              <div className="mob-card-label">Payroll cost trend</div>
               <div className="mob-barhead"><span className="val">RM</span></div>
               <div className="mob-bars">
                 {trend.map((t) => (
@@ -1243,7 +1242,7 @@ function PerformanceTab({
 
         {(canVerify || canFinal) && showMill && (
           <div className="mob-card">
-            <div className="mob-title">Avg wage / worker</div>
+            <div className="mob-card-label">Avg wage / worker</div>
             <div className="mob-breakrow">
               <span>RM / Worker</span>
               <span className="mob-entry-amt">
@@ -1333,10 +1332,9 @@ function OutputRecordScreen({
         ) : (
           record.map((r) => (
             <div className="mob-card" key={r.station.id}>
-              <button className="mob-title spread" onClick={() => onStation(r.station)}>
-                <span className="mob-caret" aria-hidden="true" style={{ visibility: 'hidden' }}>›</span>
-                <span>{r.station.name}</span>
-                <span className="mob-caret">›</span>
+              <button className="mob-cardhead" onClick={() => onStation(r.station)}>
+                <span className="mob-card-label">{r.station.name}</span>
+                <span className="mob-caret" aria-hidden="true">›</span>
               </button>
               {r.works.map((w) => (
                 <div className="mob-breakrow" key={w.name}>

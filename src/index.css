@@ -995,6 +995,11 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 .mob-cardhead > :first-child { grid-column: 2; justify-content: center; }
 .mob-cardhead > :last-child { grid-column: 3; text-align: right; }
+/* The same head as a button — the Output record's station rows. */
+button.mob-cardhead {
+  background: none; border: 0; padding: 0; width: 100%;
+  font: inherit; cursor: pointer;
+}
 /* Same three columns for a pop-out's heading and its close button. */
 .mob-modal > .mob-card-label {
   display: grid; grid-template-columns: 26px 1fr 26px; align-items: center;
