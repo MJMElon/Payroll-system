@@ -2546,17 +2546,14 @@ button.mob-title.spread { cursor: pointer; }
   border: 1px solid var(--border); border-radius: 12px;
   padding: 0.7rem 1rem; background: var(--bg);
 }
-/* A block that hugs its content instead of stretching across the window —
-   the modal is a flex column, which stretches children by default. */
-.pr-block-fit { align-self: flex-start; min-width: min(28rem, 100%); }
 .pr-block .view-row:last-child { border-bottom: none; }
 .pr-block .quiet-input { width: min(100%, 32ch); font: inherit; }
 
-/* Function sheet: the function's name on the left, then a tick under
-   Show or under No show. */
-.table.pr-func { width: auto; }
-.pr-func th:first-child { min-width: 13rem; }
-.pr-func th.pr-func-tick, .pr-func td.pr-func-tick { width: 5.5rem; text-align: center; }
+/* Function sheet: the function's name on the left, its ticks right beside
+   it under Show / No show, and a filler column so the block reads at the
+   same full width as its neighbours. */
+.pr-func th:first-child { width: 16rem; min-width: 13rem; }
+.pr-func th.pr-func-tick, .pr-func td.pr-func-tick { width: 6rem; text-align: center; }
 .pr-func input[type='checkbox'] { width: auto; }
 .pr-func tr:last-child td { border-bottom: none; }
 
@@ -2568,6 +2565,8 @@ button.mob-title.spread { cursor: pointer; }
 /* The read face's rate line — amount with its unit right beside it — and
    the edit face mirroring it: number box, unit picker beside. */
 .pr-rate-inline { display: inline-flex; align-items: baseline; gap: 0.4rem; }
+/* Masterlist: each tier's own effective date rides under its rate. */
+.pr-rate-date { font-size: 0.72rem; margin-top: 0.15rem; }
 .pr-manage-edit.row { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
 
 /* Take a just-added tier column back out. */
