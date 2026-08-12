@@ -702,6 +702,8 @@ function SubmissionsList({
   const [stationFilter, setStationFilter] = useState('')
   // The double-check window: which proposal, and what the click meant.
   const [confirm, setConfirm] = useState<{ job: Job; mode: 'verify' | 'approve' | 'reject' } | null>(null)
+  // A proposal not yet approved, opened to correct its rate before it moves on.
+  const [editing, setEditing] = useState<Job | null>(null)
 
   const stationName = (id: string) => stations.find((s) => s.id === id)?.name ?? '?'
   const gradeName = (id: string | null) => grades.find((g) => g.id === id)?.name ?? null
@@ -811,6 +813,18 @@ function SubmissionsList({
                   <td><span className={STATUS_CLASS[j.approval_status]}>{STATUS_LABEL[j.approval_status]}</span></td>
                   <td className="right">
                     <span className="row-actions">
+                      {(j.approval_status === 'pending' || j.approval_status === 'verified') &&
+                        canResubmit && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            title="Edit rate"
+                            aria-label={`Edit rate for ${j.name}`}
+                            onClick={() => setEditing(j)}
+                          >
+                            <IconPencil />
+                          </button>
+                        )}
                       {j.approval_status === 'pending' && canVerify && (
                         <button
                           type="button"
@@ -899,6 +913,21 @@ function SubmissionsList({
             const { job } = confirm
             setConfirm(null)
             reject(job)
+          }}
+        />
+      )}
+
+      {editing && (
+        <EditProposalModal
+          job={editing}
+          rate={currentRate.get(editing.id)}
+          currentRate={currentRate}
+          stationName={stationName(editing.station_id)}
+          grades={grades}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null)
+            onChanged()
           }}
         />
       )}
@@ -1025,6 +1054,172 @@ function ConfirmActionModal({
             onClick={onConfirm}
           >
             {yes[mode]}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Correcting a proposal's rate before it moves on — opened from the
+ *  Pending Approval row. Only the price and its effective date change
+ *  here; description, unit and tiering stay what they were proposed as.
+ *  A proposal already verified goes back to waiting verification on save,
+ *  so a checker's sign-off can never quietly end up covering a rate they
+ *  never actually saw. */
+function EditProposalModal({
+  job,
+  rate,
+  currentRate,
+  stationName,
+  grades,
+  onClose,
+  onSaved,
+}: {
+  job: Job
+  rate: Rate | undefined
+  currentRate: Map<string, Rate>
+  stationName: string
+  grades: Grade[]
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [tiered, setTiered] = useState(isTiered(rate))
+  const [flatRate, setFlatRate] = useState(rate ? String(Number(rate.rate)) : '')
+  const [ladder, setLadder] = useState<string[]>(isTiered(rate) ? hourLadder(rate).map(String) : [])
+  const [effectiveFrom, setEffectiveFrom] = useState(rate?.effective_from ?? todayISO())
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  // Which of the newer piece_rates columns the database knows — the same
+  // check GroupManageModal makes, from whatever rate rows loaded with
+  // select('*') already answered.
+  const sampleRate = currentRate.values().next().value as Rate | undefined
+  const rateColumns = {
+    threshold: !sampleRate || 'tier_threshold' in sampleRate,
+    hour: !sampleRate || 'hour_rates' in sampleRate,
+  }
+  const grade = grades.find((g) => g.id === job.grade_id)
+
+  async function save() {
+    setErr(null)
+    if (!effectiveFrom) return setErr('Pick an effective date.')
+    setBusy(true)
+    try {
+      const row: Record<string, unknown> = { job_id: job.id, effective_from: effectiveFrom }
+      if (tiered) {
+        const L = parseLadder(ladder, 'Rate', rateColumns)
+        row.rate = L.rate
+        row.tier2_rate = L.tier2
+        if (rateColumns.threshold) row.tier_threshold = L.threshold
+        if (rateColumns.hour) row.hour_rates = L.hour
+      } else {
+        const v = Number(flatRate)
+        if (flatRate.trim() === '' || Number.isNaN(v) || v < 0) {
+          throw new Error('Enter a valid non-negative piece rate.')
+        }
+        row.rate = v
+        row.tier2_rate = null
+        if (rateColumns.threshold) row.tier_threshold = null
+        if (rateColumns.hour) row.hour_rates = null
+      }
+
+      const { error } = await supabase.from('piece_rates').upsert(row, { onConflict: 'job_id,effective_from' })
+      if (error) throw new Error(error.message)
+
+      if (job.approval_status === 'verified') {
+        const { error: reErr } = await supabase
+          .from('piece_rate_jobs')
+          .update({ approval_status: 'pending', verified_by: null, verified_at: null } as never)
+          .eq('id', job.id)
+        if (reErr) throw new Error(reErr.message)
+      }
+      onSaved()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className={`modal modal-xwide ${tiered ? 'tiered' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="row-form spread">
+          <h2>Edit piece rate</h2>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <div className="pr-grid pr-confirm">
+          <div className="pr-grid-head">
+            <span>Tier Tag</span>
+            <span>Station Tag</span>
+            <span>Piece Rate Work Description</span>
+            <span>Unit</span>
+            <span>Piece Rate (RM)</span>
+            <span>Effective date</span>
+            <span />
+          </div>
+          <div className="pr-grid-row">
+            <ProposalCell label="Tier Tag">
+              {grade ? <span className={tagClass(grade.color)}>{grade.name}</span> : 'All positions'}
+            </ProposalCell>
+            <ProposalCell label="Station Tag">{stationName}</ProposalCell>
+            <ProposalCell label="Piece Rate Work Description" wide>{job.name}</ProposalCell>
+            <ProposalCell label="Unit">{job.unit}</ProposalCell>
+            <ProposalCell label="Piece Rate (RM)">
+              <div className={`pr-manage-edit ${tiered ? '' : 'row'}`}>
+                {tiered ? (
+                  <LadderEditor rows={ladder} onChange={setLadder} ariaPrefix="Rate" />
+                ) : (
+                  <input
+                    className="quiet-input num"
+                    inputMode="decimal"
+                    value={flatRate}
+                    onChange={(e) => setFlatRate(e.target.value)}
+                    aria-label="Rate"
+                  />
+                )}
+                <label
+                  className="checkbox pr-tiered-flag"
+                  title="Each work record of the hour pays the ladder row it lands on — per record, in the unit chosen; the count resets every hour."
+                >
+                  <input
+                    type="checkbox"
+                    checked={tiered}
+                    onChange={(e) => {
+                      setTiered(e.target.checked)
+                      if (e.target.checked && ladder.length === 0) setLadder(['', '', '', '', ''])
+                    }}
+                    aria-label="Tiered by hour"
+                  />{' '}
+                  Tiered by hour
+                </label>
+              </div>
+            </ProposalCell>
+            <ProposalCell label="Effective date">
+              <input
+                className="quiet-input date"
+                type="date"
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+                aria-label="Effective date"
+              />
+            </ProposalCell>
+          </div>
+        </div>
+
+        {job.approval_status === 'verified' && (
+          <p className="small muted" style={{ margin: 0 }}>
+            This proposal was already verified — saving a rate change sends it back to waiting verification.
+          </p>
+        )}
+        {err && <p className="error small" style={{ margin: 0 }}>{err}</p>}
+
+        <div className="row-form" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className="btn" onClick={save} disabled={busy}>
+            {busy ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>
